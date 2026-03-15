@@ -1,0 +1,181 @@
+================================================================================
+SYNTHESE DU MODE DE COMMUNICATION LILYGO → WAVESHARE
+Serre Connectee - Firmware LilyGo v8.5
+================================================================================
+
+
+1. ARCHITECTURE RESEAU
+================================================================================
+
+La LilyGO cree un reseau WiFi point-a-point avec NAT (NAPT) vers internet
+via la connexion cellulaire Cat-M (PPPoS).
+
+Reseau WiFi SoftAP :
+  - SSID         : Pont_Wifi-GSM_de_la_serre
+  - Mot de passe : 1234567890
+  - Canal        : 1
+  - Max clients  : 1 (Waveshare uniquement)
+  - IP LilyGO    : 192.168.4.1
+  - Masque       : 255.255.255.0
+  - DHCP server  : DESACTIVE → IP statique obligatoire cote Waveshare
+
+Configuration IP statique cote Waveshare :
+  - IP           : 192.168.4.10
+  - Masque       : 255.255.255.0
+  - Passerelle   : 192.168.4.1
+
+
+2. ACCES INTERNET (MQTT ET NTP)
+================================================================================
+
+Le NAPT est actif : tout le trafic TCP/UDP sortant du Waveshare est NATe
+et route vers internet via la connexion cellulaire. Le Waveshare peut donc
+se connecter directement a un broker MQTT externe et a un serveur NTP
+en passant par la gateway 192.168.4.1, de maniere transparente.
+
+
+3. QUESTION DNS
+================================================================================
+
+Le code LilyGO propage le DNS obtenu par la connexion PPP (celui de
+l'operateur cellulaire) vers l'interface AP :
+
+    esp_netif_get_dns_info(ppp_netif, ESP_NETIF_DNS_MAIN, &dns);
+    esp_netif_set_dns_info(ap_netif, ESP_NETIF_DNS_MAIN, &dns);
+
+En pratique, trois approches cote Waveshare :
+
+  a) DNS = 192.168.4.1
+     Le plus simple, mais depend du bon fonctionnement du forward DNS
+     via NAPT lwIP. A tester.
+
+  b) IP directes (pas de DNS)
+     Utiliser les IP fixes du broker MQTT et d'un serveur NTP
+     (ex: 216.239.35.0 pour time.google.com). Le plus robuste si le DNS
+     pose probleme.
+
+  c) DNS public en dur (8.8.8.8 ou 1.1.1.1)
+     Les requetes DNS transitent par le NAT comme tout autre trafic UDP.
+     Meilleur compromis : simple, fiable, independant du DNS operateur.
+
+     → Option recommandee : DNS = 8.8.8.8
+
+
+4. API HTTP EXPOSEE PAR LA LILYGO
+================================================================================
+
+Serveur HTTP sur http://192.168.4.1:80 (port par defaut)
+3 endpoints disponibles :
+
+
+4.1  POST /sms — Demander l'envoi d'un SMS
+----------------------------------------------------------------------
+
+  Request (JSON) :
+  {
+    "to":         "+33672967933",          (obligatoire, format E.164)
+    "text":       "Alerte serre ...",      (obligatoire, max 160 chars)
+    "request_id": "sms_001",               (obligatoire, max 32 chars, unique)
+    "ttl_s":      300,                     (optionnel, defaut 300s = 5 min)
+    "source":     "waveshare"              (optionnel)
+  }
+
+  Contraintes :
+    - Numero format E.164 : '+' suivi de 7 a 15 chiffres
+    - Numero whiteliste uniquement (actuellement : +33672967933)
+    - Texte : max 160 caracteres ASCII
+    - Rate limit : 5 minutes (300s) entre deux envois reussis
+    - Queue : 10 slots max
+    - Table de statuts : 20 slots circulaires
+
+  Reponses possibles :
+
+    200  {"status":"ACCEPTED","request_id":"sms_001"}
+         → Mis en queue avec succes
+
+    200  {"status":"SENT","request_id":"sms_001"}
+    200  {"status":"PENDING","request_id":"sms_001"}
+         → Idempotence : request_id deja connu, renvoie le statut courant
+
+    400  {"status":"REJECTED","reason":"INVALID_BODY"}
+    400  {"status":"REJECTED","reason":"INVALID_JSON"}
+    400  {"status":"REJECTED","reason":"READ_ERROR"}
+    400  {"status":"REJECTED","reason":"MISSING_FIELD"}
+
+    422  {"status":"REJECTED","request_id":"...","reason":"INVALID_NUMBER"}
+    422  {"status":"REJECTED","request_id":"...","reason":"TEXT_TOO_LONG"}
+    422  {"status":"REJECTED","request_id":"...","reason":"QUEUE_FULL"}
+
+
+4.2  GET /sms/{request_id} — Consulter le statut d'un SMS
+----------------------------------------------------------------------
+
+  Reponse 200 :
+  {
+    "request_id":   "sms_001",
+    "status":       "PENDING | SENDING | SENT | FAILED | EXPIRED",
+    "error_code":   null,
+    "error_detail": null
+  }
+
+  Si status = FAILED, error_code peut valoir :
+    - RATE_LIMITED   : trop tot apres le dernier envoi reussi
+    - MODEM_BUSY     : modem occupe (reconnexion PPP en cours)
+    - CMD_FAILED     : echec passage en mode COMMAND
+    - SEND_FAILED    : echec envoi AT (esp_modem_send_sms)
+    - QUEUE_FULL     : file d'attente pleine
+
+  Reponse 404 :
+  {"status":"NOT_FOUND","request_id":"..."}
+    → request_id inconnu (ecrase par la table circulaire ou jamais soumis)
+
+
+4.3  GET /heartbeat — Signe de vie (watchdog)
+----------------------------------------------------------------------
+
+  Reponse : 200 {"status":"OK"}
+
+  Le Waveshare DOIT appeler cet endpoint regulierement (apres chaque
+  publication MQTT reussie est l'intention du design).
+
+  Si la LilyGO ne recoit aucun heartbeat pendant 2 heures ET que la
+  connexion PPP est down → la LilyGO reboote automatiquement.
+
+
+5. RESUME DES RESPONSABILITES COTE WAVESHARE
+================================================================================
+
+  Fonction        | Mecanisme
+  ----------------+-----------------------------------------------------------
+  Connexion WiFi  | Station, IP statique 192.168.4.10, GW 192.168.4.1
+  DNS             | DNS public en dur (8.8.8.8) ou IP directes
+  MQTT            | Connexion TCP directe au broker via le NAT (transparent)
+  NTP             | Requete UDP via le NAT (transparent)
+  Envoi SMS       | POST http://192.168.4.1/sms (JSON)
+  Suivi SMS       | GET  http://192.168.4.1/sms/{request_id}
+  Heartbeat       | GET  http://192.168.4.1/heartbeat (apres chaque MQTT OK)
+
+
+6. NOTES IMPORTANTES
+================================================================================
+
+  - L'envoi SMS coupe temporairement internet (bascule modem COMMAND/DATA).
+    Le Waveshare doit tolerer des deconnexions MQTT breves (~10-30s) apres
+    un envoi SMS.
+
+  - Apres reconnexion PPP, le DNS peut changer (nouvel operateur, nouveau
+    bail). Si le Waveshare utilise un DNS public en dur, cela n'a pas
+    d'impact.
+
+  - La table SMS est circulaire (20 slots). Les anciens statuts sont
+    ecrases. Le Waveshare devrait consulter le statut assez rapidement
+    apres soumission s'il en a besoin.
+
+  - Le request_id doit etre unique par SMS. Le systeme est idempotent :
+    un POST avec un request_id deja connu renvoie simplement le statut
+    courant sans re-enqueue.
+
+  - Headers CORS presents (Access-Control-Allow-Origin: *) sur toutes
+    les reponses.
+
+================================================================================

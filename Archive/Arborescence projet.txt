@@ -1,0 +1,69 @@
+projet/
+├── platformio.ini
+├── src/
+│   ├── main.cpp                      // setup() + loop() + orchestration globale
+│   │
+│   ├── Config/
+│   │   ├── Config.h                  // Include global – point d'entrée principal (inclut les autres fichiers de config)
+│   │   ├── IO-Config.h
+│   │   ├── NetworkConfig.h           // Configuration réseau : SSID, passwords, MQTT broker, serveur NTP, etc.
+│   │   └── TimingConfig.h            // TOUS les timings (périodes de mesure, arrosage, envoi données, etc.)
+│   │
+│   ├── Connectivity/
+│   │   ├── ManagerUTC.h
+│   │   ├── ManagerUTC.cpp      
+│   │   ├── SmsManager.h   
+│   │   ├── SmsManager.cpp    
+│   │   ├── WiFiManager.h
+│   │   └── WiFiManager.cpp           // WiFi STA + AP
+│   │
+│   ├── Core/
+│   │   ├── PowerManager.h
+│   │   ├── PowerManager.cpp          // Gestion PMU, batterie, low power
+│   │   ├── TaskManager.h
+│   │   ├── TaskManager.cpp           // Gestion tâches périodiques
+│   │   ├── TaskManagerMonitor.h
+│   │   └── TaskManagerMonitor.cpp           // Gestion tâches périodiques
+│   │
+│   ├── Sensors/
+│   │   ├── DataAcquisition.h
+│   │   └── DataAcquisition.cpp       // Lecture tous capteurs (BME, sol, débit, etc.)
+│   │
+│   ├── Storage/
+│   │   ├── DataLogger.h
+│   │   └── DataLogger.cpp            // Enregistrement données (CSV, JSON...)
+│   │
+│   ├── Utils/
+│   │   ├── Console.h
+│   │   └── Console.cpp
+│   │
+│   └── Web/
+│       ├── WebServer.h
+│       ├── WebServer.cpp             // Routes, init, handlers
+│       │
+│       ├── Pages/
+│       │   ├── PagePrincipale.h
+│       │   ├── PagePrincipale.cpp    // Dashboard actuel
+│       │   ├── PageCapteurs.h
+│       │   ├── PageCapteurs.cpp
+│       │   ├── PageArrosage.h
+│       │   ├── PageArrosage.cpp
+│       │   ├── PageReglages.h
+│       │   ├── PageReglages.cpp
+│       │   ├── PageLogs.h
+│       │   └── PageLogs.cpp
+│       │
+│       ├── Composants/
+│       │   ├── Entete.h              // Header commun avec menu
+│       │   ├── PiedDePage.h
+│       │   ├── Carte.h
+│       │   ├── Interrupteur.h
+│       │   └── Graphique.h
+│       │
+│       ├── Styles/
+│       │   └── style-principal.css   // CSS global
+│       │
+│       └── Scripts/
+│           └── script-principal.js   // JS commun
+│
+└── lib/                              // Bibliothèques privées si besoin
