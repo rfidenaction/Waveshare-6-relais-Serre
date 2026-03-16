@@ -14,6 +14,10 @@ static const IPAddress WIFI_STA_DNS     (8,8,8,8);
 
 // -----------------------------------------------------------------------------
 // WiFi — AP
+// ⚠️ ATTENTION : l'IP, la gateway et le subnet AP sont DUPLIQUÉS en dur
+// dans WiFiManager.cpp (fonction handle(), état AP_START, appels IP4_ADDR).
+// L'API esp_netif n'accepte pas les IPAddress Arduino, d'où la duplication.
+// Toute modification ici DOIT être reportée manuellement dans WiFiManager.cpp.
 // -----------------------------------------------------------------------------
 static constexpr const char* WIFI_AP_SSID     = "Serre_de_Marie-Pierre";
 static constexpr const char* WIFI_AP_PASSWORD = "1234567890";

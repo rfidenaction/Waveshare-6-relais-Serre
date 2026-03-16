@@ -24,6 +24,14 @@
 // Tag pour logs
 static const char* TAG = "WebServer";
 
+// ─────────────────────────────────────────────────────────────
+// Chart.js embarqué en flash (PROGMEM)
+// Fichier intégré au firmware via board_build.embed_txtfiles
+// Null-terminated grâce à embed_txtfiles (vs embed_files)
+// ─────────────────────────────────────────────────────────────
+extern const char chart_js_start[] asm("_binary_embed_chart_umd_min_js_start");
+extern const char chart_js_end[]   asm("_binary_embed_chart_umd_min_js_end");
+
 AsyncWebServer WebServer::server(80);
 
 void WebServer::init()
@@ -33,6 +41,27 @@ void WebServer::init()
     server.on("/ap-toggle", HTTP_POST, handleApToggle);
     server.on("/graphdata", HTTP_GET, handleGraphData);
     server.on("/reset", HTTP_POST, handleReset);
+
+    // ── Chart.js embarqué — servi depuis la flash ────────────
+    // Réponse chunkée pour éviter d'allouer ~200 KB en RAM
+    // Cache 24h côté navigateur (le contenu ne change pas)
+    server.on("/js/chart.min.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+        size_t len = chart_js_end - chart_js_start - 1;  // -1 : null terminator
+        AsyncWebServerResponse *response = request->beginChunkedResponse(
+            "application/javascript",
+            [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                size_t total = chart_js_end - chart_js_start - 1;
+                if (index >= total) return 0;
+                size_t remaining = total - index;
+                size_t toSend = (remaining < maxLen) ? remaining : maxLen;
+                memcpy(buffer, chart_js_start + index, toSend);
+                return toSend;
+            }
+        );
+        response->addHeader("Cache-Control", "public, max-age=86400");
+        request->send(response);
+        Console::info(TAG, "Chart.js servi depuis flash (" + String(len) + " octets)");
+    });
 
     // Routes de gestion des logs
     // ⚠️ CORRECTION : routes spécifiques AVANT /logs

@@ -190,22 +190,22 @@ function toggleAp(cb) {
 let supplyChart = null;
 let chartJsLoaded = false;
 
-// Charge Chart.js dynamiquement (une seule fois)
+// Charge Chart.js depuis le firmware embarqué (pas de CDN nécessaire)
 function loadChartJs() {
   return new Promise((resolve, reject) => {
     if (chartJsLoaded) { resolve(); return; }
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+    s.src = '/js/chart.min.js';
     s.onload = () => { chartJsLoaded = true; resolve(); };
-    s.onerror = () => reject(new Error('Chart.js indisponible (pas d\'accès internet ?)'));
+    s.onerror = () => reject(new Error('Erreur chargement Chart.js'));
     document.head.appendChild(s);
-    // Timeout 8s — évite l'attente infinie sans internet
+    // Timeout 15s — le fichier est servi en local mais peut être lent sur ESP32
     setTimeout(() => {
       if (!chartJsLoaded) {
         s.remove();
-        reject(new Error('Timeout chargement Chart.js (pas d\'accès internet ?)'));
+        reject(new Error('Timeout chargement Chart.js'));
       }
-    }, 8000);
+    }, 15000);
   });
 }
 

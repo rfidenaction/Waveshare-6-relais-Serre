@@ -274,7 +274,7 @@ void WiFiManager::handle()
         // temporarily"), il passe en DISCONNECTED ou CONNECT_FAILED
         // et ne retente rien. Sans cette détection, on attendrait
         // le timeout complet (30s) pour rien.
-        // Grâce de 15s pour ignorer les états transitoires au début.
+        // Grâce de 5s pour ignorer les états transitoires au début.
         // ─────────────────────────────────────────────────────────────
         if (now - connectStartMs >= STA_EARLY_FAIL_GRACE_MS) {
             if (status == WL_DISCONNECTED || status == WL_CONNECT_FAILED) {

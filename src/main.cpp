@@ -17,6 +17,7 @@
 #include "Core/EventManager.h"
 
 #include "Sensors/DataAcquisition.h"
+#include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
 
 #include "Storage/DataLogger.h"
 
@@ -122,6 +123,9 @@ static void loopInit()
     EventManager::init();
     EventManager::prime();
 
+    // Simulateur tension — TEST — À SUPPRIMER en production
+    FakeVoltage::init();
+
     // Démarrage du TaskManager
     TaskManager::init();
 
@@ -206,6 +210,16 @@ static void loopInit()
             }
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS
+    );
+
+    // -------------------------------------------------------------------------
+    // TÂCHE FAKE VOLTAGE (test — À SUPPRIMER en production)
+    // -------------------------------------------------------------------------
+    TaskManager::addTask(
+        []() {
+            FakeVoltage::handle();
+        },
+        30000   // 30 secondes
     );
 
     // Bascule définitive vers la loop de production

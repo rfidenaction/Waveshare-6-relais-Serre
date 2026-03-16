@@ -67,7 +67,7 @@ private:
      *   AP_START ─────── WiFi.softAP()        ~0.1ms ou ~725ms (UNIQUE)
      *        │
      *        ▼
-     *   AP_STABILIZE ── attente 1s (stabilisation driver AP+STA)
+     *   AP_STABILIZE ── attente 5s (stabilisation driver AP+STA)
      *        │
      *        ▼
      *   STA_CONFIG ───── WiFi.config()        ~4ms
@@ -135,15 +135,16 @@ private:
     // -------------------------------------------------------------------------
     // Constantes internes
     // -------------------------------------------------------------------------
-    static constexpr unsigned long AP_STABILIZE_MS         = 1000;    // Stabilisation post-AP
+    static constexpr unsigned long AP_STABILIZE_MS         = 5000;    // Stabilisation post-AP (ESP32-S3 AP+STA a besoin de temps)
     static constexpr unsigned long STA_CONNECT_TIMEOUT_MS  = 30000;   // Timeout connexion
     static constexpr unsigned long STA_CONNECT_LOG_MS      = 5000;    // Log périodique
+    static constexpr unsigned long STA_EARLY_FAIL_GRACE_MS = 15000;    // Grâce avant détection échec rapide
 
     // Backoff STA : 2 essais agressifs (30s), puis passage à 300s
     // Protège l'AP quand le réseau STA est absent longtemps
     static constexpr unsigned long STA_RETRY_DELAY_MS      = 30000;   // Délai retries agressifs
     static constexpr unsigned long STA_SLOW_RETRY_DELAY_MS = 300000;  // Délai retries espacés (5min)
-    static constexpr uint8_t      STA_AGGRESSIVE_RETRIES   = 2;       // Nombre d'essais avant backoff
+    static constexpr uint8_t      STA_AGGRESSIVE_RETRIES   = 3;       // Nombre d'essais avant backoff
 
     // -------------------------------------------------------------------------
     // Flag de demande externe (concurrence web → machine d'états)
