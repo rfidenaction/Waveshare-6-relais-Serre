@@ -514,10 +514,12 @@ bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
 }
 
 // -----------------------------------------------------------------------------
-// GRAPH CSV (FLASH) — avec timestamp UTC
-// ATTENTION : Ne fonctionne que pour les valeurs NUMÉRIQUES
+// GRAPH CSV (FLASH) — dernières mesures numériques
+// Lit tout le fichier, conserve les maxPoints dernières mesures
+// correspondant au DataId demandé, puis construit le CSV.
+// Aucune dépendance à l'heure courante (pas besoin d'UTC valide).
 // -----------------------------------------------------------------------------
-String DataLogger::getGraphCsv(DataId id, uint32_t daysBack)
+String DataLogger::getGraphCsv(DataId id, uint32_t maxPoints)
 {
     File file = SPIFFS.open("/datalog.csv", FILE_READ);
     if (!file) {
@@ -525,53 +527,67 @@ String DataLogger::getGraphCsv(DataId id, uint32_t daysBack)
         return "";
     }
 
-    uint32_t cutoffTime = 0;
-    if (daysBack > 0) {
-        cutoffTime = ManagerUTC::nowUtc() - (daysBack * 86400UL);
+    // Buffer circulaire pour garder les N dernières mesures
+    // Taille limitée → RAM maîtrisée (~800 octets pour 100 points)
+    struct GraphPoint {
+        uint32_t ts;
+        float    val;
+    };
+
+    GraphPoint* buf = new (std::nothrow) GraphPoint[maxPoints];
+    if (!buf) {
+        file.close();
+        Console::error(TAG, "getGraphCsv: allocation buffer échouée");
+        return "";
     }
 
-    String csv = "timestamp,value\n";
-    int validLines = 0;
+    size_t bufHead  = 0;   // prochain index d'écriture
+    size_t bufCount = 0;   // nombre d'éléments valides
 
     while (file.available()) {
         String line = file.readStringUntil('\n');
         if (line.length() == 0) continue;
 
-        unsigned long ts;
-        uint8_t typeByte, idByte, valueType;
-        
-        // Parser la ligne
+        // Parser la ligne : timestamp,type,id,valueType,value
         int firstComma = line.indexOf(',');
         int secondComma = line.indexOf(',', firstComma + 1);
         int thirdComma = line.indexOf(',', secondComma + 1);
         int fourthComma = line.indexOf(',', thirdComma + 1);
-        
-        if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1) {
-            continue; // Format invalide - ignorer silencieusement
-        }
-        
-        ts = line.substring(0, firstComma).toInt();
-        typeByte = line.substring(firstComma + 1, secondComma).toInt();
-        idByte = line.substring(secondComma + 1, thirdComma).toInt();
-        valueType = line.substring(thirdComma + 1, fourthComma).toInt();
-        String valueStr = line.substring(fourthComma + 1);
 
-        // Ne traiter que les valeurs numériques (valueType == 0)
-        if (idByte == static_cast<uint8_t>(id) &&
-            valueType == 0 &&
-            (daysBack == 0 || ts >= cutoffTime))
-        {
-            float val = valueStr.toFloat();
-            csv += String(ts) + ",";
-            csv += String(val, 2) + "\n";
-            validLines++;
+        if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1) {
+            continue;
+        }
+
+        uint8_t idByte = line.substring(secondComma + 1, thirdComma).toInt();
+        uint8_t valueType = line.substring(thirdComma + 1, fourthComma).toInt();
+
+        if (idByte == static_cast<uint8_t>(id) && valueType == 0) {
+            uint32_t ts = line.substring(0, firstComma).toInt();
+            float val = line.substring(fourthComma + 1).toFloat();
+
+            buf[bufHead].ts  = ts;
+            buf[bufHead].val = val;
+            bufHead = (bufHead + 1) % maxPoints;
+            if (bufCount < maxPoints) bufCount++;
         }
     }
 
     file.close();
-    
-    Console::debug(TAG, "getGraphCsv: " + String(validLines)
-                   + " lignes pour DataId " + String((int)id));
-    
+
+    // Construire le CSV depuis le buffer (ordre chronologique)
+    String csv = "timestamp,value\n";
+    size_t start = (bufCount < maxPoints) ? 0 : bufHead;
+
+    for (size_t i = 0; i < bufCount; i++) {
+        size_t idx = (start + i) % maxPoints;
+        csv += String(buf[idx].ts) + ",";
+        csv += String(buf[idx].val, 2) + "\n";
+    }
+
+    delete[] buf;
+
+    Console::debug(TAG, "getGraphCsv: " + String(bufCount)
+                   + " points pour DataId " + String((int)id));
+
     return csv;
 }

@@ -179,12 +179,6 @@ static void loopInit()
         []() {
             DataLogger::push(
                 DataType::System,
-                DataId::WifiStaEnabled,
-                1.0f    // STA toujours actif sur Waveshare
-            );
-
-            DataLogger::push(
-                DataType::System,
                 DataId::WifiStaConnected,
                 WiFiManager::isSTAConnected() ? 1.0f : 0.0f
             );

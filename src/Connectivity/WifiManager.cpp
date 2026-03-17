@@ -204,15 +204,15 @@ void WiFiManager::handle()
     }
 
     case State::STA_BEGIN: {
-        // ── Scan diagnostic — UNIQUEMENT au premier boot ────────────
-        // En régime permanent, le scan est supprimé car :
-        //  - bloquant (~2-3s), incompatible avec TaskManager
-        //  - instable en mode AP+STA sur ESP32-S3 (risque crash,
-        //    déconnexion clients AP, scan interdit pendant connexion)
-        // Le canal est connu (1) et fixé en dur → pas besoin de scan.
+        // ── Scan diagnostic — DÉSACTIVÉ en production ───────────────
+        // Décommenter le bloc ci-dessous pour réactiver le scan au boot.
+        // ⚠️ Le scan est bloquant (~2-3s) et instable en AP+STA sur
+        //    ESP32-S3 (risque crash, déconnexion clients AP).
+        //    Ne pas réactiver en régime permanent.
         // ─────────────────────────────────────────────────────────────
-        static bool firstAttempt = true;
 
+        /*  ── SCAN BOOT (debug uniquement) ──────────────────────────
+        static bool firstAttempt = true;
         if (firstAttempt) {
             firstAttempt = false;
 
@@ -239,10 +239,9 @@ void WiFiManager::handle()
                     Console::warn("WiFi", "Réseau cible '" + String(WIFI_STA_SSID) + "' NON VISIBLE");
                 }
             }
-            WiFi.scanDelete();  // Libérer la mémoire du scan
-        } else {
-            Console::info("WiFi", "STA reconnexion directe (canal 1, sans scan)");
+            WiFi.scanDelete();
         }
+        ────────────────────────────────────────────────────────────── */
 
         // WiFi.begin() avec canal fixé à 1 (pont WiFi-GSM fourni par nous)
         // Évite le scan interne multi-canaux du driver → connexion plus rapide
@@ -274,7 +273,7 @@ void WiFiManager::handle()
         // temporarily"), il passe en DISCONNECTED ou CONNECT_FAILED
         // et ne retente rien. Sans cette détection, on attendrait
         // le timeout complet (30s) pour rien.
-        // Grâce de 15s pour ignorer les états transitoires au début.
+        // Grâce de 5s pour ignorer les états transitoires au début.
         // ─────────────────────────────────────────────────────────────
         if (now - connectStartMs >= STA_EARLY_FAIL_GRACE_MS) {
             if (status == WL_DISCONNECTED || status == WL_CONNECT_FAILED) {

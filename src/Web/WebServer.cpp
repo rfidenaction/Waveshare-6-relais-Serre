@@ -103,7 +103,7 @@ void WebServer::handleApToggle(AsyncWebServerRequest *request)
 
 void WebServer::handleGraphData(AsyncWebServerRequest *request)
 {
-    String csv = DataLogger::getGraphCsv(DataId::SupplyVoltage, 30);
+    String csv = DataLogger::getGraphCsv(DataId::SupplyVoltage);
     request->send(200, "text/plain", csv);
 }
 
@@ -157,12 +157,11 @@ static const uint8_t BUNDLE_ID_TO_TYPE[(uint8_t)DataId::Count] = {
     1,  // AirHumidity1     (2)  → Sensor
     1,  // SoilMoisture1    (3)  → Sensor
     2,  // Valve1           (4)  → Actuator
-    3,  // WifiStaEnabled   (5)  → System
-    3,  // WifiStaConnected (6)  → System
-    3,  // WifiApEnabled    (7)  → System
-    3,  // WifiRssi         (8)  → System
-    3,  // Boot             (9)  → System
-    3,  // Error            (10) → System
+    3,  // WifiStaConnected (5)  → System
+    3,  // WifiApEnabled    (6)  → System
+    3,  // WifiRssi         (7)  → System
+    3,  // Boot             (8)  → System
+    3,  // Error            (9)  → System
 };
 
 static const char* BUNDLE_TYPE_LABELS[] = {
@@ -338,11 +337,13 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
     // ── Libération sur abort/disconnect ──────────────────────────────────────
     request->onDisconnect([ctx]() {
         if (!ctx->deleted) {
-            ctx->deleted = true;
+            // Déconnexion avant fin du transfert (abort client)
             if (ctx->file) ctx->file.close();
             Console::warn("BundleCtx", "Bundle interrompu (disconnect client)");
-            delete ctx;
+        } else {
+            Console::debug("BundleCtx", "Libération contexte (transfert terminé)");
         }
+        delete ctx;
     });
 
     // ── Réponse chunkée ───────────────────────────────────────────────────────
@@ -398,11 +399,13 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
             }
 
             // ── Phase 4 : fin du transfert ────────────────────────────────────
+            // On ferme le fichier et on marque "deleted" pour le guard,
+            // mais on ne fait PAS delete ctx ici.
+            // Seul onDisconnect libère la mémoire (propriétaire unique).
             ctx->file.close();
             Console::info("BundleCtx",
                 String("Bundle terminé → ") + ctx->filename);
             ctx->deleted = true;
-            delete ctx;
             return 0;
         }
     );

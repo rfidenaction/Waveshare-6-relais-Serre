@@ -85,16 +85,15 @@ enum class DataId : uint8_t {
     Valve1           = 4,
 
     // ── Système / WiFi (DataType::System) ────
-    WifiStaEnabled   = 5,
-    WifiStaConnected = 6,
-    WifiApEnabled    = 7,
-    WifiRssi         = 8,
+    WifiStaConnected = 5,
+    WifiApEnabled    = 6,
+    WifiRssi         = 7,
 
     // ── Événements système (DataType::System) ─
-    Boot             = 9,
-    Error            = 10,
+    Boot             = 8,
+    Error            = 9,
 
-    Count            = 11   // Sentinel — toujours en dernier
+    Count            = 10   // Sentinel — toujours en dernier
 };
 
 // ─────────────────────────────────────────────
@@ -126,7 +125,6 @@ struct DataMeta {
 // Un tableau par DataId de nature "etat"
 // ─────────────────────────────────────────────
 
-inline constexpr const char* const kLabelsWifiStaEnabled[]    = { "Inactif",       "Actif"       };
 inline constexpr const char* const kLabelsWifiStaConnected[]  = { "Déconnecté",    "Connecté"    };
 inline constexpr const char* const kLabelsWifiApEnabled[]     = { "Inactif",       "Actif"       };
 inline constexpr const char* const kLabelsValve1[]            = { "Fermée",        "Ouverte"     };
@@ -154,14 +152,13 @@ inline constexpr DataMeta META[(uint8_t)DataId::Count] = {
     /* Valve1          (4) */ { "Vanne 1",             "",    DataNature::etat,     kLabelsValve1,              2 },
 
     // ── Système / WiFi ────────────────────────────────────────────────────────
-    /* WifiStaEnabled  (5) */ { "WiFi STA",            "",    DataNature::etat,     kLabelsWifiStaEnabled,      2 },
-    /* WifiStaConnected(6) */ { "WiFi connexion",      "",    DataNature::etat,     kLabelsWifiStaConnected,    2 },
-    /* WifiApEnabled   (7) */ { "Point d'accès",       "",    DataNature::etat,     kLabelsWifiApEnabled,       2 },
-    /* WifiRssi        (8) */ { "WiFi RSSI",           "dBm", DataNature::metrique, nullptr,                    0 },
+    /* WifiStaConnected(5) */ { "WiFi STA",            "",    DataNature::etat,     kLabelsWifiStaConnected,    2 },
+    /* WifiApEnabled   (6) */ { "WiFi AP",              "",    DataNature::etat,     kLabelsWifiApEnabled,       2 },
+    /* WifiRssi        (7) */ { "WiFi RSSI",           "dBm", DataNature::metrique, nullptr,                    0 },
 
     // ── Événements système ────────────────────────────────────────────────────
-    /* Boot   (9)  */          { "Démarrage",          "",    DataNature::texte,    nullptr,                    0 },
-    /* Error  (10) */          { "Erreur",             "",    DataNature::texte,    nullptr,                    0 },
+    /* Boot   (8)  */          { "Démarrage",          "",    DataNature::texte,    nullptr,                    0 },
+    /* Error  (9)  */          { "Erreur",             "",    DataNature::texte,    nullptr,                    0 },
 };
 
 // ─────────────────────────────────────────────
@@ -228,7 +225,7 @@ public:
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
     static String getCurrentValueWithTime(DataId id);   // LEGACY
-    static String getGraphCsv(DataId id, uint32_t daysBack = 30);
+    static String getGraphCsv(DataId id, uint32_t maxPoints = 500);
 
     // Statistiques du fichier de logs
     static LogFileStats getLogFileStats();

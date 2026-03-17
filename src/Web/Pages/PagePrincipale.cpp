@@ -225,9 +225,6 @@ function showSupplyGraph() {
     fetch('/graphdata').then(r => r.text())
   ])
     .then(([_, csv]) => {
-      loading.style.display = 'none';
-      canvas.style.display = 'block';
-
       // Parser le CSV
       const lines = csv.trim().split('\n');
       const labels = [];
@@ -240,7 +237,7 @@ function showSupplyGraph() {
           const value = parseFloat(parts[1]);
 
           const date = new Date(timestamp * 1000);
-          const label = date.toLocaleDateString('fr-FR', {
+          const label = date.toLocaleString('fr-FR', {
             day: '2-digit',
             month: '2-digit',
             hour: '2-digit',
@@ -252,6 +249,23 @@ function showSupplyGraph() {
         }
       }
 
+      // ── Sous-échantillonnage (~100 points max pour mobile) ──
+      const MAX_POINTS = 100;
+      let plotLabels = labels;
+      let plotValues = values;
+      if (values.length > MAX_POINTS) {
+        const step = Math.ceil(values.length / MAX_POINTS);
+        plotLabels = [];
+        plotValues = [];
+        for (let i = 0; i < values.length; i += step) {
+          plotLabels.push(labels[i]);
+          plotValues.push(values[i]);
+        }
+      }
+
+      loading.style.display = 'none';
+      canvas.style.display = 'block';
+
       // Détruire l'ancien graphique si existe
       if (supplyChart) {
         supplyChart.destroy();
@@ -262,10 +276,10 @@ function showSupplyGraph() {
       supplyChart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: labels,
+          labels: plotLabels,
           datasets: [{
             label: 'Tension alimentation (V)',
-            data: values,
+            data: plotValues,
             borderColor: '#1976d2',
             backgroundColor: 'rgba(25, 118, 210, 0.1)',
             fill: true,
@@ -274,6 +288,7 @@ function showSupplyGraph() {
         },
         options: {
           responsive: true,
+          maintainAspectRatio: false,
           plugins: {
             title: {
               display: true,
@@ -367,7 +382,9 @@ setInterval(() => {
 
 <div id="graphContainer">
   <p id="graphLoading">Chargement des données...</p>
-  <canvas id="supplyChart"></canvas>
+  <div style="position:relative; height:250px; width:100%;">
+    <canvas id="supplyChart"></canvas>
+  </div>
   <button id="graphClose" onclick="hideGraph()">Fermer</button>
 </div>
 
