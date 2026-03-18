@@ -415,7 +415,8 @@ est réutilisée par MqttManager. La table META reste la **source de vérité un
    - Différent → met à jour son cache, rafraîchit l'affichage
    - Identique → ignore
 
-**Republication périodique (sécurité) :**
+Ce paragraphe n'est plus valable. Le schéma n'est publié qu'au reboot.
+~~**Republication périodique (sécurité) :**
 Le schéma est également republié toutes les **24 heures** (en plus du boot).
 Ceci protège contre la perte du retain par le broker (redémarrage HiveMQ,
 migration de cluster). Si le broker perd son retain et qu'aucun nouveau
@@ -423,7 +424,7 @@ boot ne survient, les clients qui se connectent ne recevraient plus le
 schéma. La republication périodique garantit que le schéma est toujours
 disponible avec un délai maximum de 24h.
 Le hash évite toute surcharge : les consommateurs ignorent les republications
-si le schéma n'a pas changé.
+si le schéma n'a pas changé.~~
 
 **Aucune intervention manuelle** n'est nécessaire après un flash.
 
@@ -1238,3 +1239,6 @@ Intégration de 5 points issus d'une revue externe de la v4 :
   au lieu d'un INSERT par message (§9.3).
 - **VACUUM mensuel** : récupération automatique de l'espace disque
   libéré par les purges FIFO quotidiennes (§9.3).
+
+### v4.1 (18 mars 2026)
+Suppression de l'émission du schéma des datas en dehors du reboot.
