@@ -15,6 +15,8 @@
 
 #include "Core/TaskManager.h"
 #include "Core/EventManager.h"
+#include "Core/RTCManager.h"
+#include "Core/VirtualClock.h"
 
 #include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
@@ -30,9 +32,6 @@
 
 static unsigned long bootTimeMs = 0;
 
-// -----------------------------------------------------------------------------
-// Temps de fonctionnement (utilisé par l'interface web)
-// -----------------------------------------------------------------------------
 // ⚠️ Symbole global unique (utilisé par PagePrincipale)
 unsigned long startTime = 0;
 
@@ -44,7 +43,7 @@ static void loopRun();
 static void (*currentLoop)() = loopInit;
 
 // -----------------------------------------------------------------------------
-// SETUP
+// SETUP — minimal, la console série n'est pas encore prête
 // -----------------------------------------------------------------------------
 
 void setup()
@@ -52,26 +51,18 @@ void setup()
     delay(200);
 
     Console::begin(Console::Level::INFO);
-    Console::info("Boot système");
 
     bootTimeMs = millis();
     startTime  = bootTimeMs;
 
-    // --- Système de fichiers ---
-    if (!SPIFFS.begin(true)) {
-        Console::error("Erreur SPIFFS");
-        // On continue quand même
-    }
+    // Système de fichiers (pas de log, série pas prête)
+    SPIFFS.begin(true);
 
-    DataLogger::init();
-
-    // --- Connectivités ---
+    // WiFi (machine d'états, démarre en différé)
     WiFiManager::init();
 
-    // --- Capteurs ---
+    // Capteurs matériels
     DataAcquisition::init();
-
-    Console::info("Initialisation matérielle terminée");
 }
 
 // -----------------------------------------------------------------------------
@@ -101,80 +92,97 @@ static void loopInit()
     Console::info("Entrée en régime permanent");
 
     // -------------------------------------------------------------------------
-    // Boot AP (one-shot, avant TaskManager)
-    // On drive la machine d'états WiFi jusqu'à ce que l'AP soit opérationnel.
-    // Séquence bloquante acceptable : traversée une seule fois au boot.
+    // Boot AP (séquence bloquante, une seule fois au boot)
     // -------------------------------------------------------------------------
     while (!WiFiManager::isAPEnabled()) {
         WiFiManager::handle();
         delay(100);
     }
-    // Laisser l'AP se stabiliser (état AP_STABILIZE = 1s dans WiFiManager)
     unsigned long stabStart = millis();
     while (millis() - stabStart < 1200) {
         WiFiManager::handle();
         delay(100);
     }
 
-    // --- Serveur Web — démarré APRÈS que l'AP soit opérationnel ---
+    // ─────────────────────────────────────────────────────────────────────────
+    // À partir d'ici la console série est prête, on peut loguer
+    // ─────────────────────────────────────────────────────────────────────────
+
+    Console::info("Boot " + String(DEVICE_NAME) + " v" + String(FW_VERSION));
+
+    // --- SPIFFS ---
+    if (SPIFFS.totalBytes() > 0) {
+        Console::info("[SPIFFS] OK");
+    } else {
+        Console::error("[SPIFFS] ÉCHEC — pas de stockage flash");
+    }
+
+    // --- DataLogger ---
+    DataLogger::init();
+    Console::info("[DataLogger] OK");
+
+    // --- RTC DS3231 ---
+    RTCManager::init();
+
+    // --- Horloge virtuelle machine ---
+    VirtualClock::init();
+
+    if (RTCManager::isReliable()) {
+        VirtualClock::sync(RTCManager::read());
+        Console::info("[VClock] VirtualClock mise à jour sur RTC");
+    } else {
+        Console::warn("[VClock] RTC indisponible — démarrage à midi arbitraire");
+    }
+
+    // --- Serveur Web ---
     WebServer::init();
 
-    // Initialisation EventManager avec état stable
+    // --- EventManager ---
     EventManager::init();
     EventManager::prime();
 
-    // Simulateur tension — TEST — À SUPPRIMER en production
+    // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
 
-    // Démarrage du TaskManager
+    // --- TaskManager ---
     TaskManager::init();
 
-    // -------------------------------------------------------------------------
-    // TÂCHE WIFI (machine d'états non-bloquante)
-    // -------------------------------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────
+    // Enregistrement des tâches périodiques
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // WiFi
     TaskManager::addTask(
-        []() {
-            WiFiManager::handle();
-        },
+        []() { WiFiManager::handle(); },
         WIFI_HANDLE_PERIOD_MS
     );
 
-    // -------------------------------------------------------------------------
-    // INITIALISATION UTC / NTP
-    // -------------------------------------------------------------------------
+    // NTP
     ManagerUTC::init();
-
-    // Tâche UTC / NTP (machine d'état autonome)
     TaskManager::addTask(
-        []() {
-            ManagerUTC::handle();
-        },
+        []() { ManagerUTC::handle(); },
         UTC_HANDLE_PERIOD_MS
     );
 
-    // -------------------------------------------------------------------------
-    // Tâche EventManager
-    // -------------------------------------------------------------------------
+    // VirtualClock (resync 24h depuis RTC)
     TaskManager::addTask(
-        []() {
-            EventManager::handle();
-        },
+        []() { VirtualClock::handle(); },
+        60000
+    );
+
+    // EventManager
+    TaskManager::addTask(
+        []() { EventManager::handle(); },
         EVENT_MANAGER_PERIOD_MS
     );
 
-    // -------------------------------------------------------------------------
-    // TÂCHE DATALOGGER (flush SPIFFS + réparation UTC)
-    // -------------------------------------------------------------------------
+    // DataLogger
     TaskManager::addTask(
-        []() {
-            DataLogger::handle();
-        },
+        []() { DataLogger::handle(); },
         DATALOGGER_HANDLE_PERIOD_MS
     );
 
-    // -------------------------------------------------------------------------
-    // TÂCHE WI-FI → DataLogger
-    // -------------------------------------------------------------------------
+    // WiFi status → DataLogger
     TaskManager::addTask(
         []() {
             DataLogger::push(
@@ -182,38 +190,24 @@ static void loopInit()
                 DataId::WifiStaConnected,
                 WiFiManager::isSTAConnected() ? 1.0f : 0.0f
             );
-
             DataLogger::push(
                 DataType::System,
                 DataId::WifiApEnabled,
                 WiFiManager::isAPEnabled() ? 1.0f : 0.0f
             );
-
             if (WiFiManager::isSTAConnected()) {
-                DataLogger::push(
-                    DataType::System,
-                    DataId::WifiRssi,
-                    (float)WiFi.RSSI()
-                );
+                DataLogger::push(DataType::System, DataId::WifiRssi, (float)WiFi.RSSI());
             } else {
-                DataLogger::push(
-                    DataType::System,
-                    DataId::WifiRssi,
-                    -100.0f
-                );
+                DataLogger::push(DataType::System, DataId::WifiRssi, -100.0f);
             }
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS
     );
 
-    // -------------------------------------------------------------------------
-    // TÂCHE FAKE VOLTAGE (test — À SUPPRIMER en production)
-    // -------------------------------------------------------------------------
+    // FakeVoltage (TEST)
     TaskManager::addTask(
-        []() {
-            FakeVoltage::handle();
-        },
-        30000   // 30 secondes
+        []() { FakeVoltage::handle(); },
+        30000
     );
 
     // Bascule définitive vers la loop de production

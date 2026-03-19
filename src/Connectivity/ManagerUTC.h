@@ -5,49 +5,32 @@
 #include <time.h>
 
 /*
- * ManagerUTC
+ * ManagerUTC — Agent NTP
  *
- * Source unique de vérité du temps UTC.
+ * Rôle unique : obtenir l'heure via NTP et la transmettre à :
+ *  - RTCManager   → écriture DS3231
+ *  - VirtualClock → recalage horloge virtuelle
  *
- * - Synchronisation NTP via Wi-Fi
- * - UTC invalide par défaut
- * - UTC invalide après 25h sans NTP
- * - Aucune approximation temporelle
- * - Aucune persistance après reboot
+ * Politique :
+ *  - Au boot : tentatives rapides (30s) jusqu'à 10 essais
+ *  - Après premier succès : resync toutes les 24h
  *
- * Le système peut fonctionner entièrement sans UTC.
+ * Ce module ne fournit AUCUNE API de lecture du temps.
+ * Pour lire l'heure  → RTCManager::read()
+ * Pour savoir si l'heure est fiable → RTCManager::isReliable()
  */
 
 class ManagerUTC {
 public:
-    // Cycle de vie
     static void init();
     static void handle();   // à appeler régulièrement (loop)
 
-    // API
-    static bool   isUtcValid();
-    static time_t nowUtc();
-
-    // Conversion relatif → UTC (DataLogger)
-    static time_t convertFromRelative(uint32_t t_rel_ms);
-
 private:
-    // Synchronisation
     static bool trySync();
 
-    // État UTC
-    static bool     utcValid;
-    static bool     everSynced;
-
-    // Timers
-    static uint32_t networkUpSinceMs;
-    static uint32_t lastAttemptMs;
-    static uint32_t lastSyncMs;
-
-    // Politique
-    static uint8_t  bootAttempts;
-
-    // Référence temporelle
-    static uint32_t syncRelMs;
-    static time_t   syncUtc;
+    static bool     _everSynced;
+    static uint32_t _networkUpSinceMs;
+    static uint32_t _lastAttemptMs;
+    static uint32_t _lastSyncMs;
+    static uint8_t  _bootAttempts;
 };
