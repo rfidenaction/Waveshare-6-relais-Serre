@@ -1,12 +1,14 @@
 // Storage/DataLogger.cpp
 // Portage Waveshare ESP32-S3-Relay-6CH
-// Changements RTC :
-//  - Live : timestamps via VirtualClock (au lieu de millis)
-//  - LastDataForWeb : uniquement UTC fiable (RTCManager) ou rien
-//  - Pending : inchangé (millis fallback + réparation UTC via RTCManager)
-//  - SPIFFS : inchangé (uniquement UTC)
+// Refactoring temps :
+//  - push() utilise ManagerUTC::readUTC() pour PENDING et LastDataForWeb
+//  - push() utilise VirtualClock::nowVirtual() pour LIVE (axe métier)
+//  - handle() réparation via ManagerUTC::readUTC()
+//  - tryFlush() sans garde RTCManager — flushe tout record UTC_available
+//  - Format CSV 7 champs : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+//  - LastDataForWeb toujours alimenté
 #include "Storage/DataLogger.h"
-#include "Core/RTCManager.h"
+#include "Connectivity/ManagerUTC.h"
 #include "Core/VirtualClock.h"
 #include "Utils/Console.h"
 #include <SPIFFS.h>
@@ -89,14 +91,6 @@ static String unescapeCSV(const String& text)
 }
 
 // -----------------------------------------------------------------------------
-// Temps
-// -----------------------------------------------------------------------------
-uint32_t DataLogger::nowRelative()
-{
-    return millis();
-}
-
-// -----------------------------------------------------------------------------
 // Initialisation
 // -----------------------------------------------------------------------------
 void DataLogger::init()
@@ -109,6 +103,7 @@ void DataLogger::init()
     // Reconstruction LastDataForWeb depuis la flash
     // LECTURE UNIQUE du fichier CSV : on parcourt toutes les lignes
     // et on garde la dernière valeur rencontrée pour chaque DataId.
+    // Format CSV 7 champs : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 
     File file = SPIFFS.open("/datalog.csv", FILE_READ);
     if (!file) {
@@ -120,6 +115,8 @@ void DataLogger::init()
     struct LastSeen {
         bool found = false;
         uint32_t timestamp = 0;
+        bool UTC_available = false;
+        bool UTC_reliable  = false;
         DataType type = DataType::System;
         std::variant<float, String> value;
     };
@@ -129,28 +126,34 @@ void DataLogger::init()
         String line = file.readStringUntil('\n');
         if (line.length() == 0) continue;
 
-        // Parser la ligne : timestamp,type,id,valueType,value
-        int firstComma = line.indexOf(',');
-        int secondComma = line.indexOf(',', firstComma + 1);
-        int thirdComma = line.indexOf(',', secondComma + 1);
-        int fourthComma = line.indexOf(',', thirdComma + 1);
+        // Parser la ligne : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+        int c4 = line.indexOf(',', c3 + 1);
+        int c5 = line.indexOf(',', c4 + 1);
+        int c6 = line.indexOf(',', c5 + 1);
 
-        if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1) {
+        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
             continue;  // Ligne mal formatée, ignorer
         }
 
-        unsigned long ts = line.substring(0, firstComma).toInt();
-        uint8_t typeByte = line.substring(firstComma + 1, secondComma).toInt();
-        uint8_t idByte = line.substring(secondComma + 1, thirdComma).toInt();
-        uint8_t valueType = line.substring(thirdComma + 1, fourthComma).toInt();
-        String valueStr = line.substring(fourthComma + 1);
+        unsigned long ts     = line.substring(0, c1).toInt();
+        uint8_t avail        = line.substring(c1 + 1, c2).toInt();
+        uint8_t reliable     = line.substring(c2 + 1, c3).toInt();
+        uint8_t typeByte     = line.substring(c3 + 1, c4).toInt();
+        uint8_t idByte       = line.substring(c4 + 1, c5).toInt();
+        uint8_t valueType    = line.substring(c5 + 1, c6).toInt();
+        String valueStr      = line.substring(c6 + 1);
 
         if (idByte >= (uint8_t)DataId::Count) continue;  // Id hors limites
 
         LastSeen& ls = lastSeen[idByte];
-        ls.found = true;
-        ls.timestamp = ts;
-        ls.type = static_cast<DataType>(typeByte);
+        ls.found         = true;
+        ls.timestamp     = ts;
+        ls.UTC_available = (avail != 0);
+        ls.UTC_reliable  = (reliable != 0);
+        ls.type          = static_cast<DataType>(typeByte);
 
         if (valueType == 0) {
             ls.value = valueStr.toFloat();
@@ -166,10 +169,10 @@ void DataLogger::init()
     for (int id = 0; id < (int)DataId::Count; ++id) {
         if (lastSeen[id].found) {
             LastDataForWeb e;
-            e.value     = lastSeen[id].value;
-            e.t_rel_ms  = 0;
-            e.t_utc     = lastSeen[id].timestamp;
-            e.utc_valid = true;
+            e.value         = lastSeen[id].value;
+            e.timestamp     = lastSeen[id].timestamp;
+            e.UTC_available = lastSeen[id].UTC_available;
+            e.UTC_reliable  = lastSeen[id].UTC_reliable;
             lastDataForWeb[(DataId)id] = e;
         }
     }
@@ -180,36 +183,34 @@ void DataLogger::init()
 // -----------------------------------------------------------------------------
 void DataLogger::push(DataType type, DataId id, float value)
 {
-    uint32_t relNow   = nowRelative();
-    bool     rtcValid = RTCManager::isReliable();
-    time_t   utcNow   = rtcValid ? RTCManager::read() : 0;
+    TimeUTC t = ManagerUTC::readUTC();
 
-    // LIVE — timestamp VirtualClock (toujours disponible, éventuellement approximatif)
+    // LIVE — VirtualClock (axe métier, toujours un temps absolu)
     DataRecord liveRec;
-    liveRec.type      = type;
-    liveRec.id        = id;
-    liveRec.value     = value;
-    liveRec.timestamp = static_cast<uint32_t>(VirtualClock::nowVirtual());
-    liveRec.timeBase  = TimeBase::UTC;
+    liveRec.type          = type;
+    liveRec.id            = id;
+    liveRec.value         = value;
+    liveRec.timestamp     = static_cast<uint32_t>(VirtualClock::nowVirtual());
+    liveRec.UTC_available = true;
+    liveRec.UTC_reliable  = false;
     addLive(liveRec);
 
-    // PENDING — UTC si RTC fiable, sinon millis (réparé plus tard)
+    // PENDING — readUTC() fournit toujours un temps
     DataRecord pendRec;
-    pendRec.type      = type;
-    pendRec.id        = id;
-    pendRec.value     = value;
-    pendRec.timestamp = rtcValid ? static_cast<uint32_t>(utcNow) : relNow;
-    pendRec.timeBase  = rtcValid ? TimeBase::UTC : TimeBase::Relative;
+    pendRec.type          = type;
+    pendRec.id            = id;
+    pendRec.value         = value;
+    pendRec.timestamp     = static_cast<uint32_t>(t.timestamp);
+    pendRec.UTC_available = t.UTC_available;
+    pendRec.UTC_reliable  = t.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — uniquement si RTC fiable (UTC ou rien)
-    if (rtcValid) {
-        LastDataForWeb& w = lastDataForWeb[id];
-        w.value     = value;
-        w.t_utc     = utcNow;
-        w.utc_valid = true;
-        w.t_rel_ms  = 0;
-    }
+    // Vue Web — toujours alimenté
+    LastDataForWeb& w = lastDataForWeb[id];
+    w.value         = value;
+    w.timestamp     = t.timestamp;
+    w.UTC_available = t.UTC_available;
+    w.UTC_reliable  = t.UTC_reliable;
 }
 
 // -----------------------------------------------------------------------------
@@ -217,36 +218,34 @@ void DataLogger::push(DataType type, DataId id, float value)
 // -----------------------------------------------------------------------------
 void DataLogger::push(DataType type, DataId id, const String& textValue)
 {
-    uint32_t relNow   = nowRelative();
-    bool     rtcValid = RTCManager::isReliable();
-    time_t   utcNow   = rtcValid ? RTCManager::read() : 0;
+    TimeUTC t = ManagerUTC::readUTC();
 
-    // LIVE — timestamp VirtualClock
+    // LIVE — VirtualClock (axe métier)
     DataRecord liveRec;
-    liveRec.type      = type;
-    liveRec.id        = id;
-    liveRec.value     = textValue;
-    liveRec.timestamp = static_cast<uint32_t>(VirtualClock::nowVirtual());
-    liveRec.timeBase  = TimeBase::UTC;
+    liveRec.type          = type;
+    liveRec.id            = id;
+    liveRec.value         = textValue;
+    liveRec.timestamp     = static_cast<uint32_t>(VirtualClock::nowVirtual());
+    liveRec.UTC_available = true;
+    liveRec.UTC_reliable  = false;
     addLive(liveRec);
 
-    // PENDING — UTC si RTC fiable, sinon millis
+    // PENDING — readUTC() fournit toujours un temps
     DataRecord pendRec;
-    pendRec.type      = type;
-    pendRec.id        = id;
-    pendRec.value     = textValue;
-    pendRec.timestamp = rtcValid ? static_cast<uint32_t>(utcNow) : relNow;
-    pendRec.timeBase  = rtcValid ? TimeBase::UTC : TimeBase::Relative;
+    pendRec.type          = type;
+    pendRec.id            = id;
+    pendRec.value         = textValue;
+    pendRec.timestamp     = static_cast<uint32_t>(t.timestamp);
+    pendRec.UTC_available = t.UTC_available;
+    pendRec.UTC_reliable  = t.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — uniquement si RTC fiable
-    if (rtcValid) {
-        LastDataForWeb& w = lastDataForWeb[id];
-        w.value     = textValue;
-        w.t_utc     = utcNow;
-        w.utc_valid = true;
-        w.t_rel_ms  = 0;
-    }
+    // Vue Web — toujours alimenté
+    LastDataForWeb& w = lastDataForWeb[id];
+    w.value         = textValue;
+    w.timestamp     = t.timestamp;
+    w.UTC_available = t.UTC_available;
+    w.UTC_reliable  = t.UTC_reliable;
 }
 
 // -----------------------------------------------------------------------------
@@ -281,15 +280,22 @@ void DataLogger::addPending(const DataRecord& r)
 // -----------------------------------------------------------------------------
 void DataLogger::handle()
 {
-    // Réparation UTC : convertir les Pending en Relative → UTC
-    // si le RTC est devenu fiable
-    if (RTCManager::isReliable()) {
+    // Réparation UTC : convertir les Pending millis (UTC_available == false)
+    // en UTC si une source est maintenant disponible
+    TimeUTC t = ManagerUTC::readUTC();
+    if (t.UTC_available) {
         for (size_t i = 0; i < pendingCount; ++i) {
             size_t idx = (pendingHead + i) % PENDING_SIZE;
-            if (pending[idx].timeBase == TimeBase::Relative) {
-                pending[idx].timestamp =
-                    RTCManager::convertFromRelative(pending[idx].timestamp);
-                pending[idx].timeBase = TimeBase::UTC;
+            if (!pending[idx].UTC_available) {
+                // Calcul : UTC_event = UTC_now - (millis_now - millis_event) / 1000
+                int32_t deltaMs = static_cast<int32_t>(millis() - pending[idx].timestamp);
+                time_t repaired = t.timestamp - static_cast<time_t>(deltaMs / 1000L);
+
+                if (repaired > 0) {
+                    pending[idx].timestamp     = static_cast<uint32_t>(repaired);
+                    pending[idx].UTC_available = true;
+                    pending[idx].UTC_reliable  = t.UTC_reliable;
+                }
             }
         }
     }
@@ -307,16 +313,14 @@ void DataLogger::handle()
 }
 
 // -----------------------------------------------------------------------------
-// TRY FLUSH
+// TRY FLUSH — flushe les records UTC_available contigus depuis la tête
 // -----------------------------------------------------------------------------
 void DataLogger::tryFlush()
 {
-    if (!RTCManager::isReliable()) return;
-
     size_t flushable = 0;
     for (size_t i = 0; i < pendingCount; ++i) {
         size_t idx = (pendingHead + i) % PENDING_SIZE;
-        if (pending[idx].timeBase == TimeBase::UTC) {
+        if (pending[idx].UTC_available) {
             flushable++;
         } else {
             break;
@@ -331,7 +335,7 @@ void DataLogger::tryFlush()
 
 // -----------------------------------------------------------------------------
 // FLUSH TO FLASH
-// Format CSV : timestamp,type,id,valueType,value
+// Format CSV : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // valueType = 0 pour float, 1 pour String
 // -----------------------------------------------------------------------------
 void DataLogger::flushToFlash(size_t count)
@@ -350,8 +354,10 @@ void DataLogger::flushToFlash(size_t count)
         if (std::holds_alternative<float>(r.value)) {
             // Valeur numérique
             float val = std::get<float>(r.value);
-            f.printf("%lu,%d,%d,0,%.3f\n",
+            f.printf("%lu,%d,%d,%d,%d,0,%.3f\n",
                      r.timestamp,
+                     (int)r.UTC_available,
+                     (int)r.UTC_reliable,
                      (int)r.type,
                      (int)r.id,
                      val);
@@ -359,8 +365,10 @@ void DataLogger::flushToFlash(size_t count)
             // Valeur textuelle - ÉCHAPPER avec guillemets CSV
             String txt = std::get<String>(r.value);
             String escaped = escapeCSV(txt);
-            f.printf("%lu,%d,%d,1,%s\n",
+            f.printf("%lu,%d,%d,%d,%d,1,%s\n",
                      r.timestamp,
+                     (int)r.UTC_available,
+                     (int)r.UTC_reliable,
                      (int)r.type,
                      (int)r.id,
                      escaped.c_str());
@@ -444,7 +452,7 @@ LogFileStats DataLogger::getLogFileStats()
 
 // -----------------------------------------------------------------------------
 // FLASH — dernière valeur UTC
-// Format CSV : timestamp,type,id,valueType,value
+// Format CSV : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // -----------------------------------------------------------------------------
 bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
 {
@@ -462,31 +470,30 @@ bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
         line = file.readStringUntil('\n');
         if (line.length() == 0) continue;
 
-        unsigned long ts;
-        uint8_t typeByte, idByte, valueType;
-        
-        int firstComma = line.indexOf(',');
-        int secondComma = line.indexOf(',', firstComma + 1);
-        int thirdComma = line.indexOf(',', secondComma + 1);
-        int fourthComma = line.indexOf(',', thirdComma + 1);
-        
-        if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1) {
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+        int c4 = line.indexOf(',', c3 + 1);
+        int c5 = line.indexOf(',', c4 + 1);
+        int c6 = line.indexOf(',', c5 + 1);
+
+        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
             Console::warn(TAG, "Ligne CSV mal formatée (virgules manquantes): " + line);
             continue;
         }
-        
-        ts = line.substring(0, firstComma).toInt();
-        typeByte = line.substring(firstComma + 1, secondComma).toInt();
-        idByte = line.substring(secondComma + 1, thirdComma).toInt();
-        valueType = line.substring(thirdComma + 1, fourthComma).toInt();
-        String valueStr = line.substring(fourthComma + 1);
-        
+
+        uint8_t idByte = line.substring(c4 + 1, c5).toInt();
+
         if (idByte == static_cast<uint8_t>(id)) {
-            candidate.timestamp = ts;
-            candidate.timeBase  = TimeBase::UTC;
-            candidate.type      = static_cast<DataType>(typeByte);
-            candidate.id        = id;
-            
+            candidate.timestamp     = line.substring(0, c1).toInt();
+            candidate.UTC_available = (line.substring(c1 + 1, c2).toInt() != 0);
+            candidate.UTC_reliable  = (line.substring(c2 + 1, c3).toInt() != 0);
+            candidate.type          = static_cast<DataType>(line.substring(c3 + 1, c4).toInt());
+            candidate.id            = id;
+
+            uint8_t valueType = line.substring(c5 + 1, c6).toInt();
+            String valueStr   = line.substring(c6 + 1);
+
             if (valueType == 0) {
                 candidate.value = valueStr.toFloat();
             } else {
@@ -506,6 +513,7 @@ bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
 
 // -----------------------------------------------------------------------------
 // GRAPH CSV (FLASH) — dernières mesures numériques
+// Format CSV : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // -----------------------------------------------------------------------------
 String DataLogger::getGraphCsv(DataId id, uint32_t maxPoints)
 {
@@ -534,21 +542,23 @@ String DataLogger::getGraphCsv(DataId id, uint32_t maxPoints)
         String line = file.readStringUntil('\n');
         if (line.length() == 0) continue;
 
-        int firstComma = line.indexOf(',');
-        int secondComma = line.indexOf(',', firstComma + 1);
-        int thirdComma = line.indexOf(',', secondComma + 1);
-        int fourthComma = line.indexOf(',', thirdComma + 1);
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+        int c4 = line.indexOf(',', c3 + 1);
+        int c5 = line.indexOf(',', c4 + 1);
+        int c6 = line.indexOf(',', c5 + 1);
 
-        if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1) {
+        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
             continue;
         }
 
-        uint8_t idByte = line.substring(secondComma + 1, thirdComma).toInt();
-        uint8_t valueType = line.substring(thirdComma + 1, fourthComma).toInt();
+        uint8_t idByte    = line.substring(c4 + 1, c5).toInt();
+        uint8_t valueType = line.substring(c5 + 1, c6).toInt();
 
         if (idByte == static_cast<uint8_t>(id) && valueType == 0) {
-            uint32_t ts = line.substring(0, firstComma).toInt();
-            float val = line.substring(fourthComma + 1).toFloat();
+            uint32_t ts = line.substring(0, c1).toInt();
+            float val   = line.substring(c6 + 1).toFloat();
 
             buf[bufHead].ts  = ts;
             buf[bufHead].val = val;

@@ -15,8 +15,8 @@ static const char* TAG = "RTC";
 static RTC_DS3231 rtc;
 
 // État interne
-bool RTCManager::_present  = false;
-bool RTCManager::_reliable = false;
+bool RTCManager::_present       = false;
+bool RTCManager::_RTC_available = false;
 
 // -----------------------------------------------------------------------------
 // Helper : formater un time_t en heure locale France (via SYSTEM_TIMEZONE)
@@ -44,8 +44,8 @@ static String formatLocalTime(time_t utc)
 // -----------------------------------------------------------------------------
 void RTCManager::init()
 {
-    _present  = false;
-    _reliable = false;
+    _present       = false;
+    _RTC_available = false;
 
     // Init I2C sur les pins du connecteur Pico HAT
     Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
@@ -62,14 +62,16 @@ void RTCManager::init()
 
     // Vérification OSF (Oscillator Stop Flag)
     if (rtc.lostPower()) {
-        _reliable = false;
+        _RTC_available = false;
         Console::warn(TAG, "Pile HS ou RTC jamais configuré. En attente de NTP.");
     } else {
-        _reliable = true;
+        _RTC_available = true;
 
         // Lecture et affichage en heure locale
-        time_t utcNow = read();
-        Console::info(TAG, "Pile OK — Heure RTC : " + formatLocalTime(utcNow));
+        time_t utcNow;
+        if (read(utcNow)) {
+            Console::info(TAG, "Pile OK — Heure RTC : " + formatLocalTime(utcNow));
+        }
     }
 }
 
@@ -82,17 +84,38 @@ bool RTCManager::isPresent()
     return _present;
 }
 
-bool RTCManager::isReliable()
+bool RTCManager::is_RTC_available()
 {
-    return _reliable;
+    return _RTC_available;
 }
 
-time_t RTCManager::read()
+bool RTCManager::read(time_t& rtcOut)
 {
-    if (!_present) return 0;
+    // Ping I2C — vérification que le DS3231 répond toujours
+    Wire.beginTransmission(0x68);
+    if (Wire.endTransmission() != 0) {
+        // Premier ping échoué — attente 250ms puis retry
+        delay(250);
+        Wire.beginTransmission(0x68);
+        if (Wire.endTransmission() != 0) {
+            // Deuxième ping échoué — RTC déclaré indisponible
+            _RTC_available = false;
+            Console::error(TAG, "DS3231 ne répond plus (double ping I2C échoué)");
+            return false;
+        }
+    }
 
+    // Lecture du temps
     DateTime now = rtc.now();
-    return now.unixtime();
+    time_t utc = now.unixtime();
+
+    // Garde : valeur aberrante (timestamp pré-2023)
+    if (utc < 1700000000) {
+        return false;
+    }
+
+    rtcOut = utc;
+    return true;
 }
 
 bool RTCManager::write(time_t utc)
@@ -103,26 +126,17 @@ bool RTCManager::write(time_t utc)
     }
 
     DateTime dt(utc);
-    rtc.adjust(dt);     // adjust() efface automatiquement le flag OSF
+    rtc.adjust(dt);
 
-    _reliable = true;   // Après écriture NTP, le RTC est fiable
+    // Vérification OSF après écriture
+    if (rtc.lostPower()) {
+        _RTC_available = false;
+        Console::error(TAG, "OSF toujours actif après écriture — problème matériel");
+        return false;
+    }
 
+    _RTC_available = true;
     Console::info(TAG, "RTC mise à jour : " + formatLocalTime(utc));
 
     return true;
-}
-
-// -----------------------------------------------------------------------------
-// Conversion relatif → UTC
-// Calcul : utc_event = utc_now - (millis_now - millis_event) / 1000
-// -----------------------------------------------------------------------------
-time_t RTCManager::convertFromRelative(uint32_t t_rel_ms)
-{
-    if (!_reliable) return 0;
-
-    time_t nowUtc = read();
-    if (nowUtc == 0) return 0;
-
-    int32_t deltaMs = static_cast<int32_t>(t_rel_ms - millis());
-    return nowUtc + static_cast<time_t>(deltaMs / 1000L);
 }

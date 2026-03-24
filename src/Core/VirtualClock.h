@@ -3,7 +3,7 @@
 //
 // Principe :
 //  - Démarre à midi (heure France) au boot
-//  - Recalée par RTC (toutes les 24h) et par NTP (à chaque synchro)
+//  - Recalée par RTC au boot et par NTP (via ManagerUTC)
 //  - Entre deux recalages, dérive sur millis()
 //
 // Usage actuel :
@@ -24,9 +24,6 @@ public:
     // Initialisation : ancre à midi heure France
     static void init();
 
-    // Appel périodique : resync depuis RTC toutes les 24h si fiable
-    static void handle();
-
     // Heure courante (time_t, éventuellement approximative)
     static time_t nowVirtual();
 
@@ -34,7 +31,7 @@ public:
     static void sync(time_t utc);
 
     // L'horloge a-t-elle été recalée au moins une fois ?
-    static bool isSynced();
+    static bool isVClockSynced();
 
 private:
     // Point d'ancrage
@@ -42,9 +39,5 @@ private:
     static uint32_t _anchorMillis;
 
     // État
-    static bool     _synced;
-    static uint32_t _lastSyncMs;
-
-    // Période de resync depuis RTC
-    static constexpr uint32_t RESYNC_PERIOD_MS = 24UL * 60UL * 60UL * 1000UL; // 24h
+    static bool     _VClockSynced;
 };

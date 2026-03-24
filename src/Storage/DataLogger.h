@@ -16,21 +16,22 @@
 // ─────────────────────────────────────────────
 // Référentiel temporel
 //
-// Ce module ne fournit jamais d'heure locale
-// Toute conversion UTC → locale est externe
+// Ce module ne fournit jamais d'heure locale.
+// Toute conversion UTC → locale est externe.
+//
+// Chaque enregistrement porte deux booléens :
+//   UTC_available : true = timestamp est un temps UTC
+//   UTC_reliable  : true = source RTC (précis), false = VClock (dérive)
+// Ces noms sont identiques dans TimeUTC, DataRecord,
+// LastDataForWeb, le CSV SPIFFS et les flux MQTT.
 // ─────────────────────────────────────────────
-
-enum class TimeBase : uint8_t {
-    Relative,   // millis depuis boot
-    UTC         // timestamp absolu
-};
 
 // ─────────────────────────────────────────────
 // DataType — domaine / regroupement
 //
 // Axe "où ça appartient" (distinct de DataNature).
 // Présent dans chaque enregistrement du log brut :
-//   timestamp,type,id,valueType,value
+//   timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // Permet filtrage et regroupement côté Python/Web.
 // ─────────────────────────────────────────────
 
@@ -163,30 +164,34 @@ inline constexpr DataMeta META[(uint8_t)DataId::Count] = {
 
 // ─────────────────────────────────────────────
 // Enregistrement
+//
+// UTC_available et UTC_reliable : même sémantique
+// que dans TimeUTC (voir ManagerUTC.h)
 // ─────────────────────────────────────────────
 
 struct DataRecord {
-    uint32_t timestamp;   // millis ou UTC selon timeBase
-    TimeBase timeBase;
+    uint32_t timestamp;      // UTC si UTC_available, millis() sinon
+    bool     UTC_available;  // true = timestamp est un temps UTC
+    bool     UTC_reliable;   // true = RTC, false = VClock ou réparé
     DataType type;
     DataId   id;
-    std::variant<float, String> value;  // Peut être float OU String
+    std::variant<float, String> value;
 };
 
 // ─────────────────────────────────────────────
 // Dernière observation exposée au Web
 // ─────────────────────────────────────────────
-// NOTE :
 // - value peut contenir soit un float, soit un String (std::variant)
-// - t_rel_ms est valide uniquement si utc_valid == false
-// - si utc_valid == true, seul t_utc doit être utilisé
+// - timestamp contient UTC ou millis selon UTC_available
+// - Valeurs par défaut : état initial pour un DataId
+//   qui n'a jamais reçu de donnée. Écrasé dès le premier push().
 // ─────────────────────────────────────────────
 
 struct LastDataForWeb {
     std::variant<float, String> value;
-    uint32_t  t_rel_ms  = 0;
-    time_t    t_utc     = 0;
-    bool      utc_valid = false;
+    time_t    timestamp     = 0;      // UTC ou millis selon UTC_available
+    bool      UTC_available = false;
+    bool      UTC_reliable  = false;
 };
 
 // ─────────────────────────────────────────────
@@ -215,8 +220,6 @@ public:
     // Push pour valeurs textuelles (String)
     static void push(DataType type, DataId id, const String& textValue);
 
-    static bool getLast(DataId id, DataRecord& out);
-
     static void handle();           // Réparation UTC + flush
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
@@ -224,7 +227,6 @@ public:
     // ───────────── Web ─────────────
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
-    static String getCurrentValueWithTime(DataId id);   // LEGACY
     static String getGraphCsv(DataId id, uint32_t maxPoints = 500);
 
     // Statistiques du fichier de logs
@@ -238,9 +240,6 @@ public:
     }
 
 private:
-    // ───────────── Temps ─────────────
-    static uint32_t nowRelative();
-
     // ───────────── Buffers ─────────────
     static constexpr size_t LIVE_SIZE    = 200;
     static constexpr size_t PENDING_SIZE = 2000;

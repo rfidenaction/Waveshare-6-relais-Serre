@@ -15,20 +15,19 @@ public:
     // Le chip DS3231 a-t-il répondu sur le bus I2C ?
     static bool isPresent();
 
-    // Présent ET oscillateur n'a pas été interrompu (pile ok)
-    static bool isReliable();
+    // Présent ET oscillateur n'a pas été interrompu (OSF clair)
+    static bool is_RTC_available();
 
-    // Lecture directe DS3231 → time_t UTC (0 si absent)
-    static time_t read();
+    // Lecture DS3231 : ping I2C + lecture + vérification valeur
+    // true → rtcOut contient le temps UTC lu
+    // false → rtcOut pas touché, lecture échouée
+    static bool read(time_t& rtcOut);
 
-    // Écriture DS3231 (efface OSF automatiquement via RTClib::adjust)
+    // Écriture DS3231 via RTClib::adjust, puis vérification OSF
+    // Écrit même si _RTC_available est false (on vérifie après)
     static bool write(time_t utc);
-
-    // Conversion timestamp relatif (millis) → UTC
-    // Utilise le temps RTC courant comme référence
-    static time_t convertFromRelative(uint32_t t_rel_ms);
 
 private:
     static bool _present;
-    static bool _reliable;
+    static bool _RTC_available;
 };

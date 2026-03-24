@@ -1,6 +1,7 @@
 // Connectivity/ManagerUTC.cpp
-// Agent NTP — obtient l'heure et la transmet à RTCManager + VirtualClock
-// Ce module ne fournit AUCUNE API de lecture du temps.
+// Maître du temps + Agent NTP
+// readUTC() : point d'accès unique au temps (cascade RTC → VClock → millis)
+// handle()  : agent NTP (synchro périodique)
 
 #include "Connectivity/ManagerUTC.h"
 #include "Core/RTCManager.h"
@@ -9,6 +10,7 @@
 #include <time.h>
 #include "lwip/apps/sntp.h"
 #include "Config/Config.h"
+#include "Config/TimingConfig.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "NTP";
@@ -20,8 +22,6 @@ static const char* TAG = "NTP";
 static constexpr uint32_t NETWORK_STABLE_DELAY_MS   = 60UL * 1000UL;               // 1 min
 static constexpr uint32_t BOOT_RETRY_INTERVAL_MS    = 30UL * 1000UL;               // 30 s
 static constexpr uint8_t  BOOT_MAX_ATTEMPTS         = 10;
-
-static constexpr uint32_t RESYNC_PERIOD_MS          = 24UL * 60UL * 60UL * 1000UL; // 24 h
 
 static constexpr time_t   UTC_MIN_VALID_TIMESTAMP   = 1700000000; // ~2023
 
@@ -53,8 +53,9 @@ static String formatLocalTime(time_t utc)
 bool     ManagerUTC::_everSynced       = false;
 uint32_t ManagerUTC::_networkUpSinceMs = 0;
 uint32_t ManagerUTC::_lastAttemptMs    = 0;
-uint32_t ManagerUTC::_lastSyncMs       = 0;
+uint32_t ManagerUTC::_lastTourMs       = 0;
 uint8_t  ManagerUTC::_bootAttempts     = 0;
+uint8_t  ManagerUTC::_tourCount        = 0;
 
 // ─────────────────────────────────────────────
 // Initialisation
@@ -65,12 +66,52 @@ void ManagerUTC::init()
     _everSynced       = false;
     _networkUpSinceMs = 0;
     _lastAttemptMs    = 0;
-    _lastSyncMs       = 0;
+    _lastTourMs       = 0;
     _bootAttempts     = 0;
+    _tourCount        = 0;
 
     sntp_stop();
 
-    Console::info(TAG, "Agent NTP initialisé (resync 24h)");
+    Console::info(TAG, "Agent NTP initialisé");
+}
+
+// ─────────────────────────────────────────────
+// readUTC — Point d'accès unique au temps
+//
+// Cascade :
+//   1. RTC OK (ping + lecture)   → UTC fiable
+//   2. VClock synced             → UTC approximatif
+//   3. Rien                      → millis()
+//
+// Ne retourne JAMAIS 0 dans timestamp.
+// ─────────────────────────────────────────────
+
+TimeUTC ManagerUTC::readUTC()
+{
+    TimeUTC t;
+
+    // Cas 1 : RTC matériel (disponible + ping I2C + lecture OK)
+    time_t rtcTime;
+    if (RTCManager::is_RTC_available() && RTCManager::read(rtcTime)) {
+        t.timestamp     = rtcTime;
+        t.UTC_available = true;
+        t.UTC_reliable  = true;
+        return t;
+    }
+
+    // Cas 2 : VirtualClock recalée (UTC approximatif, dérive sur millis)
+    if (VirtualClock::isVClockSynced()) {
+        t.timestamp     = VirtualClock::nowVirtual();
+        t.UTC_available = true;
+        t.UTC_reliable  = false;
+        return t;
+    }
+
+    // Cas 3 : aucun UTC — millis() comme filet de sécurité
+    t.timestamp     = static_cast<time_t>(millis());
+    t.UTC_available = false;
+    t.UTC_reliable  = false;
+    return t;
 }
 
 // ─────────────────────────────────────────────
@@ -98,17 +139,11 @@ void ManagerUTC::handle()
         return;
     }
 
-    // ─── Jamais synchronisé : tentatives rapides au boot ─────
-    if (!_everSynced) {
+    // ─── Phase boot : tentatives rapides (10 essais, 30s) ─────
+    if (!_everSynced && _bootAttempts < BOOT_MAX_ATTEMPTS) {
 
-        if (_bootAttempts >= BOOT_MAX_ATTEMPTS) {
-            if (nowMs - _lastAttemptMs < RESYNC_PERIOD_MS) {
-                return;
-            }
-        } else {
-            if (nowMs - _lastAttemptMs < BOOT_RETRY_INTERVAL_MS) {
-                return;
-            }
+        if (nowMs - _lastAttemptMs < BOOT_RETRY_INTERVAL_MS) {
+            return;
         }
 
         _lastAttemptMs = nowMs;
@@ -116,17 +151,31 @@ void ManagerUTC::handle()
 
         if (trySync()) {
             _everSynced = true;
-            _lastSyncMs = nowMs;
+            _lastTourMs = nowMs;
         }
 
         return;
     }
 
-    // ─── Déjà synchronisé : resync toutes les 24h ─────
-    if (nowMs - _lastSyncMs >= RESYNC_PERIOD_MS) {
-        _lastAttemptMs = nowMs;
+    // ─── Phase routine : un essai par tour de 50 min ─────
+    if (nowMs - _lastTourMs < NTP_RETRY_PERIOD_MS) {
+        return;
+    }
+    _lastTourMs = nowMs;
+
+    if (!VirtualClock::isVClockSynced()) {
+        // VClock pas synced → essai à chaque tour
         if (trySync()) {
-            _lastSyncMs = nowMs;
+            _everSynced = true;
+        }
+    } else {
+        // VClock synced → essai tous les NTP_ROUTINE_TOUR_COUNT tours
+        _tourCount++;
+        if (_tourCount >= NTP_ROUTINE_TOUR_COUNT) {
+            _tourCount = 0;
+            if (trySync()) {
+                _everSynced = true;
+            }
         }
     }
 }

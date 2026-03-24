@@ -1,7 +1,6 @@
 // Core/VirtualClock.cpp
 // Horloge virtuelle machine — backup pour les actions de la serre
 #include "Core/VirtualClock.h"
-#include "Core/RTCManager.h"
 #include "Config/Config.h"
 #include "Utils/Console.h"
 
@@ -10,8 +9,7 @@ static const char* TAG = "VClock";
 // État interne
 time_t   VirtualClock::_anchorUtc    = 0;
 uint32_t VirtualClock::_anchorMillis = 0;
-bool     VirtualClock::_synced       = false;
-uint32_t VirtualClock::_lastSyncMs   = 0;
+bool     VirtualClock::_VClockSynced = false;
 
 // -----------------------------------------------------------------------------
 // Helper : formater un time_t en heure locale France (via SYSTEM_TIMEZONE)
@@ -35,39 +33,24 @@ static String formatLocalTime(time_t utc)
 }
 
 // -----------------------------------------------------------------------------
-// Initialisation : ancre à midi heure France
-// On calcule midi local via SYSTEM_TIMEZONE pour respecter CET/CEST.
-// Date arbitraire 2025-01-01 (hiver → CET → midi local = 11:00 UTC)
+// Initialisation : ancre à 12h30 heure France
+// On calcule 12h30 local via SYSTEM_TIMEZONE pour respecter CET/CEST.
+// Date arbitraire 2025-01-01 (hiver → CET → 12h30 local = 11:30 UTC)
 // La date n'a pas d'importance pour le rythme d'arrosage,
 // seule l'heure du jour compte.
+//
+// 12h30 est choisi pour être cohérent avec SafeReboot :
+// le reboot mensuel a lieu à 12h25, VirtualClock démarre à 12h30
+// → si le RTC est mort et pas de NTP, l'erreur est de ~5 minutes.
 // -----------------------------------------------------------------------------
 void VirtualClock::init()
 {
-    // 2025-01-01 11:00:00 UTC = midi CET
-    _anchorUtc    = 1735729200UL;
-    _anchorMillis = millis();
-    _synced       = false;
-    _lastSyncMs   = 0;
+    // 2025-01-01 11:30:00 UTC = 12h30 CET
+    _anchorUtc      = 1735731000UL;
+    _anchorMillis   = millis();
+    _VClockSynced   = false;
 
     Console::info(TAG, "Initialisée à " + formatLocalTime(_anchorUtc) + " (heure locale arbitraire)");
-}
-
-// -----------------------------------------------------------------------------
-// Handle : resync périodique depuis RTC (toutes les 24h)
-// -----------------------------------------------------------------------------
-void VirtualClock::handle()
-{
-    if (RTCManager::isReliable()) {
-        uint32_t nowMs = millis();
-
-        if (_lastSyncMs == 0 || (nowMs - _lastSyncMs >= RESYNC_PERIOD_MS)) {
-            time_t rtcTime = RTCManager::read();
-            if (rtcTime > 0) {
-                sync(rtcTime);
-                Console::debug(TAG, "Resync 24h depuis RTC");
-            }
-        }
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -85,10 +68,9 @@ time_t VirtualClock::nowVirtual()
 // -----------------------------------------------------------------------------
 void VirtualClock::sync(time_t utc)
 {
-    _anchorUtc    = utc;
-    _anchorMillis = millis();
-    _synced       = true;
-    _lastSyncMs   = millis();
+    _anchorUtc      = utc;
+    _anchorMillis   = millis();
+    _VClockSynced   = true;
 
     Console::info(TAG, "VirtualClock mise à jour : " + formatLocalTime(utc));
 }
@@ -96,7 +78,7 @@ void VirtualClock::sync(time_t utc)
 // -----------------------------------------------------------------------------
 // L'horloge a-t-elle été recalée au moins une fois ?
 // -----------------------------------------------------------------------------
-bool VirtualClock::isSynced()
+bool VirtualClock::isVClockSynced()
 {
-    return _synced;
+    return _VClockSynced;
 }

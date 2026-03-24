@@ -83,11 +83,18 @@ static String formatSince(uint32_t ageMs)
 
 static String timeHtml(const LastDataForWeb& d)
 {
-    if (d.utc_valid) {
-        return formatUtc(d.t_utc);
+    if (d.UTC_available && d.UTC_reliable) {
+        // RTC — heure précise
+        return formatUtc(d.timestamp);
     }
 
-    uint32_t ageMs = millis() - d.t_rel_ms;
+    if (d.UTC_available && !d.UTC_reliable) {
+        // VClock — heure approximative
+        return formatUtc(d.timestamp) + " <em>(Imprécis)</em>";
+    }
+
+    // Pas d'UTC — timestamp contient millis(), affichage relatif
+    uint32_t ageMs = millis() - static_cast<uint32_t>(d.timestamp);
     return "<span class=\"age\" data-age-ms=\"" +
            String(ageMs) + "\">" +
            formatSince(ageMs) +

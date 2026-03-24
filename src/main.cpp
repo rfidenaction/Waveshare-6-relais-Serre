@@ -17,6 +17,7 @@
 #include "Core/EventManager.h"
 #include "Core/RTCManager.h"
 #include "Core/VirtualClock.h"
+#include "Core/SafeReboot.h"
 
 #include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
@@ -127,11 +128,16 @@ static void loopInit()
     // --- Horloge virtuelle machine ---
     VirtualClock::init();
 
-    if (RTCManager::isReliable()) {
-        VirtualClock::sync(RTCManager::read());
-        Console::info("[VClock] VirtualClock mise à jour sur RTC");
+    if (RTCManager::is_RTC_available()) {
+        time_t rtcTime;
+        if (RTCManager::read(rtcTime)) {
+            VirtualClock::sync(rtcTime);
+            Console::info("[VClock] VirtualClock mise à jour sur RTC");
+        } else {
+            Console::warn("[VClock] RTC disponible mais lecture échouée");
+        }
     } else {
-        Console::warn("[VClock] RTC indisponible — démarrage à midi arbitraire");
+        Console::warn("[VClock] RTC indisponible — démarrage à 12h30 arbitraire");
     }
 
     // --- Serveur Web ---
@@ -143,6 +149,9 @@ static void loopInit()
 
     // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
+
+    // --- SafeReboot ---
+    SafeReboot::init();
 
     // --- TaskManager ---
     TaskManager::init();
@@ -162,12 +171,6 @@ static void loopInit()
     TaskManager::addTask(
         []() { ManagerUTC::handle(); },
         UTC_HANDLE_PERIOD_MS
-    );
-
-    // VirtualClock (resync 24h depuis RTC)
-    TaskManager::addTask(
-        []() { VirtualClock::handle(); },
-        60000
     );
 
     // EventManager
@@ -208,6 +211,12 @@ static void loopInit()
     TaskManager::addTask(
         []() { FakeVoltage::handle(); },
         30000
+    );
+
+    // SafeReboot (reboot préventif mensuel)
+    TaskManager::addTask(
+        []() { SafeReboot::handle(); },
+        SAFE_REBOOT_PERIOD_MS
     );
 
     // Bascule définitive vers la loop de production

@@ -198,7 +198,6 @@ static void buildBundleHeader(String& p)
     p += "#SERRE_BUNDLE\n";
     p += "#SCHEMA_JSON_BEGIN\n";
     p += "{\n";
-    p += "  \"version\": \"1\",\n";
 
     // Timestamp de génération (heure locale France)
     char dateBuf[24] = "";
@@ -211,6 +210,9 @@ static void buildBundleHeader(String& p)
         }
     }
     p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
+
+    // Description des colonnes CSV (source de vérité pour le consommateur)
+    p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", \"type\", \"id\", \"valueType\", \"value\"],\n";
 
     // Table DataType (domaine / regroupement)
     p += "  \"dataTypes\": [\n";
