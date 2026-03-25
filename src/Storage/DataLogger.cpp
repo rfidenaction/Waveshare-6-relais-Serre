@@ -10,6 +10,7 @@
 #include "Storage/DataLogger.h"
 #include "Connectivity/ManagerUTC.h"
 #include "Core/VirtualClock.h"
+#include "Config/TimingConfig.h"
 #include "Utils/Console.h"
 #include <SPIFFS.h>
 #include <time.h>
@@ -303,9 +304,17 @@ void DataLogger::handle()
     bool flushByCount =
         pendingCount >= FLUSH_SIZE;
 
-    bool flushByTime =
-        pendingCount > 0 &&
-        (millis() - lastFlushMs >= FLUSH_TIMEOUT_MS);
+    bool flushByTime = false;
+    if (pendingCount > 0 && millis() - lastFlushMs >= FLUSH_HOURLY_MIN_INTERVAL_MS) {
+        if (t.UTC_available) {
+            // Calage sur l'heure pleine : flush dans les premières minutes
+            uint32_t secInHour = static_cast<uint32_t>(t.timestamp) % 3600;
+            flushByTime = (secInHour < FLUSH_HOURLY_WINDOW_SEC);
+        } else {
+            // Pas d'UTC : fallback sur délai simple (1h)
+            flushByTime = (millis() - lastFlushMs >= FLUSH_TIMEOUT_MS);
+        }
+    }
 
     if (flushByCount || flushByTime) {
         tryFlush();

@@ -93,6 +93,19 @@
  */
 #define DATALOGGER_HANDLE_PERIOD_MS    30000
 
+/*
+ * Délai minimum entre deux flush horaires (55 min).
+ * Empêche de re-flusher plusieurs fois dans la fenêtre de 5 min
+ * autour de l'heure pleine.
+ */
+#define FLUSH_HOURLY_MIN_INTERVAL_MS   3300000UL   // 55 min
+
+/*
+ * Fenêtre de calage sur l'heure pleine (5 min = 300s).
+ * Le flush horaire se déclenche quand UTC % 3600 < cette valeur.
+ */
+#define FLUSH_HOURLY_WINDOW_SEC        300
+
 // =============================================================================
 // SafeReboot — Reboot préventif automatique
 // =============================================================================

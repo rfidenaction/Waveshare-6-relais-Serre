@@ -65,7 +65,7 @@ static String formatUtc(time_t t)
     struct tm tmLocal;
     localtime_r(&t, &tmLocal);
     char buf[20];
-    strftime(buf, sizeof(buf), "%d/%m/%y %H:%M", &tmLocal);
+    strftime(buf, sizeof(buf), "%d/%m/%y %H:%M:%S", &tmLocal);
     return String(buf);
 }
 
