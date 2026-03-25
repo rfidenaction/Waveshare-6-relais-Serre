@@ -92,6 +92,10 @@ static void loopInit()
 
     Console::info("Entrée en régime permanent");
 
+    // ─── Configuration timezone (une seule fois, pour tout le firmware) ───
+    setenv("TZ", SYSTEM_TIMEZONE, 1);
+    tzset();
+
     // -------------------------------------------------------------------------
     // Boot AP (séquence bloquante, une seule fois au boot)
     // -------------------------------------------------------------------------
@@ -128,16 +132,14 @@ static void loopInit()
     // --- Horloge virtuelle machine ---
     VirtualClock::init();
 
-    if (RTCManager::is_RTC_available()) {
+    {
         time_t rtcTime;
         if (RTCManager::read(rtcTime)) {
             VirtualClock::sync(rtcTime);
             Console::info("[VClock] VirtualClock mise à jour sur RTC");
         } else {
-            Console::warn("[VClock] RTC disponible mais lecture échouée");
+            Console::warn("[VClock] RTC indisponible — démarrage à 12h30 arbitraire");
         }
-    } else {
-        Console::warn("[VClock] RTC indisponible — démarrage à 12h30 arbitraire");
     }
 
     // --- Serveur Web ---

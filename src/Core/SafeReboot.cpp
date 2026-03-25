@@ -39,9 +39,6 @@ int64_t SafeReboot::_rebootDeadline = 0;
 // -----------------------------------------------------------------------------
 static int64_t calcDelaySeconds(time_t nowUtc)
 {
-    setenv("TZ", SYSTEM_TIMEZONE, 1);
-    tzset();
-
     struct tm local;
     localtime_r(&nowUtc, &local);
 
@@ -81,8 +78,6 @@ static String formatDelay(int64_t delaySec)
 // -----------------------------------------------------------------------------
 static String formatTargetDate(time_t utc)
 {
-    setenv("TZ", SYSTEM_TIMEZONE, 1);
-    tzset();
     struct tm tmLocal;
     localtime_r(&utc, &tmLocal);
 

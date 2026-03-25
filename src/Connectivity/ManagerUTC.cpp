@@ -30,8 +30,6 @@ static constexpr time_t   UTC_MIN_VALID_TIMESTAMP   = 1700000000; // ~2023
 // ─────────────────────────────────────────────
 static String formatLocalTime(time_t utc)
 {
-    setenv("TZ", SYSTEM_TIMEZONE, 1);
-    tzset();
     struct tm tmLocal;
     localtime_r(&utc, &tmLocal);
 
@@ -90,9 +88,9 @@ TimeUTC ManagerUTC::readUTC()
 {
     TimeUTC t;
 
-    // Cas 1 : RTC matériel (disponible + ping I2C + lecture OK)
+    // Cas 1 : RTC matériel (OSF clair + lecture OK + timestamp valide)
     time_t rtcTime;
-    if (RTCManager::is_RTC_available() && RTCManager::read(rtcTime)) {
+    if (RTCManager::read(rtcTime)) {
         t.timestamp     = rtcTime;
         t.UTC_available = true;
         t.UTC_reliable  = true;

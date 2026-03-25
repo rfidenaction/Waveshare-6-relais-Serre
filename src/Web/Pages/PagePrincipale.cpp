@@ -62,9 +62,10 @@ String PagePrincipale::getUptimeString()
 
 static String formatUtc(time_t t)
 {
-    struct tm* tm = localtime(&t);
+    struct tm tmLocal;
+    localtime_r(&t, &tmLocal);
     char buf[20];
-    strftime(buf, sizeof(buf), "%d/%m/%y %H:%M", tm);
+    strftime(buf, sizeof(buf), "%d/%m/%y %H:%M", &tmLocal);
     return String(buf);
 }
 

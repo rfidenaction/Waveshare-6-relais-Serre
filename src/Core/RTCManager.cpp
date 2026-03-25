@@ -14,17 +14,11 @@ static const char* TAG = "RTC";
 // Instance RTClib (statique fichier)
 static RTC_DS3231 rtc;
 
-// État interne
-bool RTCManager::_present       = false;
-bool RTCManager::_RTC_available = false;
-
 // -----------------------------------------------------------------------------
 // Helper : formater un time_t en heure locale France (via SYSTEM_TIMEZONE)
 // -----------------------------------------------------------------------------
 static String formatLocalTime(time_t utc)
 {
-    setenv("TZ", SYSTEM_TIMEZONE, 1);
-    tzset();
     struct tm tmLocal;
     localtime_r(&utc, &tmLocal);
 
@@ -44,9 +38,6 @@ static String formatLocalTime(time_t utc)
 // -----------------------------------------------------------------------------
 void RTCManager::init()
 {
-    _present       = false;
-    _RTC_available = false;
-
     // Init I2C sur les pins du connecteur Pico HAT
     Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
     Console::info(TAG, "Init I2C (SDA=" + String(RTC_SDA_PIN) + " SCL=" + String(RTC_SCL_PIN) + ")");
@@ -57,16 +48,12 @@ void RTCManager::init()
         return;
     }
 
-    _present = true;
     Console::info(TAG, "DS3231 détecté");
 
     // Vérification OSF (Oscillator Stop Flag)
     if (rtc.lostPower()) {
-        _RTC_available = false;
         Console::warn(TAG, "Pile HS ou RTC jamais configuré. En attente de NTP.");
     } else {
-        _RTC_available = true;
-
         // Lecture et affichage en heure locale
         time_t utcNow;
         if (read(utcNow)) {
@@ -79,30 +66,12 @@ void RTCManager::init()
 // API
 // -----------------------------------------------------------------------------
 
-bool RTCManager::isPresent()
-{
-    return _present;
-}
-
-bool RTCManager::is_RTC_available()
-{
-    return _RTC_available;
-}
-
 bool RTCManager::read(time_t& rtcOut)
 {
-    // Ping I2C — vérification que le DS3231 répond toujours
-    Wire.beginTransmission(0x68);
-    if (Wire.endTransmission() != 0) {
-        // Premier ping échoué — attente 250ms puis retry
-        delay(250);
-        Wire.beginTransmission(0x68);
-        if (Wire.endTransmission() != 0) {
-            // Deuxième ping échoué — RTC déclaré indisponible
-            _RTC_available = false;
-            Console::error(TAG, "DS3231 ne répond plus (double ping I2C échoué)");
-            return false;
-        }
+    // OSF — l'oscillateur s'est-il arrêté ?
+    // Si le bus I2C est en panne, lostPower() retourne true (mode sûr)
+    if (rtc.lostPower()) {
+        return false;
     }
 
     // Lecture du temps
@@ -120,8 +89,10 @@ bool RTCManager::read(time_t& rtcOut)
 
 bool RTCManager::write(time_t utc)
 {
-    if (!_present) {
-        Console::error(TAG, "Écriture impossible — DS3231 absent");
+    // Ping I2C — vérification que le DS3231 est présent
+    Wire.beginTransmission(0x68);
+    if (Wire.endTransmission() != 0) {
+        Console::error(TAG, "Écriture impossible — DS3231 ne répond pas");
         return false;
     }
 
@@ -130,12 +101,10 @@ bool RTCManager::write(time_t utc)
 
     // Vérification OSF après écriture
     if (rtc.lostPower()) {
-        _RTC_available = false;
         Console::error(TAG, "OSF toujours actif après écriture — problème matériel");
         return false;
     }
 
-    _RTC_available = true;
     Console::info(TAG, "RTC mise à jour : " + formatLocalTime(utc));
 
     return true;

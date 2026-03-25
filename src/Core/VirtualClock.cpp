@@ -16,8 +16,6 @@ bool     VirtualClock::_VClockSynced = false;
 // -----------------------------------------------------------------------------
 static String formatLocalTime(time_t utc)
 {
-    setenv("TZ", SYSTEM_TIMEZONE, 1);
-    tzset();
     struct tm tmLocal;
     localtime_r(&utc, &tmLocal);
 
