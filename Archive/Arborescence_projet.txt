@@ -1,0 +1,58 @@
+projet/
+├── platformio.ini
+├── src/
+│   ├── main.cpp                      // setup() + loop() + orchestration globale
+│   │
+│   ├── Config/
+│   │   ├── Config.h                  // Include global – point d'entrée principal
+│   │   ├── IO-Config.h               // Configuration des broches E/S
+│   │   ├── NetworkConfig.h           // Configuration réseau : SSID, passwords, MQTT broker, NTP, etc.
+│   │   └── TimingConfig.h            // TOUS les timings (périodes de mesure, arrosage, envoi données, etc.)
+│   │
+│   ├── Connectivity/
+│   │   ├── ManagerUTC.h
+│   │   ├── ManagerUTC.cpp            // Synchronisation NTP
+│   │   ├── SmsManager.h
+│   │   ├── SmsManager.cpp            // Envoi SMS via POST HTTP vers LilyGo
+│   │   ├── WifiManager.h
+│   │   └── WifiManager.cpp           // WiFi STA + AP (machine d'états non-bloquante)
+│   │
+│   ├── Core/
+│   │   ├── EventManager.h
+│   │   ├── EventManager.cpp          // Observation états + futur moteur de règles
+│   │   ├── RTCManager.h
+│   │   ├── RTCManager.cpp            // Gestion RTC matérielle (horodatage fiable dès le boot)
+│   │   ├── SafeReboot.h
+│   │   ├── SafeReboot.cpp            // Redémarrage sécurisé
+│   │   ├── TaskManager.h
+│   │   ├── TaskManager.cpp           // Gestion tâches périodiques (cœur du système)
+│   │   ├── TaskManagerMonitor.h
+│   │   ├── TaskManagerMonitor.cpp    // Surveillance des tâches périodiques
+│   │   ├── VirtualClock.h
+│   │   └── VirtualClock.cpp          // Horloge virtuelle
+│   │
+│   ├── Sensors/
+│   │   ├── DataAcquisition.h
+│   │   ├── DataAcquisition.cpp       // Lecture tous capteurs (BME, sol, débit, etc.)
+│   │   ├── FakeVoltage.h
+│   │   └── FakeVoltage.cpp           // Simulation tension (développement/test)
+│   │
+│   ├── Storage/
+│   │   ├── DataLogger.h              // Table META (source de vérité), enums DataType/DataId/DataNature
+│   │   └── DataLogger.cpp            // Push données + CSV SPIFFS + graphiques web
+│   │
+│   ├── Utils/
+│   │   ├── Console.h
+│   │   └── Console.cpp               // Logging série
+│   │
+│   └── Web/
+│       ├── WebServer.h
+│       ├── WebServer.cpp             // AsyncWebServer port 80 – routes, init, handlers
+│       │
+│       └── Pages/
+│           ├── PagePrincipale.h
+│           ├── PagePrincipale.cpp    // Dashboard principal
+│           ├── PageLogs.h
+│           └── PageLogs.cpp          // Gestion et affichage des logs
+│
+└── lib/                              // Bibliothèques privées si besoin
