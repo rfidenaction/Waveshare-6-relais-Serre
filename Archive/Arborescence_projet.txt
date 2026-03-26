@@ -12,6 +12,8 @@ projet/
 │   ├── Connectivity/
 │   │   ├── ManagerUTC.h
 │   │   ├── ManagerUTC.cpp            // Synchronisation NTP
+│   │   ├── MqttManager.h            
+│   │   ├── MqttManager.cpp           // Gestion de MQTT
 │   │   ├── SmsManager.h
 │   │   ├── SmsManager.cpp            // Envoi SMS via POST HTTP vers LilyGo
 │   │   ├── WifiManager.h

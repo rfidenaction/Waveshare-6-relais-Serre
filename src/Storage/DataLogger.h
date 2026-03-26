@@ -224,6 +224,11 @@ public:
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
 
+// ───────────── Callback publication ─────────────
+    // Permet à MqttManager (ou autre) de recevoir chaque donnée poussée.
+    // Le callback est appelé dans le contexte du TaskManager.
+    static void setOnPush(void (*callback)(const DataRecord&));
+
     // ───────────── Web ─────────────
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
@@ -265,4 +270,8 @@ private:
 
     static void tryFlush();
     static void flushToFlash(size_t count);
+
+// ───────────── Callback publication ─────────────
+    static void (*_onPushCallback)(const DataRecord&);
+
 };

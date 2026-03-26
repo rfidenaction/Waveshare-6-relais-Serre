@@ -12,6 +12,7 @@
 
 #include "Connectivity/WiFiManager.h"
 #include "Connectivity/ManagerUTC.h"
+#include "Connectivity/MqttManager.h"       // *** AJOUT MQTT ***
 
 #include "Core/TaskManager.h"
 #include "Core/EventManager.h"
@@ -154,6 +155,12 @@ static void loopInit()
 
     // --- SafeReboot ---
     SafeReboot::init();
+
+    // *** AJOUT MQTT *** — Initialisation MQTT + callback DataLogger
+    MqttManager::init();
+    DataLogger::setOnPush(MqttManager::onDataPushed);
+    Console::info("[MQTT] Callback DataLogger → MQTT configuré");
+    // *** FIN AJOUT MQTT ***
 
     // --- TaskManager ---
     TaskManager::init();

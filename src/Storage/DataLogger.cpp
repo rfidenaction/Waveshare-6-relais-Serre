@@ -34,6 +34,15 @@ std::map<DataId, LastDataForWeb> DataLogger::lastDataForWeb;
 
 static unsigned long lastFlushMs = 0;
 
+// *** AJOUT MQTT *** — Callback publication (nullptr = pas de callback)
+void (*DataLogger::_onPushCallback)(const DataRecord&) = nullptr;
+
+void DataLogger::setOnPush(void (*callback)(const DataRecord&))
+{
+    _onPushCallback = callback;
+}
+// *** FIN AJOUT MQTT ***
+
 // -----------------------------------------------------------------------------
 // Helpers CSV - Échappement et parsing
 // -----------------------------------------------------------------------------
@@ -212,6 +221,9 @@ void DataLogger::push(DataType type, DataId id, float value)
     w.timestamp     = t.timestamp;
     w.UTC_available = t.UTC_available;
     w.UTC_reliable  = t.UTC_reliable;
+
+    // *** AJOUT MQTT *** — Notification publication
+    if (_onPushCallback) _onPushCallback(pendRec);
 }
 
 // -----------------------------------------------------------------------------
@@ -247,6 +259,9 @@ void DataLogger::push(DataType type, DataId id, const String& textValue)
     w.timestamp     = t.timestamp;
     w.UTC_available = t.UTC_available;
     w.UTC_reliable  = t.UTC_reliable;
+
+    // *** AJOUT MQTT *** — Notification publication
+    if (_onPushCallback) _onPushCallback(pendRec);
 }
 
 // -----------------------------------------------------------------------------
