@@ -7,6 +7,11 @@
 //  - tryFlush() sans garde RTCManager — flushe tout record UTC_available
 //  - Format CSV 7 champs : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 //  - LastDataForWeb toujours alimenté
+//
+// Refactoring META (source de vérité unique) :
+//  - escapeCSV() et jsonEscape() centralisées comme méthodes publiques
+//  - init() utilise findMetaIndex() au lieu de DataId::Count
+//  - isValidId() remplace les tests manuels de bornes
 #include "Storage/DataLogger.h"
 #include "Connectivity/ManagerUTC.h"
 #include "Core/VirtualClock.h"
@@ -34,61 +39,76 @@ std::map<DataId, LastDataForWeb> DataLogger::lastDataForWeb;
 
 static unsigned long lastFlushMs = 0;
 
-// *** AJOUT MQTT *** — Callback publication (nullptr = pas de callback)
+// Callback publication (nullptr = pas de callback)
 void (*DataLogger::_onPushCallback)(const DataRecord&) = nullptr;
 
 void DataLogger::setOnPush(void (*callback)(const DataRecord&))
 {
     _onPushCallback = callback;
 }
-// *** FIN AJOUT MQTT ***
 
 // -----------------------------------------------------------------------------
-// Helpers CSV - Échappement et parsing
+// Utilitaires partagés — centralisés ici, déclarés publics dans DataLogger.h
+// Utilisés par DataLogger, WebServer, MqttManager
 // -----------------------------------------------------------------------------
 
 // Échappe une String pour CSV : ajoute guillemets et double les guillemets internes
-static String escapeCSV(const String& text)
+String DataLogger::escapeCSV(const String& text)
 {
-    String escaped = "\"";  // Commence avec un guillemet
-    
+    String escaped = "\"";
     for (size_t i = 0; i < text.length(); i++) {
         char c = text.charAt(i);
         if (c == '"') {
-            escaped += "\"\"";  // Double les guillemets
+            escaped += "\"\"";
         } else {
             escaped += c;
         }
     }
-    
-    escaped += "\"";  // Termine avec un guillemet
+    escaped += "\"";
     return escaped;
 }
 
+// Échappement JSON minimal (caractères critiques uniquement)
+// Les accents et caractères UTF-8 multi-octets sont valides en JSON sans escape.
+String DataLogger::jsonEscape(const char* s)
+{
+    String out;
+    if (!s) return out;
+    out.reserve(strlen(s) + 4);
+    while (*s) {
+        char c = *s++;
+        if      (c == '"')  { out += '\\'; out += '"';  }
+        else if (c == '\\') { out += '\\'; out += '\\'; }
+        else if (c == '\n') { out += '\\'; out += 'n';  }
+        else if (c == '\r') { out += '\\'; out += 'r';  }
+        else                { out += c; }
+    }
+    return out;
+}
+
+// -----------------------------------------------------------------------------
+// Helpers CSV internes — parsing (utilisé uniquement dans ce fichier)
+// -----------------------------------------------------------------------------
+
 // Parse une String CSV (entre guillemets) et dé-échappe
-// Entrée: "texte" ou "texte ""quoted""" 
+// Entrée: "texte" ou "texte ""quoted"""
 // Sortie: texte ou texte "quoted"
 static String unescapeCSV(const String& text)
 {
     String unescaped = "";
-    
-    // Vérifier que la String commence et finit par des guillemets
+
     if (text.length() < 2 || text.charAt(0) != '"' || text.charAt(text.length() - 1) != '"') {
-        // Pas de guillemets = format invalide, retourner tel quel
         Console::warn(TAG, "CSV String sans guillemets: " + text);
         return text;
     }
-    
-    // Parser le contenu entre les guillemets
+
     for (size_t i = 1; i < text.length() - 1; i++) {
         char c = text.charAt(i);
         if (c == '"') {
-            // Vérifier si c'est un guillemet doublé
             if (i + 1 < text.length() - 1 && text.charAt(i + 1) == '"') {
-                unescaped += '"';  // Ajouter un seul guillemet
-                i++;  // Sauter le deuxième guillemet
+                unescaped += '"';
+                i++;
             } else {
-                // Guillemet seul = erreur de format
                 Console::warn(TAG, "Guillemet non échappé dans CSV");
                 unescaped += c;
             }
@@ -96,7 +116,7 @@ static String unescapeCSV(const String& text)
             unescaped += c;
         }
     }
-    
+
     return unescaped;
 }
 
@@ -121,16 +141,15 @@ void DataLogger::init()
         return;
     }
 
-    // Table temporaire : dernière ligne vue pour chaque DataId
+    // Table temporaire indexée par position dans META (pas par id)
     struct LastSeen {
         bool found = false;
         uint32_t timestamp = 0;
         bool UTC_available = false;
         bool UTC_reliable  = false;
-        DataType type = DataType::System;
         std::variant<float, String> value;
     };
-    LastSeen lastSeen[(int)DataId::Count];
+    LastSeen lastSeen[META_COUNT];
 
     while (file.available()) {
         String line = file.readStringUntil('\n');
@@ -151,19 +170,20 @@ void DataLogger::init()
         unsigned long ts     = line.substring(0, c1).toInt();
         uint8_t avail        = line.substring(c1 + 1, c2).toInt();
         uint8_t reliable     = line.substring(c2 + 1, c3).toInt();
-        uint8_t typeByte     = line.substring(c3 + 1, c4).toInt();
+        // typeByte (c3→c4) ignoré : META est la source de vérité pour le type
         uint8_t idByte       = line.substring(c4 + 1, c5).toInt();
         uint8_t valueType    = line.substring(c5 + 1, c6).toInt();
         String valueStr      = line.substring(c6 + 1);
 
-        if (idByte >= (uint8_t)DataId::Count) continue;  // Id hors limites
+        // Recherche de l'index dans META pour cet id
+        int metaIdx = findMetaIndex(idByte);
+        if (metaIdx < 0) continue;  // Id inconnu dans META, ignorer
 
-        LastSeen& ls = lastSeen[idByte];
+        LastSeen& ls = lastSeen[metaIdx];
         ls.found         = true;
         ls.timestamp     = ts;
         ls.UTC_available = (avail != 0);
         ls.UTC_reliable  = (reliable != 0);
-        ls.type          = static_cast<DataType>(typeByte);
 
         if (valueType == 0) {
             ls.value = valueStr.toFloat();
@@ -176,23 +196,25 @@ void DataLogger::init()
     file.close();
 
     // Peupler lastDataForWeb depuis la table temporaire
-    for (int id = 0; id < (int)DataId::Count; ++id) {
-        if (lastSeen[id].found) {
+    for (size_t m = 0; m < META_COUNT; m++) {
+        if (lastSeen[m].found) {
             LastDataForWeb e;
-            e.value         = lastSeen[id].value;
-            e.timestamp     = lastSeen[id].timestamp;
-            e.UTC_available = lastSeen[id].UTC_available;
-            e.UTC_reliable  = lastSeen[id].UTC_reliable;
-            lastDataForWeb[(DataId)id] = e;
+            e.value         = lastSeen[m].value;
+            e.timestamp     = lastSeen[m].timestamp;
+            e.UTC_available = lastSeen[m].UTC_available;
+            e.UTC_reliable  = lastSeen[m].UTC_reliable;
+            lastDataForWeb[META[m].id] = e;
         }
     }
 }
 
 // -----------------------------------------------------------------------------
 // PUSH — point d'entrée pour valeurs NUMÉRIQUES (float)
+// DataType déduit automatiquement de META (source de vérité unique)
 // -----------------------------------------------------------------------------
-void DataLogger::push(DataType type, DataId id, float value)
+void DataLogger::push(DataId id, float value)
 {
+    DataType type = getMeta(id).type;
     TimeUTC t = ManagerUTC::readUTC();
 
     // LIVE — VirtualClock (axe métier, toujours un temps absolu)
@@ -222,15 +244,17 @@ void DataLogger::push(DataType type, DataId id, float value)
     w.UTC_available = t.UTC_available;
     w.UTC_reliable  = t.UTC_reliable;
 
-    // *** AJOUT MQTT *** — Notification publication
+    // Notification publication (MQTT ou autre)
     if (_onPushCallback) _onPushCallback(pendRec);
 }
 
 // -----------------------------------------------------------------------------
 // PUSH — point d'entrée pour valeurs TEXTUELLES (String)
+// DataType déduit automatiquement de META (source de vérité unique)
 // -----------------------------------------------------------------------------
-void DataLogger::push(DataType type, DataId id, const String& textValue)
+void DataLogger::push(DataId id, const String& textValue)
 {
+    DataType type = getMeta(id).type;
     TimeUTC t = ManagerUTC::readUTC();
 
     // LIVE — VirtualClock (axe métier)
@@ -260,7 +284,7 @@ void DataLogger::push(DataType type, DataId id, const String& textValue)
     w.UTC_available = t.UTC_available;
     w.UTC_reliable  = t.UTC_reliable;
 
-    // *** AJOUT MQTT *** — Notification publication
+    // Notification publication (MQTT ou autre)
     if (_onPushCallback) _onPushCallback(pendRec);
 }
 
@@ -278,7 +302,6 @@ void DataLogger::addLive(const DataRecord& r)
 // -----------------------------------------------------------------------------
 void DataLogger::addPending(const DataRecord& r)
 {
-    // Si plein : on perd le plus ancien (FIFO)
     if (pendingCount == PENDING_SIZE) {
         pendingHead = (pendingHead + 1) % PENDING_SIZE;
         pendingCount--;
@@ -296,14 +319,11 @@ void DataLogger::addPending(const DataRecord& r)
 // -----------------------------------------------------------------------------
 void DataLogger::handle()
 {
-    // Réparation UTC : convertir les Pending millis (UTC_available == false)
-    // en UTC si une source est maintenant disponible
     TimeUTC t = ManagerUTC::readUTC();
     if (t.UTC_available) {
         for (size_t i = 0; i < pendingCount; ++i) {
             size_t idx = (pendingHead + i) % PENDING_SIZE;
             if (!pending[idx].UTC_available) {
-                // Calcul : UTC_event = UTC_now - (millis_now - millis_event) / 1000
                 int32_t deltaMs = static_cast<int32_t>(millis() - pending[idx].timestamp);
                 time_t repaired = t.timestamp - static_cast<time_t>(deltaMs / 1000L);
 
@@ -322,11 +342,9 @@ void DataLogger::handle()
     bool flushByTime = false;
     if (pendingCount > 0 && millis() - lastFlushMs >= FLUSH_HOURLY_MIN_INTERVAL_MS) {
         if (t.UTC_available) {
-            // Calage sur l'heure pleine : flush dans les premières minutes
             uint32_t secInHour = static_cast<uint32_t>(t.timestamp) % 3600;
             flushByTime = (secInHour < FLUSH_HOURLY_WINDOW_SEC);
         } else {
-            // Pas d'UTC : fallback sur délai simple (1h)
             flushByTime = (millis() - lastFlushMs >= FLUSH_TIMEOUT_MS);
         }
     }
@@ -374,9 +392,7 @@ void DataLogger::flushToFlash(size_t count)
         size_t idx = (pendingHead + i) % PENDING_SIZE;
         DataRecord& r = pending[idx];
 
-        // Déterminer le type de valeur et l'écrire
         if (std::holds_alternative<float>(r.value)) {
-            // Valeur numérique
             float val = std::get<float>(r.value);
             f.printf("%lu,%d,%d,%d,%d,0,%.3f\n",
                      r.timestamp,
@@ -386,7 +402,6 @@ void DataLogger::flushToFlash(size_t count)
                      (int)r.id,
                      val);
         } else {
-            // Valeur textuelle - ÉCHAPPER avec guillemets CSV
             String txt = std::get<String>(r.value);
             String escaped = escapeCSV(txt);
             f.printf("%lu,%d,%d,%d,%d,1,%s\n",
@@ -413,21 +428,16 @@ void DataLogger::flushToFlash(size_t count)
 void DataLogger::clearHistory()
 {
     Console::info(TAG, "Suppression de l'historique...");
-    
-    // Supprimer le fichier CSV
+
     if (SPIFFS.remove("/datalog.csv")) {
         Console::info(TAG, "Fichier /datalog.csv supprimé avec succès");
     } else {
         Console::warn(TAG, "Impossible de supprimer /datalog.csv (peut-être inexistant)");
     }
-    
-    // Réinitialiser les buffers PENDING
+
     pendingHead = 0;
     pendingCount = 0;
-    
-    // Note: lastDataForWeb n'est PAS vidé - on garde les dernières valeurs en RAM
-    // pour continuer à afficher les données actuelles sur l'interface web
-    
+
     Console::info(TAG, "Buffers réinitialisés. Historique vidé.");
 }
 
@@ -452,25 +462,25 @@ LogFileStats DataLogger::getLogFileStats()
     stats.sizeBytes = 0;
     stats.sizeMB = 0.0f;
     stats.percentFull = 0.0f;
-    stats.totalMB = 2.0f;  // Partition SPIFFS : 2 MB (0x200000)
-    
+    stats.totalMB = 2.0f;
+
     File file = SPIFFS.open("/datalog.csv", FILE_READ);
     if (!file) {
         return stats;
     }
-    
+
     stats.exists = true;
     stats.sizeBytes = file.size();
     stats.sizeMB = stats.sizeBytes / (1024.0f * 1024.0f);
-    
+
     file.close();
-    
+
     stats.percentFull = (stats.sizeMB / stats.totalMB) * 100.0f;
-    
+
     Console::debug(TAG, "Stats fichier: " + String(stats.sizeMB, 2)
                    + " MB (" + String(stats.percentFull, 1)
                    + "% de " + String(stats.totalMB, 1) + " MB)");
-    
+
     return stats;
 }
 
@@ -512,7 +522,8 @@ bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
             candidate.timestamp     = line.substring(0, c1).toInt();
             candidate.UTC_available = (line.substring(c1 + 1, c2).toInt() != 0);
             candidate.UTC_reliable  = (line.substring(c2 + 1, c3).toInt() != 0);
-            candidate.type          = static_cast<DataType>(line.substring(c3 + 1, c4).toInt());
+            // typeByte (c3→c4) ignoré : META est la source de vérité pour le type
+            candidate.type          = getMeta(id).type;
             candidate.id            = id;
 
             uint8_t valueType = line.substring(c5 + 1, c6).toInt();
@@ -593,7 +604,6 @@ String DataLogger::getGraphCsv(DataId id, uint32_t maxPoints)
 
     file.close();
 
-    // Construire le CSV depuis le buffer (ordre chronologique)
     String csv = "timestamp,value\n";
     size_t start = (bufCount < maxPoints) ? 0 : bufHead;
 

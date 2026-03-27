@@ -198,19 +198,17 @@ static void loopInit()
     TaskManager::addTask(
         []() {
             DataLogger::push(
-                DataType::System,
                 DataId::WifiStaConnected,
                 WiFiManager::isSTAConnected() ? 1.0f : 0.0f
             );
             DataLogger::push(
-                DataType::System,
                 DataId::WifiApEnabled,
                 WiFiManager::isAPEnabled() ? 1.0f : 0.0f
             );
             if (WiFiManager::isSTAConnected()) {
-                DataLogger::push(DataType::System, DataId::WifiRssi, (float)WiFi.RSSI());
+                DataLogger::push(DataId::WifiRssi, (float)WiFi.RSSI());
             } else {
-                DataLogger::push(DataType::System, DataId::WifiRssi, -100.0f);
+                DataLogger::push(DataId::WifiRssi, -100.0f);
             }
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS

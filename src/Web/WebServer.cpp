@@ -1,15 +1,11 @@
 // Web/WebServer.cpp
 // Portage Waveshare ESP32-S3-Relay-6CH
-// Changements :
-//  - Suppression CellularManager (pas de modem)
-//  - Suppression route /wifi-toggle (STA toujours actif)
-//  - Suppression route /gsm-toggle (pas de modem)
-//  - Suppression garde GSM dans handleLogsDownload
-//  - handleLogs : suppression paramètre gsmActive
-//  - handleGraphData : BatteryVoltage → SupplyVoltage
-//  - BUNDLE_ID_TO_TYPE reconstruit sur nouvel enum (11 entrées)
-//  - BUNDLE_TYPE_LABELS : Battery → Power
-//  - Logger → Console
+//
+// Refactoring META (source de vérité unique) :
+//  - Suppression BUNDLE_ID_TO_TYPE[] (DataType vient de META)
+//  - Suppression BUNDLE_TYPE_LABELS[] (typeLabel vient de META)
+//  - Suppression jsonEscape() locale (centralisée dans DataLogger)
+//  - buildBundleHeader() génère tout depuis META
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"
@@ -43,10 +39,8 @@ void WebServer::init()
     server.on("/reset", HTTP_POST, handleReset);
 
     // ── Chart.js embarqué — servi depuis la flash ────────────
-    // Réponse chunkée pour éviter d'allouer ~200 KB en RAM
-    // Cache 24h côté navigateur (le contenu ne change pas)
     server.on("/js/chart.min.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-        size_t len = chart_js_end - chart_js_start - 1;  // -1 : null terminator
+        size_t len = chart_js_end - chart_js_start - 1;
         AsyncWebServerResponse *response = request->beginChunkedResponse(
             "application/javascript",
             [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
@@ -64,7 +58,6 @@ void WebServer::init()
     });
 
     // Routes de gestion des logs
-    // ⚠️ CORRECTION : routes spécifiques AVANT /logs
     server.on("/logs/download", HTTP_GET, handleLogsDownload);
     server.on("/logs/clear", HTTP_POST, handleLogsClear);
     server.on("/logs", HTTP_GET, handleLogs);
@@ -138,71 +131,22 @@ void WebServer::handleLogs(AsyncWebServerRequest *request)
 // Format :
 //   #SERRE_BUNDLE
 //   #SCHEMA_JSON_BEGIN
-//   { ... schéma JSON généré depuis DataLogger::getMeta() ... }
+//   { ... schéma JSON généré depuis META (source de vérité unique) ... }
 //   #SCHEMA_JSON_END
 //   #DATA_CSV_BEGIN
 //   ... contenu brut de /datalog.csv (aucune transformation) ...
 //   #DATA_CSV_END
-//
-// Avantages :
-//   - Transfert maximal : la phase DATA lit le fichier directement dans le
-//     buffer TCP, sans aucune allocation String ni parsing
-//   - Schéma JSON auto-généré depuis META : source de vérité unique
-//   - Format lisible dans un éditeur texte, parsable facilement en Python
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Mapping DataId → DataType (pour le schéma JSON) ──────────────────────────
-// Duplicat minimal nécessaire : DataType n'est pas dans DataMeta (axe distinct).
-// CONTRAT : synchronisé avec l'enum DataId dans DataLogger.h.
-static const uint8_t BUNDLE_ID_TO_TYPE[(uint8_t)DataId::Count] = {
-    0,  // SupplyVoltage    (0)  → Power
-    1,  // AirTemperature1  (1)  → Sensor
-    1,  // AirHumidity1     (2)  → Sensor
-    1,  // SoilMoisture1    (3)  → Sensor
-    2,  // Valve1           (4)  → Actuator
-    3,  // WifiStaConnected (5)  → System
-    3,  // WifiApEnabled    (6)  → System
-    3,  // WifiRssi         (7)  → System
-    3,  // Boot             (8)  → System
-    3,  // Error            (9)  → System
-};
-
-static const char* BUNDLE_TYPE_LABELS[] = {
-    "Power", "Sensor", "Actuator", "System"
-};
-
-// ── Échappement JSON minimal (caractères critiques uniquement) ────────────────
-// Les accents et caractères UTF-8 multi-octets sont valides en JSON sans escape.
-static String jsonEscape(const char* s)
-{
-    String out;
-    if (!s) return out;
-    out.reserve(strlen(s) + 4);
-    while (*s) {
-        char c = *s++;
-        if      (c == '"')  { out += '\\'; out += '"';  }
-        else if (c == '\\') { out += '\\'; out += '\\'; }
-        else if (c == '\n') { out += '\\'; out += 'n';  }
-        else if (c == '\r') { out += '\\'; out += 'r';  }
-        else                { out += c; }
-    }
-    return out;
-}
-
-// ── Génération du schéma JSON + marqueurs bundle dans pending ─────────────────
-// Produit tout ce qui précède les données brutes :
-//   #SERRE_BUNDLE
-//   #SCHEMA_JSON_BEGIN
-//   { ... }
-//   #SCHEMA_JSON_END
-//   #DATA_CSV_BEGIN
+// ── Génération du schéma JSON + marqueurs bundle ────────────────────────────
+// Tout est lu depuis META — aucun tableau local de mapping.
 static void buildBundleHeader(String& p)
 {
     p += "#SERRE_BUNDLE\n";
     p += "#SCHEMA_JSON_BEGIN\n";
     p += "{\n";
 
-    // Timestamp de génération (heure locale France)
+    // Timestamp de génération (heure locale)
     char dateBuf[24] = "";
     {
         time_t now = time(nullptr);
@@ -214,35 +158,53 @@ static void buildBundleHeader(String& p)
     }
     p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
 
-    // Description des colonnes CSV (source de vérité pour le consommateur)
-    p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", \"type\", \"id\", \"valueType\", \"value\"],\n";
+    // Description des colonnes CSV
+    p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
+         "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
-    // Table DataType (domaine / regroupement)
+    // ── Table DataType (dédupliquée depuis META) ────────────────────────────
+    // Parcourt les valeurs DataType 0-3, trouve le typeLabel dans META
     p += "  \"dataTypes\": [\n";
-    for (int i = 0; i < 4; i++) {
-        p += "    {\"id\": "; p += i;
-        p += ", \"label\": \""; p += BUNDLE_TYPE_LABELS[i]; p += "\"}";
-        if (i < 3) p += ",";
-        p += "\n";
+    bool firstType = true;
+    for (uint8_t t = 0; t <= 3; t++) {
+        // Chercher le premier META avec ce type pour obtenir le typeLabel
+        const char* typeLabel = nullptr;
+        for (size_t m = 0; m < META_COUNT; m++) {
+            if ((uint8_t)META[m].type == t) {
+                typeLabel = META[m].typeLabel;
+                break;
+            }
+        }
+        if (!typeLabel) continue;  // Aucun DataId de ce type
+
+        if (!firstType) p += ",\n";
+        firstType = false;
+        p += "    {\"id\": "; p += t;
+        p += ", \"label\": \""; p += DataLogger::jsonEscape(typeLabel); p += "\"}";
     }
-    p += "  ],\n";
+    p += "\n  ],\n";
 
-    // Table DataId (métadonnées complètes depuis DataLogger::getMeta)
+    // ── Table DataId (depuis META) ──────────────────────────────────────────
     p += "  \"dataIds\": [\n";
-    const uint8_t count = (uint8_t)DataId::Count;
-    for (uint8_t i = 0; i < count; i++) {
-        const DataMeta& m = DataLogger::getMeta((DataId)i);
+    for (size_t i = 0; i < META_COUNT; i++) {
+        const DataMeta& m = META[i];
 
-        p += "    {\"id\": "; p += i;
-        p += ", \"label\": \""; p += jsonEscape(m.label); p += "\"";
-        p += ", \"unit\": \"";  p += jsonEscape(m.unit);  p += "\"";
+        p += "    {\"id\": "; p += (uint8_t)m.id;
+        p += ", \"label\": \""; p += DataLogger::jsonEscape(m.label); p += "\"";
+        p += ", \"unit\": \"";  p += DataLogger::jsonEscape(m.unit);  p += "\"";
 
         const char* natureStr =
             (m.nature == DataNature::metrique) ? "metrique" :
             (m.nature == DataNature::etat)     ? "etat"     : "texte";
         p += ", \"nature\": \""; p += natureStr; p += "\"";
 
-        p += ", \"type\": "; p += BUNDLE_ID_TO_TYPE[i];
+        p += ", \"type\": "; p += (uint8_t)m.type;
+
+        // Min/Max (uniquement pour metrique)
+        if (m.nature == DataNature::metrique) {
+            p += ", \"min\": "; p += String(m.min, 1);
+            p += ", \"max\": "; p += String(m.max, 1);
+        }
 
         // Mapping états (uniquement pour nature == etat)
         if (m.nature == DataNature::etat && m.stateLabels != nullptr) {
@@ -252,7 +214,7 @@ static void buildBundleHeader(String& p)
                 p += "{\"value\": "; p += s;
                 p += ", \"label\": \"";
                 if (m.stateLabels[s] != nullptr) {
-                    p += jsonEscape(m.stateLabels[s]);
+                    p += DataLogger::jsonEscape(m.stateLabels[s]);
                 }
                 p += "\"}";
             }
@@ -260,7 +222,7 @@ static void buildBundleHeader(String& p)
         }
 
         p += "}";
-        if (i < count - 1) p += ",";
+        if (i < META_COUNT - 1) p += ",";
         p += "\n";
     }
     p += "  ]\n";
@@ -270,18 +232,7 @@ static void buildBundleHeader(String& p)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Contexte bundle
-//
-// Cycle de vie :
-//   Phase 1 (headerDone=false) : buildBundleHeader → pending → drain TCP
-//   Phase 2 (headerDone=true, !footerDone, file.available()) :
-//             file.read() direct dans buffer TCP (zéro allocation)
-//   Phase 3 (footerDone=false, EOF) : écriture #DATA_CSV_END → pending → drain
-//   Phase 4 (footerDone=true) : return 0 → fin transfert
-//
-// Libération :
-//   - Fin normale    : dans le callback (return 0)
-//   - Abort/disconnect : request->onDisconnect() + guard "deleted"
+// Contexte bundle (inchangé)
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct BundleContext {
@@ -296,7 +247,7 @@ struct BundleContext {
         : headerDone(false), footerDone(false), deleted(false)
     {
         filename[0] = '\0';
-        pending.reserve(4096); // Schéma JSON (~3 KB) + marqueurs
+        pending.reserve(4096);
     }
 };
 
@@ -304,14 +255,12 @@ struct BundleContext {
 
 void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
 {
-    // ── Gardes ───────────────────────────────────────────────────────────────
     if (!SPIFFS.exists("/datalog.csv")) {
         request->send(404, "text/plain", "Aucune donnée disponible");
         Console::warn(TAG, "Bundle download demandé mais fichier inexistant");
         return;
     }
 
-    // ── Allocation du contexte ────────────────────────────────────────────────
     BundleContext* ctx = new BundleContext();
     if (!ctx) {
         request->send(500, "text/plain", "Mémoire insuffisante");
@@ -327,7 +276,6 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
         return;
     }
 
-    // ── Nom de fichier avec date locale ───────────────────────────────────────
     strncpy(ctx->filename, "serre_bundle.txt", sizeof(ctx->filename));
     {
         time_t now = time(nullptr);
@@ -339,10 +287,8 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
         }
     }
 
-    // ── Libération sur abort/disconnect ──────────────────────────────────────
     request->onDisconnect([ctx]() {
         if (!ctx->deleted) {
-            // Déconnexion avant fin du transfert (abort client)
             if (ctx->file) ctx->file.close();
             Console::warn("BundleCtx", "Bundle interrompu (disconnect client)");
         } else {
@@ -351,23 +297,13 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
         delete ctx;
     });
 
-    // ── Réponse chunkée ───────────────────────────────────────────────────────
-    // Callback appelé au rythme du TCP. Retourne :
-    //   N > 0             → N octets à envoyer
-    //   0                 → fin du transfert
-    //   RESPONSE_TRY_AGAIN→ rien pour l'instant, réessayer plus tard
-    //
-    // L'argument "index" est ignoré : tout l'état est dans BundleContext.
-    // La lib n'appelle pas ce callback en parallèle.
-
     AsyncWebServerResponse* response = request->beginChunkedResponse(
         "text/plain; charset=utf-8",
         [ctx](uint8_t* buffer, size_t maxLen, size_t /*index*/) -> size_t {
 
-            // Guard : contexte déjà libéré par onDisconnect
             if (ctx->deleted) return 0;
 
-            // ── Drain pending (prioritaire sur toute autre action) ─────────────
+            // Drain pending
             if (ctx->pending.length() > 0) {
                 size_t toSend = min(ctx->pending.length(), maxLen);
                 memcpy(buffer, ctx->pending.c_str(), toSend);
@@ -375,7 +311,7 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
-            // ── Phase 1 : schéma JSON + marqueurs (une seule fois) ────────────
+            // Phase 1 : schéma JSON + marqueurs
             if (!ctx->headerDone) {
                 buildBundleHeader(ctx->pending);
                 ctx->headerDone = true;
@@ -386,13 +322,12 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
-            // ── Phase 2 : données brutes (lecture directe SPIFFS → buffer TCP) ─
-            // Zéro allocation String, zéro parsing : débit maximal.
+            // Phase 2 : données brutes
             if (ctx->file.available()) {
                 return ctx->file.read(buffer, maxLen);
             }
 
-            // ── Phase 3 : marqueur de fin données (une seule fois) ────────────
+            // Phase 3 : marqueur de fin
             if (!ctx->footerDone) {
                 ctx->pending += "\n#DATA_CSV_END\n";
                 ctx->footerDone = true;
@@ -403,10 +338,7 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
-            // ── Phase 4 : fin du transfert ────────────────────────────────────
-            // On ferme le fichier et on marque "deleted" pour le guard,
-            // mais on ne fait PAS delete ctx ici.
-            // Seul onDisconnect libère la mémoire (propriétaire unique).
+            // Phase 4 : fin du transfert
             ctx->file.close();
             Console::info("BundleCtx",
                 String("Bundle terminé → ") + ctx->filename);

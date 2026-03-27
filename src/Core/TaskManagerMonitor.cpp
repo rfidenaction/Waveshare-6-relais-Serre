@@ -5,6 +5,8 @@
 #include "Storage/DataLogger.h"
 #include "Utils/Console.h"
 
+static const char* TAG = "TaskMon";
+
 // -----------------------------------------------------------------------------
 // Variables statiques
 // -----------------------------------------------------------------------------
@@ -56,9 +58,12 @@ void TaskManagerMonitor::evaluateDelta(uint32_t nowMs)
         warningActive      = true;
         warningTimestampMs = nowMs;
 
+        Console::info(TAG, "Delta hors plage : " + String(delta)
+            + " ms (attendu " + String(EVENT_MANAGER_MIN_PERIOD_MS)
+            + "-" + String(EVENT_MANAGER_MAX_PERIOD_MS) + " ms)");
+
         // Enregistrement événement système
         DataLogger::push(
-            DataType::System,
             DataId::Error,          // volontairement générique pour l’instant
             static_cast<float>(delta)
         );

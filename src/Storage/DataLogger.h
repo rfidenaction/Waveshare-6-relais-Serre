@@ -1,56 +1,47 @@
 // Storage/DataLogger.h
-// Portage Waveshare ESP32-S3-Relay-6CH
-// Changements :
-//  - DataType::Battery → DataType::Power (tension alimentation 7-36V)
-//  - Suppression DataId Battery (sauf nouveau SupplyVoltage)
-//  - Suppression DataId Cellular (pas de modem)
-//  - Renumérotation dense de l'enum DataId
-//  - Correction LogFileStats : totalGB → totalMB (partition SPIFFS = 2 MB)
+// Source de vérité unique pour toutes les données du système
+//
+// Architecture :
+//   DATA_ID_LIST    → macro X qui génère l'enum DataId ET le tableau META
+//   DataMeta        → struct 10 champs décrivant chaque donnée
+//   META[]          → tableau constexpr en flash, organisé par groupes logiques
+//   getMeta(DataId) → recherche linéaire sur le champ id (O(n), négligeable)
+//
+// CONTRAT :
+//   - Les valeurs numériques d'id sont IMMUABLES une fois en production
+//   - Ajout d'un capteur = ajout d'UNE SEULE LIGNE dans DATA_ID_LIST
+//   - L'enum DataId et META sont générés automatiquement, jamais édités à la main
+//   - Le format CSV SPIFFS n'est PAS impacté par les modifications de META
+//
+// Référentiel temporel :
+//   Ce module ne fournit jamais d'heure locale.
+//   Chaque enregistrement porte deux booléens :
+//     UTC_available : true = timestamp est un temps UTC
+//     UTC_reliable  : true = source RTC (précis), false = VClock (dérive)
 #pragma once
 
 #include <Arduino.h>
 #include <map>
 #include <time.h>
-#include <variant>  // C++17 pour gérer float et String
+#include <variant>
 
-// ─────────────────────────────────────────────
-// Référentiel temporel
-//
-// Ce module ne fournit jamais d'heure locale.
-// Toute conversion UTC → locale est externe.
-//
-// Chaque enregistrement porte deux booléens :
-//   UTC_available : true = timestamp est un temps UTC
-//   UTC_reliable  : true = source RTC (précis), false = VClock (dérive)
-// Ces noms sont identiques dans TimeUTC, DataRecord,
-// LastDataForWeb, le CSV SPIFFS et les flux MQTT.
-// ─────────────────────────────────────────────
-
-// ─────────────────────────────────────────────
-// DataType — domaine / regroupement
-//
-// Axe "où ça appartient" (distinct de DataNature).
-// Présent dans chaque enregistrement du log brut :
-//   timestamp,UTC_available,UTC_reliable,type,id,valueType,value
-// Permet filtrage et regroupement côté Python/Web.
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// DataType — domaine fonctionnel (enum manuel, 4 entrées stables)
+// ═════════════════════════════════════════════════════════════════════════════
 
 enum class DataType : uint8_t {
-    Power    = 0,   // Alimentation (tension entrée 7-36V)
+    Power    = 0,   // Alimentation
     Sensor   = 1,   // Capteurs environnementaux
     Actuator = 2,   // Actionneurs (relais, vannes...)
     System   = 3    // Connectivité / système
 };
 
-// ─────────────────────────────────────────────
-// DataNature — traitement / sémantique
-//
-// Axe "comment on le traite" (distinct de DataType).
-// Utilisé par Python/Web pour décider :
-//   metrique → moyennable, courbe
-//   etat     → discret, pas de moyenne, libellés
-//   texte    → textuel, pas de calcul
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// DataNature — instruction de traitement pour l'affichage
+//   metrique → valeur + unité, moyennable, courbe, utilise min/max
+//   etat     → libellé d'état discret, pas de moyenne
+//   texte    → texte brut, pas de calcul
+// ═════════════════════════════════════════════════════════════════════════════
 
 enum class DataNature : uint8_t {
     metrique = 0,
@@ -58,116 +49,108 @@ enum class DataNature : uint8_t {
     texte    = 2
 };
 
-// ─────────────────────────────────────────────
-// DataId — identifiant unique de mesure
+// ═════════════════════════════════════════════════════════════════════════════
+// Tableaux de libellés d'états (constexpr)
+// Déclarés AVANT DATA_ID_LIST car référencés par la macro
+// ═════════════════════════════════════════════════════════════════════════════
+
+inline constexpr const char* const kLabelsWifiStaConnected[] = { "Déconnecté",  "Connecté" };
+inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     "Actif"    };
+inline constexpr const char* const kLabelsValve1[]           = { "Fermée",      "Ouverte"  };
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DATA_ID_LIST — SOURCE DE VÉRITÉ UNIQUE
 //
-// CONTRAT :
-// - Valeurs immuables et définitives dès la mise en production
-// - Enum dense (contigu de 0 à Count-1) : ne pas insérer de valeurs
-//   explicites non contiguës
-// - Ajout futur = nouveau DataId en fin de liste, avant Count
-// - Tout DataId scalable se termine par un index numérique (ex: Valve1)
-//   pour permettre le parsing automatique côté Python
+// Chaque ligne définit une donnée du système. Le préprocesseur génère
+// automatiquement l'enum DataId et le tableau META depuis cette liste.
 //
-// NOTE : renumérotation complète par rapport à la version LilyGo
-//        (pas d'historique flash à conserver sur la Waveshare)
-// ─────────────────────────────────────────────
-
-enum class DataId : uint8_t {
-    // ── Alimentation (DataType::Power) ───────
-    SupplyVoltage    = 0,   // Tension entrée 7-36V (pont diviseur externe à prévoir)
-
-    // ── Capteurs (DataType::Sensor) ──────────
-    AirTemperature1  = 1,
-    AirHumidity1     = 2,
-    SoilMoisture1    = 3,
-
-    // ── Actionneurs (DataType::Actuator) ─────
-    Valve1           = 4,
-
-    // ── Système / WiFi (DataType::System) ────
-    WifiStaConnected = 5,
-    WifiApEnabled    = 6,
-    WifiRssi         = 7,
-
-    // ── Événements système (DataType::System) ─
-    Boot             = 8,
-    Error            = 9,
-
-    Count            = 10   // Sentinel — toujours en dernier
-};
-
-// ─────────────────────────────────────────────
-// DataMeta — métadonnées d'un DataId
-//
-// Source de vérité unique pour tous les exports
-// et affichages (schéma JSON, pages web, Python).
+// X(id, name, type, typeLabel, label, unit, nature, min, max, stateLabels, stateLabelCount)
 //
 // Champs :
-//   label          : libellé FR (UTF-8, accents autorisés)
-//   unit           : unité (chaîne vide si non applicable)
+//   id             : identifiant numérique IMMUABLE (écrit dans le CSV SPIFFS)
+//   name           : nom C++ pour l'enum (disparaît après compilation)
+//   type           : DataType du domaine fonctionnel
+//   typeLabel      : label français du domaine (pour l'affichage)
+//   label          : label français de la donnée (pour l'affichage)
+//   unit           : unité de mesure ("" si non applicable)
 //   nature         : metrique / etat / texte
-//   stateLabels    : tableau de libellés d'états indexé par valeur entière
-//                    nullptr si nature != etat
-//                    nullptr sur une position = "pas de libellé" pour ce code
-//   stateLabelCount: nombre d'entrées dans stateLabels (0 si nullptr)
-// ─────────────────────────────────────────────
+//   min            : borne basse (significatif si metrique, 0.0f sinon)
+//   max            : borne haute (significatif si metrique, 0.0f sinon)
+//   stateLabels    : tableau de libellés d'états (nullptr si pas etat)
+//   stateLabelCount: nombre de libellés (0 si pas etat)
+//
+// AJOUT D'UN CAPTEUR : ajouter une ligne dans le groupe approprié.
+// L'id doit être unique et ne jamais réutiliser un id existant ou passé.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#define DATA_ID_LIST \
+    /* ── Alimentation ──────────────────────────────────────────────────────── */ \
+    X( 0, SupplyVoltage,    Power,    "Alimentation", "Tension alim",       "V",   metrique,    5.0f,  40.0f, nullptr,                0) \
+    \
+    /* ── Capteurs ──────────────────────────────────────────────────────────── */ \
+    X( 1, AirTemperature1,  Sensor,   "Capteur",      "Température air 1",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
+    X( 2, AirHumidity1,     Sensor,   "Capteur",      "Humidité air 1",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X( 3, SoilMoisture1,    Sensor,   "Capteur",      "Humidité sol 1",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    \
+    /* ── Actionneurs ───────────────────────────────────────────────────────── */ \
+    X( 4, Valve1,           Actuator, "Actionneur",   "Vanne 1",            "",    etat,        0.0f,   0.0f, kLabelsValve1,           2) \
+    \
+    /* ── Système ───────────────────────────────────────────────────────────── */ \
+    X( 5, WifiStaConnected, System,   "Système",      "WiFi STA",           "",    etat,        0.0f,   0.0f, kLabelsWifiStaConnected, 2) \
+    X( 6, WifiApEnabled,    System,   "Système",      "WiFi AP",            "",    etat,        0.0f,   0.0f, kLabelsWifiApEnabled,    2) \
+    X( 7, WifiRssi,         System,   "Système",      "WiFi RSSI",          "dBm", metrique, -100.0f,   0.0f, nullptr,                0) \
+    X( 8, Boot,             System,   "Système",      "Démarrage",          "",    texte,       0.0f,   0.0f, nullptr,                0) \
+    X( 9, Error,            System,   "Système",      "Erreur",             "",    texte,       0.0f,   0.0f, nullptr,                0)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Enum DataId — généré automatiquement depuis DATA_ID_LIST
+// ═════════════════════════════════════════════════════════════════════════════
+
+enum class DataId : uint8_t {
+    #define X(id, name, type, typeLabel, label, unit, nature, min, max, states, cnt) \
+        name = id,
+    DATA_ID_LIST
+    #undef X
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DataMeta — métadonnées d'un DataId (10 champs)
+// ═════════════════════════════════════════════════════════════════════════════
 
 struct DataMeta {
-    const char*        label;
-    const char*        unit;
+    DataId             id;
+    DataType           type;
+    const char*        typeLabel;       // Label français du domaine ("Capteur", "Système"...)
+    const char*        label;           // Label français de la donnée ("Température air 1"...)
+    const char*        unit;            // Unité ("°C", "%", "V"...) ou "" si non applicable
     DataNature         nature;
-    const char* const* stateLabels;
-    uint8_t            stateLabelCount;
+    float              min;             // Borne basse (significatif si metrique)
+    float              max;             // Borne haute (significatif si metrique)
+    const char* const* stateLabels;     // Libellés d'états (si etat), nullptr sinon
+    uint8_t            stateLabelCount; // Nombre de libellés (si etat), 0 sinon
 };
 
-// ─────────────────────────────────────────────
-// Tableaux de libellés d'états (constexpr)
-// Un tableau par DataId de nature "etat"
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// META — tableau constexpr généré depuis DATA_ID_LIST
+// Stocké en flash programme, zéro allocation RAM
+// Organisé par groupes logiques — la position n'a pas d'importance
+// ═════════════════════════════════════════════════════════════════════════════
 
-inline constexpr const char* const kLabelsWifiStaConnected[]  = { "Déconnecté",    "Connecté"    };
-inline constexpr const char* const kLabelsWifiApEnabled[]     = { "Inactif",       "Actif"       };
-inline constexpr const char* const kLabelsValve1[]            = { "Fermée",        "Ouverte"     };
-
-// ─────────────────────────────────────────────
-// META — table de métadonnées
-//
-// Indexée directement par (uint8_t)DataId::X.
-// Lookup O(1), aucune recherche, aucune allocation.
-//
-// CONTRAT : doit rester synchronisée avec l'enum DataId.
-// Toute modification de l'enum impose une mise à jour ici.
-// ─────────────────────────────────────────────
-
-inline constexpr DataMeta META[(uint8_t)DataId::Count] = {
-    // ── Alimentation ─────────────────────────────────────────────────────────
-    /* SupplyVoltage  (0) */ { "Tension alim",        "V",   DataNature::metrique, nullptr,                    0 },
-
-    // ── Capteurs ─────────────────────────────────────────────────────────────
-    /* AirTemperature1 (1) */ { "Température air 1",  "°C",  DataNature::metrique, nullptr,                    0 },
-    /* AirHumidity1    (2) */ { "Humidité air 1",     "%",   DataNature::metrique, nullptr,                    0 },
-    /* SoilMoisture1   (3) */ { "Humidité sol 1",     "%",   DataNature::metrique, nullptr,                    0 },
-
-    // ── Actionneurs ───────────────────────────────────────────────────────────
-    /* Valve1          (4) */ { "Vanne 1",             "",    DataNature::etat,     kLabelsValve1,              2 },
-
-    // ── Système / WiFi ────────────────────────────────────────────────────────
-    /* WifiStaConnected(5) */ { "WiFi STA",            "",    DataNature::etat,     kLabelsWifiStaConnected,    2 },
-    /* WifiApEnabled   (6) */ { "WiFi AP",              "",    DataNature::etat,     kLabelsWifiApEnabled,       2 },
-    /* WifiRssi        (7) */ { "WiFi RSSI",           "dBm", DataNature::metrique, nullptr,                    0 },
-
-    // ── Événements système ────────────────────────────────────────────────────
-    /* Boot   (8)  */          { "Démarrage",          "",    DataNature::texte,    nullptr,                    0 },
-    /* Error  (9)  */          { "Erreur",             "",    DataNature::texte,    nullptr,                    0 },
+inline constexpr DataMeta META[] = {
+    #define X(id, name, type, typeLabel, label, unit, nature, min, max, states, cnt) \
+        { DataId::name, DataType::type, typeLabel, label, unit, DataNature::nature, min, max, states, cnt },
+    DATA_ID_LIST
+    #undef X
 };
 
-// ─────────────────────────────────────────────
-// Enregistrement
+// Nombre d'entrées dans META (calculé automatiquement)
+inline constexpr size_t META_COUNT = sizeof(META) / sizeof(META[0]);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Enregistrement (DataRecord)
 //
-// UTC_available et UTC_reliable : même sémantique
-// que dans TimeUTC (voir ManagerUTC.h)
-// ─────────────────────────────────────────────
+// UTC_available et UTC_reliable : même sémantique que dans TimeUTC (ManagerUTC.h)
+// ═════════════════════════════════════════════════════════════════════════════
 
 struct DataRecord {
     uint32_t timestamp;      // UTC si UTC_available, millis() sinon
@@ -178,25 +161,20 @@ struct DataRecord {
     std::variant<float, String> value;
 };
 
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 // Dernière observation exposée au Web
-// ─────────────────────────────────────────────
-// - value peut contenir soit un float, soit un String (std::variant)
-// - timestamp contient UTC ou millis selon UTC_available
-// - Valeurs par défaut : état initial pour un DataId
-//   qui n'a jamais reçu de donnée. Écrasé dès le premier push().
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 
 struct LastDataForWeb {
     std::variant<float, String> value;
-    time_t    timestamp     = 0;      // UTC ou millis selon UTC_available
+    time_t    timestamp     = 0;
     bool      UTC_available = false;
     bool      UTC_reliable  = false;
 };
 
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 // Statistiques fichier de logs
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 
 struct LogFileStats {
     bool   exists;
@@ -206,27 +184,27 @@ struct LogFileStats {
     float  totalMB;     // Partition SPIFFS : 2 MB
 };
 
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 // DataLogger
-// ─────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
 
 class DataLogger {
 public:
     static void init();
 
     // Push pour valeurs numériques (float)
-    static void push(DataType type, DataId id, float value);
+    // DataType est déduit automatiquement de META (source de vérité unique)
+    static void push(DataId id, float value);
 
     // Push pour valeurs textuelles (String)
-    static void push(DataType type, DataId id, const String& textValue);
+    // DataType est déduit automatiquement de META (source de vérité unique)
+    static void push(DataId id, const String& textValue);
 
     static void handle();           // Réparation UTC + flush
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
 
-// ───────────── Callback publication ─────────────
-    // Permet à MqttManager (ou autre) de recevoir chaque donnée poussée.
-    // Le callback est appelé dans le contexte du TaskManager.
+    // ───────────── Callback publication ─────────────
     static void setOnPush(void (*callback)(const DataRecord&));
 
     // ───────────── Web ─────────────
@@ -237,12 +215,40 @@ public:
     // Statistiques du fichier de logs
     static LogFileStats getLogFileStats();
 
-    // Accès aux métadonnées d'un DataId
-    // Point d'entrée unique : évite le couplage direct sur META depuis l'extérieur
+    // ───────────── Accès META ─────────────
+    // Recherche linéaire par DataId. O(n) avec n = META_COUNT (~10-50).
+    // Négligeable sur ESP32 à 240 MHz face aux périodes de mesure.
+    // Retourne META[0] en fallback (ne devrait jamais arriver).
     static const DataMeta& getMeta(DataId id)
     {
-        return META[(uint8_t)id];
+        for (size_t i = 0; i < META_COUNT; i++) {
+            if (META[i].id == id) return META[i];
+        }
+        return META[0];
     }
+
+    // Vérifie si un id numérique (lu depuis CSV) existe dans META
+    static bool isValidId(uint8_t idByte)
+    {
+        for (size_t i = 0; i < META_COUNT; i++) {
+            if ((uint8_t)META[i].id == idByte) return true;
+        }
+        return false;
+    }
+
+    // Trouve l'index dans META pour un id numérique. Retourne -1 si non trouvé.
+    static int findMetaIndex(uint8_t idByte)
+    {
+        for (size_t i = 0; i < META_COUNT; i++) {
+            if ((uint8_t)META[i].id == idByte) return (int)i;
+        }
+        return -1;
+    }
+
+    // ───────────── Utilitaires partagés ─────────────
+    // Utilisés par DataLogger, WebServer, MqttManager
+    static String jsonEscape(const char* s);
+    static String escapeCSV(const String& text);
 
 private:
     // ───────────── Buffers ─────────────
@@ -271,7 +277,6 @@ private:
     static void tryFlush();
     static void flushToFlash(size_t count);
 
-// ───────────── Callback publication ─────────────
+    // ───────────── Callback publication ─────────────
     static void (*_onPushCallback)(const DataRecord&);
-
 };

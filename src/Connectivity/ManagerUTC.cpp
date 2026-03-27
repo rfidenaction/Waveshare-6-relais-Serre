@@ -55,6 +55,9 @@ uint32_t ManagerUTC::_lastTourMs       = 0;
 uint8_t  ManagerUTC::_bootAttempts     = 0;
 uint8_t  ManagerUTC::_tourCount        = 0;
 
+ManagerUTC::NtpState ManagerUTC::_ntpState    = NtpState::IDLE;
+uint32_t             ManagerUTC::_ntpStartMs  = 0;
+
 // ─────────────────────────────────────────────
 // Initialisation
 // ─────────────────────────────────────────────
@@ -67,6 +70,8 @@ void ManagerUTC::init()
     _lastTourMs       = 0;
     _bootAttempts     = 0;
     _tourCount        = 0;
+    _ntpState         = NtpState::IDLE;
+    _ntpStartMs       = 0;
 
     sntp_stop();
 
@@ -120,6 +125,12 @@ void ManagerUTC::handle()
 {
     const uint32_t nowMs = millis();
 
+    // ─── Tentative NTP en cours → vérifier le résultat ───
+    if (_ntpState == NtpState::WAITING) {
+        checkNtp();
+        return;
+    }
+
     // ─── Gestion état réseau ──────────────────
     if (WiFi.status() == WL_CONNECTED) {
         if (_networkUpSinceMs == 0) {
@@ -146,11 +157,7 @@ void ManagerUTC::handle()
 
         _lastAttemptMs = nowMs;
         _bootAttempts++;
-
-        if (trySync()) {
-            _everSynced = true;
-            _lastTourMs = nowMs;
-        }
+        startNtp();
 
         return;
     }
@@ -163,61 +170,70 @@ void ManagerUTC::handle()
 
     if (!VirtualClock::isVClockSynced()) {
         // VClock pas synced → essai à chaque tour
-        if (trySync()) {
-            _everSynced = true;
-        }
+        startNtp();
     } else {
         // VClock synced → essai tous les NTP_ROUTINE_TOUR_COUNT tours
         _tourCount++;
         if (_tourCount >= NTP_ROUTINE_TOUR_COUNT) {
             _tourCount = 0;
-            if (trySync()) {
-                _everSynced = true;
-            }
+            startNtp();
         }
     }
 }
 
 // ─────────────────────────────────────────────
-// Synchronisation NTP
-// Succès → écriture RTC + recalage VirtualClock
+// startNtp — Lance une tentative NTP (non-bloquant)
 // ─────────────────────────────────────────────
 
-bool ManagerUTC::trySync()
+void ManagerUTC::startNtp()
 {
     if (WiFi.status() != WL_CONNECTED) {
-        return false;
+        return;
     }
 
     configTzTime(SYSTEM_TIMEZONE, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
-
     sntp_init();
 
-    const uint32_t startMs = millis();
+    _ntpStartMs = millis();
+    _ntpState   = NtpState::WAITING;
+
+    Console::info(TAG, "Tentative NTP lancée");
+}
+
+// ─────────────────────────────────────────────
+// checkNtp — Vérifie si le NTP a répondu (appelé par handle)
+// Succès → écriture RTC + recalage VirtualClock
+// Timeout → abandon, retour en IDLE
+// ─────────────────────────────────────────────
+
+void ManagerUTC::checkNtp()
+{
     time_t utcNow = 0;
+    time(&utcNow);
 
-    while (millis() - startMs < 10000) {
-        time(&utcNow);
-        if (utcNow >= UTC_MIN_VALID_TIMESTAMP) {
-            sntp_stop();
+    if (utcNow >= UTC_MIN_VALID_TIMESTAMP) {
+        // ── Succès ──
+        sntp_stop();
+        _ntpState = NtpState::IDLE;
 
-            Console::info(TAG, "Synchro NTP réussie : " + formatLocalTime(utcNow)
-                + " (essai " + String(_bootAttempts)
-                + ", " + String((millis() - _networkUpSinceMs) / 1000)
-                + "s après WiFi)");
+        Console::info(TAG, "Synchro NTP réussie : " + formatLocalTime(utcNow)
+            + " (essai " + String(_bootAttempts)
+            + ", " + String((millis() - _networkUpSinceMs) / 1000)
+            + "s après WiFi)");
 
-            // Écriture dans le RTC DS3231
-            RTCManager::write(utcNow);
+        RTCManager::write(utcNow);
+        VirtualClock::sync(utcNow);
 
-            // Recalage VirtualClock
-            VirtualClock::sync(utcNow);
-
-            return true;
-        }
-        delay(100);
+        _everSynced = true;
+        _lastTourMs = millis();
+        return;
     }
 
-    sntp_stop();
-    Console::warn(TAG, "Tentative NTP échouée (timeout 10s)");
-    return false;
+    // ── Timeout (10s) ──
+    if (millis() - _ntpStartMs >= 10000) {
+        sntp_stop();
+        _ntpState = NtpState::IDLE;
+
+        Console::info(TAG, "Tentative NTP échouée (timeout 10s)");
+    }
 }

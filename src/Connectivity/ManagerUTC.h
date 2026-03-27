@@ -47,7 +47,14 @@ public:
     static TimeUTC readUTC();
 
 private:
-    static bool trySync();
+    // ── Machine d'états NTP (non-bloquante) ──
+    enum class NtpState : uint8_t { IDLE, WAITING };
+
+    static void startNtp();       // Lance sntp, passe en WAITING
+    static void checkNtp();       // Vérifie si NTP a répondu
+
+    static NtpState _ntpState;
+    static uint32_t _ntpStartMs;  // millis() au lancement de la tentative
 
     static bool     _everSynced;
     static uint32_t _networkUpSinceMs;

@@ -1,4 +1,11 @@
 // src/Connectivity/MqttManager.cpp
+//
+// Refactoring META (source de vérité unique) :
+//  - Suppression ID_TO_TYPE[] (DataType vient de META)
+//  - Suppression DATATYPE_LABELS[] (typeLabel vient de META)
+//  - Suppression jsonEscape() locale (centralisée dans DataLogger)
+//  - Suppression escapeCSV() locale (centralisée dans DataLogger)
+//  - buildSchemaJson() génère tout depuis META
 
 #include "Connectivity/MqttManager.h"
 #include "Connectivity/WiFiManager.h"
@@ -6,34 +13,11 @@
 #include "Storage/DataLogger.h"
 #include "Utils/Console.h"
 
-#include "mqtt_client.h"   // esp_mqtt natif ESP-IDF (disponible via Arduino ESP32 core)
+#include "mqtt_client.h"
 #include <variant>
 
 // Tag pour logs Console
 static const char* TAG = "MQTT";
-
-// =============================================================================
-// Mapping DataId → DataType (pour le schéma JSON)
-// Même approche que BUNDLE_ID_TO_TYPE dans WebServer.cpp.
-// CONTRAT : synchronisé avec l'enum DataId dans DataLogger.h.
-// =============================================================================
-static const uint8_t ID_TO_TYPE[(uint8_t)DataId::Count] = {
-    0,  // SupplyVoltage    (0)  → Power
-    1,  // AirTemperature1  (1)  → Sensor
-    1,  // AirHumidity1     (2)  → Sensor
-    1,  // SoilMoisture1    (3)  → Sensor
-    2,  // Valve1           (4)  → Actuator
-    3,  // WifiStaConnected (5)  → System
-    3,  // WifiApEnabled    (6)  → System
-    3,  // WifiRssi         (7)  → System
-    3,  // Boot             (8)  → System
-    3,  // Error            (9)  → System
-};
-
-// Labels DataType en français (pour le schéma JSON)
-static const char* DATATYPE_LABELS[] = {
-    "Alimentation", "Capteurs", "Actionneurs", "Système"
-};
 
 // =============================================================================
 // Variables statiques
@@ -50,32 +34,25 @@ void MqttManager::init()
 {
     Console::info(TAG, "Initialisation client MQTT");
 
-    // API ESP-IDF 4.x : champs plats (pas de struct imbriquée)
     esp_mqtt_client_config_t cfg = {};
 
-    // Broker + TLS
     cfg.uri      = MQTT_BROKER_URI;
     cfg.cert_pem = MQTT_CA_CERT;
 
-    // Credentials
     cfg.username  = MQTT_USERNAME;
     cfg.password  = MQTT_PASSWORD;
     cfg.client_id = MQTT_CLIENT_ID;
 
-    // Session
     cfg.keepalive = MQTT_KEEPALIVE_S;
 
-    // LWT (Last Will and Testament)
     cfg.lwt_topic  = MQTT_LWT_TOPIC;
     cfg.lwt_msg    = "offline";
     cfg.lwt_msg_len = 7;
     cfg.lwt_qos    = 1;
     cfg.lwt_retain = true;
 
-    // Taille buffer (défaut 1024, suffisant pour nos payloads CSV)
     cfg.buffer_size = 1024;
 
-    // Création du client
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
     if (!client) {
         Console::error(TAG, "Échec création client esp_mqtt");
@@ -84,8 +61,6 @@ void MqttManager::init()
 
     mqttClient = client;
 
-    // Enregistrement du handler d'événements
-    // Signature ESP-IDF 4.x : void (*)(void*, const char*, int32_t, void*)
     esp_mqtt_client_register_event(
         client,
         (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID,
@@ -93,8 +68,6 @@ void MqttManager::init()
         nullptr
     );
 
-    // Le client est prêt mais PAS démarré.
-    // ensureMqttStarted() le démarrera dès que le WiFi STA sera connecté.
     mqttStarted = false;
 
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
@@ -103,7 +76,7 @@ void MqttManager::init()
 }
 
 // =============================================================================
-// Démarrage conditionnel — appelé depuis la tâche WiFi status
+// Démarrage conditionnel
 // =============================================================================
 void MqttManager::ensureMqttStarted()
 {
@@ -122,11 +95,6 @@ void MqttManager::ensureMqttStarted()
 
 // =============================================================================
 // Event handler esp_mqtt
-// S'exécute dans la tâche FreeRTOS de esp_mqtt, PAS dans TaskManager.
-// Ne touche que le flag "mqttConnected" et les publications initiales.
-//
-// Signature ESP-IDF 4.x : (void* handler_args, esp_event_base_t base,
-//                           int32_t event_id, void* event_data)
 // =============================================================================
 void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
                                     int32_t eventId, void* eventData)
@@ -139,16 +107,13 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         Console::info(TAG, "Connecté au broker");
         mqttConnected = true;
 
-        // Publier "online" (retain)
         publishOnline();
 
-        // Publier le schéma une seule fois par session
         if (!schemaPublished) {
             publishSchema();
             schemaPublished = true;
         }
 
-        // S'abonner aux commandes (préparation Phase 4)
         esp_mqtt_client_subscribe(
             (esp_mqtt_client_handle_t)mqttClient,
             "serre/cmd/#", 1
@@ -170,7 +135,6 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
-        // Réception message (futur : commandes serre/cmd/#)
         if (event->topic && event->topic_len > 0) {
             String topic(event->topic, event->topic_len);
             String payload(event->data, event->data_len);
@@ -193,8 +157,7 @@ void MqttManager::publishOnline()
         (esp_mqtt_client_handle_t)mqttClient,
         MQTT_LWT_TOPIC,
         "online", 6,
-        1,      // QoS 1
-        true    // retain
+        1, true
     );
     Console::info(TAG, "Publié 'online' sur " + String(MQTT_LWT_TOPIC));
 }
@@ -210,8 +173,7 @@ void MqttManager::publishSchema()
         (esp_mqtt_client_handle_t)mqttClient,
         MQTT_SCHEMA_TOPIC,
         json.c_str(), json.length(),
-        1,      // QoS 1
-        true    // retain
+        1, true
     );
 
     if (msgId >= 0) {
@@ -249,32 +211,47 @@ String MqttManager::buildSchemaJson()
     p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
-    // Table DataType
+    // ── Table DataType (dédupliquée depuis META) ────────────────────────────
     p += "  \"dataTypes\": [\n";
-    for (int i = 0; i < 4; i++) {
-        p += "    {\"id\": "; p += i;
-        p += ", \"label\": \""; p += DATATYPE_LABELS[i]; p += "\"}";
-        if (i < 3) p += ",";
-        p += "\n";
+    bool firstType = true;
+    for (uint8_t t = 0; t <= 3; t++) {
+        const char* typeLabel = nullptr;
+        for (size_t m = 0; m < META_COUNT; m++) {
+            if ((uint8_t)META[m].type == t) {
+                typeLabel = META[m].typeLabel;
+                break;
+            }
+        }
+        if (!typeLabel) continue;
+
+        if (!firstType) p += ",\n";
+        firstType = false;
+        p += "    {\"id\": "; p += t;
+        p += ", \"label\": \""; p += DataLogger::jsonEscape(typeLabel); p += "\"}";
     }
-    p += "  ],\n";
+    p += "\n  ],\n";
 
-    // Table DataId (depuis META)
+    // ── Table DataId (depuis META) ──────────────────────────────────────────
     p += "  \"dataIds\": [\n";
-    const uint8_t count = (uint8_t)DataId::Count;
-    for (uint8_t i = 0; i < count; i++) {
-        const DataMeta& m = DataLogger::getMeta((DataId)i);
+    for (size_t i = 0; i < META_COUNT; i++) {
+        const DataMeta& m = META[i];
 
-        p += "    {\"id\": "; p += i;
-        p += ", \"label\": \""; p += jsonEscape(m.label); p += "\"";
-        p += ", \"unit\": \"";  p += jsonEscape(m.unit);  p += "\"";
+        p += "    {\"id\": "; p += (uint8_t)m.id;
+        p += ", \"label\": \""; p += DataLogger::jsonEscape(m.label); p += "\"";
+        p += ", \"unit\": \"";  p += DataLogger::jsonEscape(m.unit);  p += "\"";
 
         const char* natureStr =
             (m.nature == DataNature::metrique) ? "metrique" :
             (m.nature == DataNature::etat)     ? "etat"     : "texte";
         p += ", \"nature\": \""; p += natureStr; p += "\"";
 
-        p += ", \"type\": "; p += ID_TO_TYPE[i];
+        p += ", \"type\": "; p += (uint8_t)m.type;
+
+        // Min/Max (uniquement pour metrique)
+        if (m.nature == DataNature::metrique) {
+            p += ", \"min\": "; p += String(m.min, 1);
+            p += ", \"max\": "; p += String(m.max, 1);
+        }
 
         // Mapping états (uniquement pour nature == etat)
         if (m.nature == DataNature::etat && m.stateLabels != nullptr) {
@@ -284,7 +261,7 @@ String MqttManager::buildSchemaJson()
                 p += "{\"value\": "; p += s;
                 p += ", \"label\": \"";
                 if (m.stateLabels[s] != nullptr) {
-                    p += jsonEscape(m.stateLabels[s]);
+                    p += DataLogger::jsonEscape(m.stateLabels[s]);
                 }
                 p += "\"}";
             }
@@ -292,7 +269,7 @@ String MqttManager::buildSchemaJson()
         }
 
         p += "}";
-        if (i < count - 1) p += ",";
+        if (i < META_COUNT - 1) p += ",";
         p += "\n";
     }
     p += "  ]\n";
@@ -303,26 +280,21 @@ String MqttManager::buildSchemaJson()
 
 // =============================================================================
 // Callback DataLogger → publication MQTT
-// Appelé depuis push() dans le contexte TaskManager.
-// esp_mqtt_client_publish() est thread-safe (met en file interne).
 // =============================================================================
 void MqttManager::onDataPushed(const DataRecord& record)
 {
     ensureMqttStarted();
     if (!mqttConnected || !mqttClient) return;
 
-    // Topic : serre/data/{id}
     String topic = "serre/data/" + String((uint8_t)record.id);
 
-    // Payload CSV 7 champs
     String csv = formatCsvPayload(record);
 
     int msgId = esp_mqtt_client_publish(
         (esp_mqtt_client_handle_t)mqttClient,
         topic.c_str(),
         csv.c_str(), csv.length(),
-        0,      // QoS 0 (données capteurs)
-        false   // pas de retain
+        0, false
     );
 
     if (msgId < 0) {
@@ -331,7 +303,7 @@ void MqttManager::onDataPushed(const DataRecord& record)
 }
 
 // =============================================================================
-// Formatage CSV 7 champs (identique à flushToFlash dans DataLogger.cpp)
+// Formatage CSV 7 champs
 // timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // =============================================================================
 String MqttManager::formatCsvPayload(const DataRecord& record)
@@ -356,49 +328,10 @@ String MqttManager::formatCsvPayload(const DataRecord& record)
     } else {
         String txt = std::get<String>(record.value);
         csv += ",1,";
-        csv += escapeCSV(txt);
+        csv += DataLogger::escapeCSV(txt);
     }
 
     return csv;
-}
-
-// =============================================================================
-// Échappement CSV (guillemets, doublage guillemets internes)
-// Même logique que escapeCSV() dans DataLogger.cpp
-// =============================================================================
-String MqttManager::escapeCSV(const String& text)
-{
-    String escaped = "\"";
-    for (size_t i = 0; i < text.length(); i++) {
-        char c = text.charAt(i);
-        if (c == '"') {
-            escaped += "\"\"";
-        } else {
-            escaped += c;
-        }
-    }
-    escaped += "\"";
-    return escaped;
-}
-
-// =============================================================================
-// Échappement JSON minimal
-// Même logique que jsonEscape() dans WebServer.cpp
-// =============================================================================
-String MqttManager::jsonEscape(const char* s)
-{
-    String out;
-    if (!s) return out;
-    out.reserve(strlen(s) + 4);
-    while (*s) {
-        char c = *s++;
-        if      (c == '"')  { out += '\\'; out += '"';  }
-        else if (c == '\\') { out += '\\'; out += '\\'; }
-        else if (c == '\n') { out += '\\'; out += 'n';  }
-        else if (c == '\r') { out += '\\'; out += 'r';  }
-        else                { out += c; }
-    }
-    return out;
 }
 
 // =============================================================================

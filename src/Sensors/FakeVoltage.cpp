@@ -22,7 +22,7 @@ void FakeVoltage::handle()
     float radians = counter * M_PI / 180.0f;
     float voltage = (sin(radians) + 5.0f) * 5.0f;   // 20V — 30V
 
-    DataLogger::push(DataType::Power, DataId::SupplyVoltage, voltage);
+    DataLogger::push(DataId::SupplyVoltage, voltage);
 
     Console::debug(TAG, "Tension simulée: " + String(voltage, 2) + "V (angle=" + String(counter) + "°)");
 
