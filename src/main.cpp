@@ -12,7 +12,9 @@
 
 #include "Connectivity/WiFiManager.h"
 #include "Connectivity/ManagerUTC.h"
-#include "Connectivity/MqttManager.h"       // *** AJOUT MQTT ***
+#include "Connectivity/BridgeManager.h"     // *** AJOUT BRIDGE ***
+#include "Connectivity/MqttManager.h"
+#include "Connectivity/SmsManager.h"        // *** AJOUT SMS ***
 
 #include "Core/TaskManager.h"
 #include "Core/EventManager.h"
@@ -156,11 +158,22 @@ static void loopInit()
     // --- SafeReboot ---
     SafeReboot::init();
 
-    // *** AJOUT MQTT *** — Initialisation MQTT + callback DataLogger
+    // *** AJOUT BRIDGE *** — Initialisation BridgeManager (UDP vers LilyGo)
+    BridgeManager::init();
+    Console::info("[Bridge] BridgeManager initialisé");
+    // *** FIN AJOUT BRIDGE ***
+
+    // *** MQTT *** — Initialisation MQTT + callbacks
     MqttManager::init();
     DataLogger::setOnPush(MqttManager::onDataPushed);
-    Console::info("[MQTT] Callback DataLogger → MQTT configuré");
-    // *** FIN AJOUT MQTT ***
+    MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
+    Console::info("[MQTT] Callbacks DataLogger → MQTT → Bridge configurés");
+    // *** FIN MQTT ***
+
+    // *** SMS *** — Initialisation SmsManager (logique métier SMS)
+    SmsManager::init();
+    Console::info("[SMS] SmsManager initialisé");
+    // *** FIN SMS ***
 
     // --- TaskManager ---
     TaskManager::init();
@@ -181,6 +194,13 @@ static void loopInit()
         []() { ManagerUTC::handle(); },
         UTC_HANDLE_PERIOD_MS
     );
+
+    // *** AJOUT BRIDGE *** — Tâche BridgeManager (UDP vers LilyGo)
+    TaskManager::addTask(
+        []() { BridgeManager::handle(); },
+        BRIDGE_HANDLE_PERIOD_MS
+    );
+    // *** FIN AJOUT BRIDGE ***
 
     // EventManager
     TaskManager::addTask(
@@ -213,6 +233,13 @@ static void loopInit()
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS
     );
+
+    // *** AJOUT SMS *** — Tâche SmsManager (logique métier SMS)
+    TaskManager::addTask(
+        []() { SmsManager::handle(); },
+        2000
+    );
+    // *** FIN AJOUT SMS ***
 
     // FakeVoltage (TEST)
     TaskManager::addTask(

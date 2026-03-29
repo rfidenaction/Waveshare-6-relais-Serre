@@ -18,6 +18,12 @@
  * - Schéma JSON publié une seule fois au boot (retain=true sur serre/schema)
  * - LWT "offline" configuré dans esp_mqtt, "online" publié à la connexion
  *
+ * Notification publication réussie :
+ * - setOnPublishSuccess(callback) permet à un module externe (BridgeManager)
+ *   d'être notifié à chaque publication MQTT réussie
+ * - Le callback est appelé dans le contexte du TaskManager (pas de thread safety)
+ * - Même pattern que DataLogger::setOnPush()
+ *
  * Refactoring META :
  * - buildSchemaJson() lit tout depuis META (source de vérité unique)
  * - jsonEscape() et escapeCSV() centralisées dans DataLogger
@@ -28,6 +34,9 @@ public:
     static void onDataPushed(const DataRecord& record);
     static void ensureMqttStarted();
     static bool isMqttConnected();
+
+    // ─── Callback publication réussie ────────────────────────────────────
+    static void setOnPublishSuccess(void (*callback)());
 
 private:
     static void* mqttClient;
@@ -42,4 +51,7 @@ private:
     static String buildSchemaJson();
 
     static String formatCsvPayload(const DataRecord& record);
+
+    // ─── Callback publication réussie ────────────────────────────────────
+    static void (*_onPublishSuccess)();
 };

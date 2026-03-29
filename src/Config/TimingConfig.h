@@ -66,6 +66,30 @@
 #define WIFI_STATUS_UPDATE_INTERVAL_MS 30000UL
 
 // =============================================================================
+// BridgeManager — Communication Waveshare ↔ LilyGo
+// =============================================================================
+/*
+ * Délai avant démarrage de BridgeManager (ouverture socket UDP).
+ * Laisse le temps au WiFi STA, MQTT et NTP de se stabiliser
+ * avant d'introduire du trafic UDP sur la radio partagée.
+ */
+#define BRIDGE_START_DELAY_MS           240000UL    // 4 minutes
+
+/*
+ * Période d'appel de BridgeManager::handle() par TaskManager.
+ * À chaque appel : recvfrom non-bloquant + machine d'états SMS.
+ * Temps d'exécution : quelques microsecondes.
+ */
+#define BRIDGE_HANDLE_PERIOD_MS         500
+
+/*
+ * Timeout d'attente de l'ACK après envoi d'un SMS (3 minutes).
+ * La LilyGo renvoie ACK quand le modem a réellement envoyé le SMS.
+ * Si pas d'ACK après ce délai : retry (1 fois) ou abandon.
+ */
+#define BRIDGE_SMS_ACK_TIMEOUT_MS       180000UL    // 3 minutes
+
+// =============================================================================
 // UTC / NTP
 // =============================================================================
 /*

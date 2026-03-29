@@ -27,6 +27,17 @@ volatile bool MqttManager::mqttConnected   = false;
 bool          MqttManager::mqttStarted     = false;
 bool          MqttManager::schemaPublished = false;
 
+// Callback publication réussie (nullptr = pas de callback)
+void (*MqttManager::_onPublishSuccess)() = nullptr;
+
+// =============================================================================
+// Callback publication réussie
+// =============================================================================
+void MqttManager::setOnPublishSuccess(void (*callback)())
+{
+    _onPublishSuccess = callback;
+}
+
 // =============================================================================
 // Initialisation
 // =============================================================================
@@ -297,7 +308,10 @@ void MqttManager::onDataPushed(const DataRecord& record)
         0, false
     );
 
-    if (msgId < 0) {
+    if (msgId >= 0) {
+        // Notification publication réussie (utilisé par BridgeManager pour le heartbeat)
+        if (_onPublishSuccess) _onPublishSuccess();
+    } else {
         Console::warn(TAG, "Échec publication " + topic);
     }
 }

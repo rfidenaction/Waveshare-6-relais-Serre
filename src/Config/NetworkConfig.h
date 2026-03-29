@@ -39,6 +39,12 @@ static constexpr const char* SMS_NUMBERS[] = {
 static constexpr size_t SMS_NUMBERS_COUNT = sizeof(SMS_NUMBERS) / sizeof(SMS_NUMBERS[0]);
 
 // =============================================================================
+// Bridge UDP — Communication Waveshare ↔ LilyGo
+// =============================================================================
+static constexpr uint16_t BRIDGE_UDP_PORT_LOCAL  = 5001;   // Port écoute Waveshare
+static constexpr uint16_t BRIDGE_UDP_PORT_REMOTE = 5000;   // Port écoute LilyGo
+
+// =============================================================================
 // MQTT — Broker HiveMQ Cloud
 // =============================================================================
 static constexpr const char* MQTT_BROKER_URI   = "mqtts://3db6155980d4483e8b8c3036fd0afd6f.s1.eu.hivemq.cloud:8883";
