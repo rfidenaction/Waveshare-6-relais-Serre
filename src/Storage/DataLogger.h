@@ -100,7 +100,8 @@ inline constexpr const char* const kLabelsValve1[]           = { "Fermée",     
     X( 6, WifiApEnabled,    System,   "Système",      "WiFi AP",            "",    etat,        0.0f,   0.0f, kLabelsWifiApEnabled,    2) \
     X( 7, WifiRssi,         System,   "Système",      "WiFi RSSI",          "dBm", metrique, -100.0f,   0.0f, nullptr,                0) \
     X( 8, Boot,             System,   "Système",      "Démarrage",          "",    texte,       0.0f,   0.0f, nullptr,                0) \
-    X( 9, Error,            System,   "Système",      "Erreur",             "",    texte,       0.0f,   0.0f, nullptr,                0)
+    X( 9, Error,            System,   "Système",      "Erreur",             "",    texte,       0.0f,   0.0f, nullptr,                0) \
+    X(10, TaskMonPeriod,    System,   "Système",      "Periode mesuree",    "ms",  metrique,    0.0f, 10000.0f, nullptr,              0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST

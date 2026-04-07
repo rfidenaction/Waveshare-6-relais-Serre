@@ -4,7 +4,6 @@
 
 #include "Core/EventManager.h"
 
-#include "Core/TaskManagerMonitor.h"
 #include "Connectivity/WiFiManager.h"
 #include <WiFi.h>
 
@@ -41,9 +40,6 @@ void EventManager::prime()
 
 void EventManager::handle()
 {
-    // Supervision temporelle
-    TaskManagerMonitor::notifyCall();
-
     // Sauvegarde de l'état précédent
     previousWifi  = currentWifi;
 

@@ -17,6 +17,7 @@
 #include "Connectivity/SmsManager.h"        // *** AJOUT SMS ***
 
 #include "Core/TaskManager.h"
+#include "Core/TaskManagerMonitor.h"
 #include "Core/EventManager.h"
 #include "Core/RTCManager.h"
 #include "Core/VirtualClock.h"
@@ -152,6 +153,9 @@ static void loopInit()
     EventManager::init();
     EventManager::prime();
 
+    // --- TaskManagerMonitor ---
+    TaskManagerMonitor::init();
+
     // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
 
@@ -251,6 +255,13 @@ static void loopInit()
     TaskManager::addTask(
         []() { SafeReboot::handle(); },
         SAFE_REBOOT_PERIOD_MS
+    );
+
+    // TaskManagerMonitor — supervision de la régularité du scheduler
+    // Placée en dernière position : sentinelle, observe l'ensemble du système.
+    TaskManager::addTask(
+        []() { TaskManagerMonitor::checkSchedulerRegularity(); },
+        TASKMON_CHECK_PERIOD_MS
     );
 
     // Bascule définitive vers la loop de production

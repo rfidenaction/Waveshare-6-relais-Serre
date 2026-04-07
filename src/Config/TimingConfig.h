@@ -33,22 +33,61 @@
 #define SYSTEM_INIT_DELAY_MS   2500
 
 // =============================================================================
-// EventManager / TaskManager supervision
+// EventManager
 // =============================================================================
 /*
- * Période nominale d'appel d'EventManager par TaskManager.
- * Définit le rythme attendu du cœur du système en régime permanent.
+ * Période d'appel d'EventManager par TaskManager.
+ * EventManager est un observateur pur des sous-systèmes (WiFi, etc.).
  */
 #define EVENT_MANAGER_PERIOD_MS        2000
 
+// =============================================================================
+// TaskManagerMonitor — Supervision de la régularité du scheduler
+// =============================================================================
 /*
- * Fenêtre temporelle acceptable autour de la période nominale.
+ * Période d'exécution de la tâche TaskManagerMonitor::checkSchedulerRegularity().
  *
- * Si l'intervalle réel entre deux appels sort de cette plage,
- * TaskManagerMonitor bascule en état WARNING.
+ * Le monitor est enregistré comme une tâche périodique normale auprès du
+ * TaskManager. À chaque exécution, il mesure son propre delta temporel par
+ * rapport à l'exécution précédente. Si ce delta sort de la plage acceptable,
+ * c'est que le scheduler est ralenti ou bloqué par une autre tâche.
+ *
+ * Ce module ne dépend d'aucun module métier — c'est sa propre régularité
+ * d'exécution qui sert de référence.
  */
-#define EVENT_MANAGER_MIN_PERIOD_MS    1500
-#define EVENT_MANAGER_MAX_PERIOD_MS    2500
+#define TASKMON_CHECK_PERIOD_MS        2000
+
+/*
+ * Fenêtre temporelle acceptable autour de TASKMON_CHECK_PERIOD_MS.
+ *
+ * Si le delta réel entre deux exécutions de checkSchedulerRegularity() sort
+ * de cette plage, une dérive est signalée (log + remontée).
+ *
+ * CONTRAINTE DE COHÉRENCE :
+ *   TASKMON_CHECK_PERIOD_MS DOIT se trouver à l'intérieur de la plage
+ *   [TASKMON_MIN_ACCEPTABLE_PERIOD_MS ; TASKMON_MAX_ACCEPTABLE_PERIOD_MS],
+ *   sinon le monitor déclencherait des alertes en permanence par construction.
+ */
+#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1500
+#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2500
+
+/*
+ * Période de grâce après init() avant que le SMS d'alerte puisse être armé.
+ *
+ * Pendant les premières minutes après le démarrage du monitor, des dérives
+ * peuvent apparaître à cause de l'initialisation de certains services
+ * (WiFi, MQTT, NTP, etc.). On ne veut pas envoyer de SMS pour ces dérives
+ * de boot — elles sont quand même loguées et publiées sur MQTT.
+ */
+#define TASKMON_SMS_GRACE_MS                180000UL    // 3 minutes
+
+/*
+ * Cooldown minimum entre deux SMS d'alerte du monitor.
+ *
+ * En cas de problème durable, on ne veut pas saturer le destinataire de SMS.
+ * L'information reste accessible en temps réel via les publications MQTT.
+ */
+#define TASKMON_SMS_COOLDOWN_MS             172800000UL // 48 heures
 
 // =============================================================================
 // WiFi

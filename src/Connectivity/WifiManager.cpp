@@ -245,7 +245,12 @@ void WiFiManager::handle()
 
         // WiFi.begin() avec canal fixé à 1 (pont WiFi-GSM fourni par nous)
         // Évite le scan interne multi-canaux du driver → connexion plus rapide
-        WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASSWORD, 1);
+        // Pas de mot de passe : le lien Waveshare ↔ LilyGo est un réseau
+        // privé dédié (1 client max, serre isolée). Le MQTT est protégé
+        // par TLS de bout en bout indépendamment du WiFi.
+        // Raison : WPA2 provoquait des erreurs CCMP mgmt frame entre les
+        // deux ESP32-S3 (blobs WiFi incompatibles Arduino vs ESP-IDF).
+        WiFi.begin(WIFI_STA_SSID, nullptr, 1);
 
         connectStartMs   = millis();
         lastConnectLogMs = connectStartMs;
@@ -260,6 +265,23 @@ void WiFiManager::handle()
         if (status == WL_CONNECTED) {
             staConnected = true;
             staRetryCount = 0;  // Backoff reset — retour au rythme agressif
+
+            // ── Désactivation Power Save (investigation CCMP) ────────
+            // Le mode par défaut (WIFI_PS_MIN_MODEM) génère des
+            // management frames de transition veille/réveil qui
+            // provoquent des erreurs CCMP côté LilyGo.
+            // La Waveshare est sur secteur → pas besoin d'économie.
+            WiFi.setSleep(false);
+
+            // ── Diagnostic réseau (une seule fois) ───────────────────
+            static bool diagDone = false;
+            if (!diagDone) {
+                diagDone = true;
+                Console::info("WiFi", "Sleep mode: " + String(WiFi.getSleep() ? "ON" : "OFF"));
+                Console::info("WiFi", "SDK: " + String(ESP.getSdkVersion()));
+                Console::info("WiFi", "Arduino core: " + String(ARDUINO));
+            }
+
             Console::info("WiFi", "STA connecté — IP: " + WiFi.localIP().toString()
                          + ", RSSI: " + String(WiFi.RSSI()) + " dBm");
             changeState(State::STA_CONNECTED);
