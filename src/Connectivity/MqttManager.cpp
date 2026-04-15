@@ -64,6 +64,12 @@ void MqttManager::init()
 
     cfg.buffer_size = 1024;
 
+    // Limite tout blocage interne d'esp_mqtt (mutex client, send TCP) a 2s
+    // au lieu des 10s par defaut. Evite que esp_mqtt_client_publish bloque
+    // la loop principale plus de 2s quand la socket TCP est bouchee (typiquement
+    // pendant qu'un SMS coupe le PPP cote LilyGo).
+    cfg.network_timeout_ms = 2000;
+
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
     if (!client) {
         Console::error(TAG, "Échec création client esp_mqtt");

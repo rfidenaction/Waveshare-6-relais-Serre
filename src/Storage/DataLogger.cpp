@@ -12,6 +12,12 @@
 //  - escapeCSV() et jsonEscape() centralisées comme méthodes publiques
 //  - init() utilise findMetaIndex() au lieu de DataId::Count
 //  - isValidId() remplace les tests manuels de bornes
+//
+// Suppression getGraphCsv() :
+//  - La route /graphdata est supprimée côté WebServer
+//  - Les graphiques sont désormais servis par /logs/download (bundle complet)
+//  - Le filtrage par DataId et le sous-échantillonnage sont faits côté client
+//    dans PagePrincipale.cpp (même principe que le client MQTT distant)
 #include "Storage/DataLogger.h"
 #include "Connectivity/ManagerUTC.h"
 #include "Core/VirtualClock.h"
@@ -544,79 +550,4 @@ bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
         out = candidate;
     }
     return found;
-}
-
-// -----------------------------------------------------------------------------
-// GRAPH CSV (FLASH) — dernières mesures numériques
-// Format CSV : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
-// -----------------------------------------------------------------------------
-String DataLogger::getGraphCsv(DataId id, uint32_t maxPoints)
-{
-    File file = SPIFFS.open("/datalog.csv", FILE_READ);
-    if (!file) {
-        Console::error(TAG, "Cannot open /datalog.csv for reading (getGraphCsv)");
-        return "";
-    }
-
-    struct GraphPoint {
-        uint32_t ts;
-        float    val;
-    };
-
-    GraphPoint* buf = new (std::nothrow) GraphPoint[maxPoints];
-    if (!buf) {
-        file.close();
-        Console::error(TAG, "getGraphCsv: allocation buffer échouée");
-        return "";
-    }
-
-    size_t bufHead  = 0;
-    size_t bufCount = 0;
-
-    while (file.available()) {
-        String line = file.readStringUntil('\n');
-        if (line.length() == 0) continue;
-
-        int c1 = line.indexOf(',');
-        int c2 = line.indexOf(',', c1 + 1);
-        int c3 = line.indexOf(',', c2 + 1);
-        int c4 = line.indexOf(',', c3 + 1);
-        int c5 = line.indexOf(',', c4 + 1);
-        int c6 = line.indexOf(',', c5 + 1);
-
-        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
-            continue;
-        }
-
-        uint8_t idByte    = line.substring(c4 + 1, c5).toInt();
-        uint8_t valueType = line.substring(c5 + 1, c6).toInt();
-
-        if (idByte == static_cast<uint8_t>(id) && valueType == 0) {
-            uint32_t ts = line.substring(0, c1).toInt();
-            float val   = line.substring(c6 + 1).toFloat();
-
-            buf[bufHead].ts  = ts;
-            buf[bufHead].val = val;
-            bufHead = (bufHead + 1) % maxPoints;
-            if (bufCount < maxPoints) bufCount++;
-        }
-    }
-
-    file.close();
-
-    String csv = "timestamp,value\n";
-    size_t start = (bufCount < maxPoints) ? 0 : bufHead;
-
-    for (size_t i = 0; i < bufCount; i++) {
-        size_t idx = (start + i) % maxPoints;
-        csv += String(buf[idx].ts) + ",";
-        csv += String(buf[idx].val, 2) + "\n";
-    }
-
-    delete[] buf;
-
-    Console::debug(TAG, "getGraphCsv: " + String(bufCount)
-                   + " points pour DataId " + String((int)id));
-
-    return csv;
 }

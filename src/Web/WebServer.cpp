@@ -6,6 +6,12 @@
 //  - Suppression BUNDLE_TYPE_LABELS[] (typeLabel vient de META)
 //  - Suppression jsonEscape() locale (centralisée dans DataLogger)
 //  - buildBundleHeader() génère tout depuis META
+//
+// Suppression route /graphdata :
+//  - Les graphiques sont désormais servis par /logs/download (bundle complet)
+//  - Le filtrage par DataId, le sous-échantillonnage et la construction
+//    du graphique sont faits côté client dans PagePrincipale.cpp
+//  - Même principe que le client MQTT distant (RecepteurV4_serre.html)
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"
@@ -35,7 +41,6 @@ void WebServer::init()
     // Configuration des routes
     server.on("/", HTTP_GET, handleRoot);
     server.on("/ap-toggle", HTTP_POST, handleApToggle);
-    server.on("/graphdata", HTTP_GET, handleGraphData);
     server.on("/reset", HTTP_POST, handleReset);
 
     // ── Chart.js embarqué — servi depuis la flash ────────────
@@ -91,16 +96,6 @@ void WebServer::handleApToggle(AsyncWebServerRequest *request)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Graphique tension alimentation
-// ─────────────────────────────────────────────────────────────────────────────
-
-void WebServer::handleGraphData(AsyncWebServerRequest *request)
-{
-    String csv = DataLogger::getGraphCsv(DataId::SupplyVoltage);
-    request->send(200, "text/plain", csv);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Reset système
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -136,6 +131,11 @@ void WebServer::handleLogs(AsyncWebServerRequest *request)
 //   #DATA_CSV_BEGIN
 //   ... contenu brut de /datalog.csv (aucune transformation) ...
 //   #DATA_CSV_END
+//
+// Cette route sert deux usages :
+//  1. Téléchargement utilisateur (bouton "Télécharger les données")
+//  2. Source de données pour les graphiques locaux (fetch depuis JS)
+// Dans les deux cas, c'est le même pattern chunked response prouvé fiable.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Génération du schéma JSON + marqueurs bundle ────────────────────────────

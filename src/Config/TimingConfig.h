@@ -13,6 +13,11 @@
  *  - lisibilité long terme
  *  - cohérence globale
  *  - éviter les timings implicites dispersés dans le code
+ *
+ * Note : les timings liés à la politique d'alertes SMS (grâce, cooldown,
+ *        délai de boot) sont centralisés dans SmsManager.h, en tête de fichier,
+ *        avec les flags d'activation correspondants. Un seul endroit pour
+ *        tout ce qui concerne les SMS.
  */
 
 // =============================================================================
@@ -68,26 +73,11 @@
  *   [TASKMON_MIN_ACCEPTABLE_PERIOD_MS ; TASKMON_MAX_ACCEPTABLE_PERIOD_MS],
  *   sinon le monitor déclencherait des alertes en permanence par construction.
  */
-#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1500
-#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2500
+#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1999
+#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2001
 
-/*
- * Période de grâce après init() avant que le SMS d'alerte puisse être armé.
- *
- * Pendant les premières minutes après le démarrage du monitor, des dérives
- * peuvent apparaître à cause de l'initialisation de certains services
- * (WiFi, MQTT, NTP, etc.). On ne veut pas envoyer de SMS pour ces dérives
- * de boot — elles sont quand même loguées et publiées sur MQTT.
- */
-#define TASKMON_SMS_GRACE_MS                180000UL    // 3 minutes
-
-/*
- * Cooldown minimum entre deux SMS d'alerte du monitor.
- *
- * En cas de problème durable, on ne veut pas saturer le destinataire de SMS.
- * L'information reste accessible en temps réel via les publications MQTT.
- */
-#define TASKMON_SMS_COOLDOWN_MS             172800000UL // 48 heures
+// Note : les réglages du SMS d'alerte TaskMon (activation, grâce, cooldown)
+//        sont dans SmsManager.h, section "POLITIQUE D'ALERTES SMS".
 
 // =============================================================================
 // WiFi

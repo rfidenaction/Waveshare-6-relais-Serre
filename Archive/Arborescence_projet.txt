@@ -10,6 +10,8 @@ projet/
 │   │   └── TimingConfig.h            // TOUS les timings (périodes de mesure, arrosage, envoi données, etc.)
 │   │
 │   ├── Connectivity/
+│   │   ├── BridgeManager.cpp
+│   │   ├── BridgeManager.h
 │   │   ├── ManagerUTC.h
 │   │   ├── ManagerUTC.cpp            // Synchronisation NTP
 │   │   ├── MqttManager.h            

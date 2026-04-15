@@ -101,7 +101,8 @@ inline constexpr const char* const kLabelsValve1[]           = { "Fermée",     
     X( 7, WifiRssi,         System,   "Système",      "WiFi RSSI",          "dBm", metrique, -100.0f,   0.0f, nullptr,                0) \
     X( 8, Boot,             System,   "Système",      "Démarrage",          "",    texte,       0.0f,   0.0f, nullptr,                0) \
     X( 9, Error,            System,   "Système",      "Erreur",             "",    texte,       0.0f,   0.0f, nullptr,                0) \
-    X(10, TaskMonPeriod,    System,   "Système",      "Periode mesuree",    "ms",  metrique,    0.0f, 10000.0f, nullptr,              0)
+    X(10, TaskMonPeriod,    System,   "Système",      "Période mesurée",    "ms",  metrique,    0.0f, 10000.0f, nullptr,              0) \
+    X(11, SmsEvent,         System,   "Système",      "SMS",                "",    texte,       0.0f,   0.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST
@@ -211,7 +212,6 @@ public:
     // ───────────── Web ─────────────
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
-    static String getGraphCsv(DataId id, uint32_t maxPoints = 500);
 
     // Statistiques du fichier de logs
     static LogFileStats getLogFileStats();

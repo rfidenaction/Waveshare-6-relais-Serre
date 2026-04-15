@@ -24,14 +24,21 @@
  *
  * Alerte SMS :
  *  - Après une période de grâce TASKMON_SMS_GRACE_MS suivant init(),
- *    toute dérive déclenche un SMS d'alerte.
+ *    toute dérive arme un SMS d'alerte (pas d'envoi immédiat).
+ *  - L'envoi est différé de SMS_TASKMON_BEFORE_SENDING_MS après l'armement.
+ *    Ce délai protège contre l'amplification d'une panne : l'envoi d'un SMS
+ *    coupe temporairement internet (bascule PPP → COMMAND MODE sur la LilyGo),
+ *    et un SMS déclenché trop tôt sur une dérive transitoire aggraverait
+ *    la situation au lieu de l'alerter.
+ *  - La valeur du delta qui a armé le SMS est mémorisée jusqu'à l'envoi,
+ *    pour être incluse dans le message.
  *  - Un cooldown TASKMON_SMS_COOLDOWN_MS empêche le harcèlement en cas
  *    de problème durable. L'information reste disponible via MQTT.
  *
  * IMPORTANT :
  *  - aucun correctif automatique
  *  - aucune action bloquante
- *  - tous les timings viennent de TimingConfig.h
+ *  - tous les timings viennent de TimingConfig.h et SmsManager.h
  *  - pas d'état latché : chaque dérive est traitée individuellement
  */
 
@@ -48,6 +55,8 @@ private:
     static uint32_t lastCheckMs;
     static uint32_t initTimeMs;
     static uint32_t lastSmsMs;
+    static uint32_t pendingSmsAtMs;   // 0 = aucun SMS armé, sinon instant d'envoi prévu
+    static uint32_t pendingSmsDelta;  // Valeur de la dérive qui a armé le SMS (ms)
 
     static void evaluateDelta(uint32_t nowMs);
 };

@@ -55,7 +55,7 @@ void BridgeManager::init()
     ackReceived     = false;
     publishCounter  = 0;
 
-    Console::info(TAG, "Initialisé (démarrage différé "
+    Console::info(TAG, "Initialise (demarrage differe "
                       + String(BRIDGE_START_DELAY_MS / 60000) + " minutes)");
 }
 
@@ -72,7 +72,7 @@ void BridgeManager::handle()
         udp.begin(BRIDGE_UDP_PORT_LOCAL);
         started = true;
 
-        Console::info(TAG, "Démarré — écoute UDP port " + String(BRIDGE_UDP_PORT_LOCAL)
+        Console::info(TAG, "Demarre — ecoute UDP port " + String(BRIDGE_UDP_PORT_LOCAL)
                           + ", envoi vers LilyGo port " + String(BRIDGE_UDP_PORT_REMOTE));
         return;
     }
@@ -102,12 +102,12 @@ void BridgeManager::processIncoming()
         if (len >= 7 && strncmp(buf, "STATE|", 6) == 0) {
             _canAcceptSms = (buf[6] == '1');
 
-            Console::info(TAG, "État LilyGo reçu — SMS:"
+            Console::info(TAG, "Etat LilyGo recu — SMS:"
                               + String(_canAcceptSms ? "disponible" : "indisponible"));
         }
         // ── ACK ──────────────────────────────────────────────────────────
         else if (len == 3 && strncmp(buf, "ACK", 3) == 0) {
-            Console::info(TAG, "ACK reçu — SMS confirmé par LilyGo");
+            Console::info(TAG, "ACK recu — SMS confirme par LilyGo");
 
             if (smsState == SmsState::WAIT_ACK) {
                 ackReceived = true;
@@ -115,7 +115,7 @@ void BridgeManager::processIncoming()
         }
         // ── Paquet inconnu ───────────────────────────────────────────────
         else {
-            Console::warn(TAG, "Paquet UDP inconnu reçu: " + String(buf));
+            Console::warn(TAG, "Paquet UDP inconnu recu: " + String(buf));
         }
     }
 }
@@ -150,14 +150,14 @@ void BridgeManager::handleSmsMachine()
         sendSmsPacket(smsQueue[0]);
         smsState = SmsState::WAIT_ACK;
 
-        logSmsEvent("SMS envoyé tentative 1 vers " + smsQueue[0].number);
+        logSmsEvent("SMS envoye tentative 1 vers " + smsQueue[0].number);
         break;
 
     // ─── WAIT_ACK — attente non-bloquante de la confirmation ─────────────
     case SmsState::WAIT_ACK:
         // ACK reçu → succès
         if (ackReceived) {
-            logSmsEvent("SMS confirmé par LilyGo vers " + smsQueue[0].number);
+            logSmsEvent("SMS confirme par LilyGo vers " + smsQueue[0].number);
             removeFrontSms();
             smsState = SmsState::IDLE;
             return;
@@ -176,13 +176,13 @@ void BridgeManager::handleSmsMachine()
 
             sendSmsPacket(smsQueue[0]);
 
-            logSmsEvent("SMS renvoyé tentative 2 vers " + smsQueue[0].number);
+            logSmsEvent("SMS renvoye tentative 2 vers " + smsQueue[0].number);
         } else {
             // Abandon définitif
-            String reason = (smsAttempt >= 2) ? "2 tentatives sans réponse"
+            String reason = (smsAttempt >= 2) ? "2 tentatives sans reponse"
                                               : "LilyGo non disponible pour SMS";
 
-            logSmsEvent("SMS abandonné vers " + smsQueue[0].number
+            logSmsEvent("SMS abandonne vers " + smsQueue[0].number
                        + " — " + reason);
             removeFrontSms();
             smsState = SmsState::IDLE;
@@ -202,7 +202,7 @@ void BridgeManager::sendSmsPacket(const SmsSlot& sms)
     udp.write((const uint8_t*)packet.c_str(), packet.length());
     udp.endPacket();
 
-    Console::info(TAG, "Ordre SMS transmis à LilyGo — dest:" + sms.number);
+    Console::info(TAG, "Ordre SMS transmis a LilyGo — dest:" + sms.number);
 }
 
 // =============================================================================
@@ -234,7 +234,7 @@ void BridgeManager::sendHeartbeat()
     udp.write((const uint8_t*)"HB", 2);
     udp.endPacket();
 
-    Console::info(TAG, "Heartbeat envoyé (signe de vie)");
+    Console::info(TAG, "Heartbeat envoye (signe de vie)");
 }
 
 // =============================================================================
@@ -244,7 +244,7 @@ void BridgeManager::sendHeartbeat()
 bool BridgeManager::queueSms(const String& number, const String& message)
 {
     if (smsCount >= SMS_QUEUE_SIZE) {
-        logSmsEvent("SMS rejeté (file pleine) vers " + number);
+        logSmsEvent("SMS rejete (file pleine) vers " + number);
         return false;
     }
 
@@ -274,14 +274,14 @@ void BridgeManager::removeFrontSms()
 // =============================================================================
 // Log SMS : Console série + DataLogger (→ publication MQTT automatique)
 //
-// Utilise DataId::Error (id=9, nature=texte, type=System) car c'est le seul
-// DataId texte système disponible. Les événements SMS ne sont pas tous des
-// erreurs, mais ce canal assure la visibilité Console + MQTT.
+// Tous les événements du cycle de vie d'un SMS (mise en file, tentatives,
+// ACK, abandon) sont tracés sur le canal dédié DataId::SmsEvent pour
+// centraliser la visibilité cote telephone/MQTT.
 // =============================================================================
 void BridgeManager::logSmsEvent(const String& message)
 {
     Console::info(TAG, message);
-    DataLogger::push(DataId::Error, "[SMS] " + message);
+    DataLogger::push(DataId::SmsEvent, message);
 }
 
 // =============================================================================

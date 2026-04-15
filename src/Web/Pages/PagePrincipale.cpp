@@ -12,6 +12,17 @@
 //  - Nouvelle carte Alimentation avec DataId::SupplyVoltage
 //  - Graphique adapté : tension alimentation, échelle Y 5–40 V
 //  - Logger → Console
+//
+// Refactoring graphique (Façon 1) :
+//  - showSupplyGraph() appelle désormais /logs/download au lieu de /graphdata
+//  - Le bundle complet (schéma + CSV) est téléchargé en une seule requête
+//  - Le parsing et le filtrage sont faits côté client (même principe que
+//    le client MQTT distant RecepteurV4_serre.html)
+//  - Le CSV est au format 7 champs : timestamp,UTC_available,UTC_reliable,
+//    type,id,valueType,value
+//  - Filtrage sur id=0 (SupplyVoltage) et valueType=0 (float)
+//  - Sous-échantillonnage à 100 points (inchangé)
+//  - Affichage : courbe seule, sans points (pointRadius=0)
 #include "Web/Pages/PagePrincipale.h"
 
 #include "Storage/DataLogger.h"
@@ -217,6 +228,51 @@ function loadChartJs() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────
+// Extraction du CSV depuis le bundle /logs/download
+// Format bundle :
+//   #SERRE_BUNDLE
+//   #SCHEMA_JSON_BEGIN
+//   { ... }
+//   #SCHEMA_JSON_END
+//   #DATA_CSV_BEGIN
+//   ... lignes CSV 7 champs ...
+//   #DATA_CSV_END
+// ─────────────────────────────────────────────────────────────
+function extractCsvFromBundle(bundle) {
+  const csvBegin = bundle.indexOf('#DATA_CSV_BEGIN');
+  const csvEnd   = bundle.indexOf('#DATA_CSV_END');
+  if (csvBegin === -1 || csvEnd === -1) {
+    throw new Error('Bundle invalide : marqueurs CSV absents');
+  }
+  // Sauter le marqueur #DATA_CSV_BEGIN et son retour à la ligne
+  const start = bundle.indexOf('\n', csvBegin) + 1;
+  return bundle.substring(start, csvEnd);
+}
+
+// Parse une ligne CSV 7 champs et retourne {ts, val} si c'est SupplyVoltage (id=0)
+// float (valueType=0), sinon null.
+// Format : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+function parseSupplyLine(line) {
+  // On a besoin des 6 virgules séparant les 7 champs
+  const commas = [];
+  for (let i = 0; i < line.length && commas.length < 6; i++) {
+    if (line[i] === ',') commas.push(i);
+  }
+  if (commas.length < 6) return null;
+
+  // Champs 5 (id) et 6 (valueType) d'abord pour filtrer vite
+  const id        = parseInt(line.substring(commas[3] + 1, commas[4]));
+  const valueType = parseInt(line.substring(commas[4] + 1, commas[5]));
+
+  // Filtrage : SupplyVoltage = id 0, float = valueType 0
+  if (id !== 0 || valueType !== 0) return null;
+
+  const ts  = parseInt(line.substring(0, commas[0]));
+  const val = parseFloat(line.substring(commas[5] + 1));
+  return { ts: ts, val: val };
+}
+
 function showSupplyGraph() {
   const container = document.getElementById('graphContainer');
   const loading = document.getElementById('graphLoading');
@@ -227,34 +283,40 @@ function showSupplyGraph() {
   loading.textContent = 'Chargement...';
   canvas.style.display = 'none';
 
-  // Charger Chart.js + données en parallèle
+  // Charger Chart.js + bundle en parallèle
   Promise.all([
     loadChartJs(),
-    fetch('/graphdata').then(r => r.text())
+    fetch('/logs/download').then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
   ])
-    .then(([_, csv]) => {
-      // Parser le CSV
-      const lines = csv.trim().split('\n');
+    .then(([_, bundle]) => {
+      // Extraire le CSV du bundle
+      const csv = extractCsvFromBundle(bundle);
+
+      // Parser le CSV ligne par ligne, filtrer sur SupplyVoltage
+      const lines = csv.split('\n');
       const labels = [];
       const values = [];
 
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(',');
-        if (parts.length >= 2) {
-          const timestamp = parseInt(parts[0]);
-          const value = parseFloat(parts[1]);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.length === 0) continue;
 
-          const date = new Date(timestamp * 1000);
-          const label = date.toLocaleString('fr-FR', {
-            day: '2-digit',
-            month: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit'
-          });
+        const point = parseSupplyLine(line);
+        if (point === null) continue;
 
-          labels.push(label);
-          values.push(value);
-        }
+        const date = new Date(point.ts * 1000);
+        const label = date.toLocaleString('fr-FR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        labels.push(label);
+        values.push(point.val);
       }
 
       // ── Sous-échantillonnage (~100 points max pour mobile) ──
@@ -291,7 +353,8 @@ function showSupplyGraph() {
             borderColor: '#1976d2',
             backgroundColor: 'rgba(25, 118, 210, 0.1)',
             fill: true,
-            tension: 0.3
+            tension: 0.3,
+            pointRadius: 0
           }]
         },
         options: {
@@ -300,7 +363,7 @@ function showSupplyGraph() {
           plugins: {
             title: {
               display: true,
-              text: 'Historique tension alimentation (30 derniers jours)',
+              text: 'Historique tension alimentation',
               color: '#333'
             },
             legend: {
