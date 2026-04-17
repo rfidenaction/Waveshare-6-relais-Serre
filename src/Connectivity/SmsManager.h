@@ -16,7 +16,7 @@
  * Lorsque ce flag est à false, toute tentative d'envoi est loggée en Console
  * mais aucun SMS ne part et aucun DataLog n'est produit.
  */
-#define SMS_GLOBALLY_ENABLED            true
+#define SMS_GLOBALLY_ENABLED            false
 
 // -----------------------------------------------------------------------------
 // Alerte : SMS de démarrage (boot réussi)

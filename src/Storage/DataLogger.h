@@ -4,7 +4,7 @@
 // Architecture :
 //   DATA_ID_LIST    → macro X qui génère l'enum DataId ET le tableau META
 //   DataMeta        → struct 10 champs décrivant chaque donnée
-//   META[]          → tableau constexpr en flash, organisé par groupes logiques
+//   META[]          → tableau constexpr en flash, organisé par id croissant
 //   getMeta(DataId) → recherche linéaire sur le champ id (O(n), négligeable)
 //
 // CONTRAT :
@@ -54,9 +54,16 @@ enum class DataNature : uint8_t {
 // Déclarés AVANT DATA_ID_LIST car référencés par la macro
 // ═════════════════════════════════════════════════════════════════════════════
 
+inline constexpr const char* const valve1StateLabels[] = { "Fermée", "Ouverte" };
+
 inline constexpr const char* const kLabelsWifiStaConnected[] = { "Déconnecté",  "Connecté" };
 inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     "Actif"    };
-inline constexpr const char* const kLabelsValve1[]           = { "Fermée",      "Ouverte"  };
+
+inline constexpr const char* const valve2StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve3StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve4StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve5StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve6StateLabels[] = { "Fermée", "Ouverte" };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DATA_ID_LIST — SOURCE DE VÉRITÉ UNIQUE
@@ -81,6 +88,9 @@ inline constexpr const char* const kLabelsValve1[]           = { "Fermée",     
 //
 // AJOUT D'UN CAPTEUR : ajouter une ligne dans le groupe approprié.
 // L'id doit être unique et ne jamais réutiliser un id existant ou passé.
+//
+// ORDRE : les entrées sont triées par id croissant dans le tableau META.
+// Les nouveaux ids sont ajoutés EN FIN de liste.
 // ═════════════════════════════════════════════════════════════════════════════
 
 #define DATA_ID_LIST \
@@ -93,7 +103,7 @@ inline constexpr const char* const kLabelsValve1[]           = { "Fermée",     
     X( 3, SoilMoisture1,    Sensor,   "Capteur",      "Humidité sol 1",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
     \
     /* ── Actionneurs ───────────────────────────────────────────────────────── */ \
-    X( 4, Valve1,           Actuator, "Actionneur",   "Vanne 1",            "",    etat,        0.0f,   0.0f, kLabelsValve1,           2) \
+    X( 4, Valve1,           Actuator, "Actionneur",   "Vanne 1",            "",    etat,        0.0f,   0.0f, valve1StateLabels,      2) \
     \
     /* ── Système ───────────────────────────────────────────────────────────── */ \
     X( 5, WifiStaConnected, System,   "Système",      "WiFi STA",           "",    etat,        0.0f,   0.0f, kLabelsWifiStaConnected, 2) \
@@ -102,7 +112,14 @@ inline constexpr const char* const kLabelsValve1[]           = { "Fermée",     
     X( 8, Boot,             System,   "Système",      "Démarrage",          "",    texte,       0.0f,   0.0f, nullptr,                0) \
     X( 9, Error,            System,   "Système",      "Erreur",             "",    texte,       0.0f,   0.0f, nullptr,                0) \
     X(10, TaskMonPeriod,    System,   "Système",      "Période mesurée",    "ms",  metrique,    0.0f, 10000.0f, nullptr,              0) \
-    X(11, SmsEvent,         System,   "Système",      "SMS",                "",    texte,       0.0f,   0.0f, nullptr,                0)
+    X(11, SmsEvent,         System,   "Système",      "SMS",                "",    texte,       0.0f,   0.0f, nullptr,                0) \
+    \
+    /* ── Actionneurs (suite) ───────────────────────────────────────────────── */ \
+    X(12, Valve2,           Actuator, "Actionneur",   "Vanne 2",            "",    etat,        0.0f,   0.0f, valve2StateLabels,      2) \
+    X(13, Valve3,           Actuator, "Actionneur",   "Vanne 3",            "",    etat,        0.0f,   0.0f, valve3StateLabels,      2) \
+    X(14, Valve4,           Actuator, "Actionneur",   "Vanne 4",            "",    etat,        0.0f,   0.0f, valve4StateLabels,      2) \
+    X(15, Valve5,           Actuator, "Actionneur",   "Vanne 5",            "",    etat,        0.0f,   0.0f, valve5StateLabels,      2) \
+    X(16, Valve6,           Actuator, "Actionneur",   "Vanne 6",            "",    etat,        0.0f,   0.0f, valve6StateLabels,      2)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST
@@ -135,7 +152,7 @@ struct DataMeta {
 // ═════════════════════════════════════════════════════════════════════════════
 // META — tableau constexpr généré depuis DATA_ID_LIST
 // Stocké en flash programme, zéro allocation RAM
-// Organisé par groupes logiques — la position n'a pas d'importance
+// Trié par id croissant — les nouveaux ids sont ajoutés en fin de liste
 // ═════════════════════════════════════════════════════════════════════════════
 
 inline constexpr DataMeta META[] = {

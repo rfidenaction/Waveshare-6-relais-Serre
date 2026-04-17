@@ -6,6 +6,19 @@
 //  - Suppression jsonEscape() locale (centralisée dans DataLogger)
 //  - Suppression escapeCSV() locale (centralisée dans DataLogger)
 //  - buildSchemaJson() génère tout depuis META
+//
+// Refactoring asynchrone (MQTT non-bloquant) :
+//  - onDataPushed() utilise esp_mqtt_client_enqueue() au lieu de publish()
+//    → rend la main en quelques µs, ne bloque plus TaskManager
+//    → le thread esp_mqtt consomme la queue interne a son rythme
+//  - Publication en QoS 1 : requis pour recevoir MQTT_EVENT_PUBLISHED
+//    (l'evenement n'est pas emis en QoS 0, qui ne prevoit aucun acquittement).
+//  - Parametre store=true : requis pour que enqueue accepte les messages
+//    (sans ca, la fonction refuse et retourne -1 systematiquement pour
+//    les QoS 0 et bloque l'ensemble du flux meme en QoS 1 si absent).
+//  - La notification _onPublishSuccess est deplacee dans l'event handler,
+//    sur MQTT_EVENT_PUBLISHED : elle ne se declenche que lorsque le broker
+//    a confirme la reception du message (confirmation de bout en bout).
 
 #include "Connectivity/MqttManager.h"
 #include "Connectivity/WiFiManager.h"
@@ -65,9 +78,9 @@ void MqttManager::init()
     cfg.buffer_size = 1024;
 
     // Limite tout blocage interne d'esp_mqtt (mutex client, send TCP) a 2s
-    // au lieu des 10s par defaut. Evite que esp_mqtt_client_publish bloque
-    // la loop principale plus de 2s quand la socket TCP est bouchee (typiquement
-    // pendant qu'un SMS coupe le PPP cote LilyGo).
+    // au lieu des 10s par defaut. Protection conservee comme filet de securite
+    // pour le thread esp_mqtt lui-meme (n'affecte plus TaskManager depuis
+    // le passage a enqueue).
     cfg.network_timeout_ms = 2000;
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
@@ -112,6 +125,9 @@ void MqttManager::ensureMqttStarted()
 
 // =============================================================================
 // Event handler esp_mqtt
+//
+// IMPORTANT : ce handler tourne dans le thread esp_mqtt, pas dans TaskManager.
+// Toute action declenchee ici doit etre non-bloquante et thread-safe.
 // =============================================================================
 void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
                                     int32_t eventId, void* eventData)
@@ -141,6 +157,13 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
     case MQTT_EVENT_DISCONNECTED:
         Console::warn(TAG, "Déconnecté du broker");
         mqttConnected = false;
+        break;
+
+    case MQTT_EVENT_PUBLISHED:
+        // Le broker a acquitte le message (PUBACK pour QoS 1).
+        // Confirmation aval de bout en bout : Waveshare -> broker OK.
+        // Utilisee par BridgeManager pour le heartbeat toutes les 5 publications.
+        if (_onPublishSuccess) _onPublishSuccess();
         break;
 
     case MQTT_EVENT_ERROR:
@@ -296,7 +319,30 @@ String MqttManager::buildSchemaJson()
 }
 
 // =============================================================================
-// Callback DataLogger → publication MQTT
+// Callback DataLogger → mise en queue MQTT asynchrone
+//
+// esp_mqtt_client_enqueue() copie le message dans la queue interne (outbox) du
+// thread esp_mqtt et rend la main en quelques µs. La transmission reelle sur la
+// socket TCP se fait ensuite dans le thread esp_mqtt, sans bloquer TaskManager.
+//
+// Parametres :
+//  - qos=1  : necessaire pour recevoir MQTT_EVENT_PUBLISHED. Avec QoS 0 cet
+//             evenement n'est jamais emis (pas d'acquittement broker prevu
+//             par le protocole MQTT en QoS 0).
+//  - store=true : autorise l'outbox a accepter les messages. Avec store=false,
+//                 enqueue refuse et retourne -1 systematiquement (confirme
+//                 par le code source esp-mqtt, issue Espressif #9719).
+//
+// Impact reel pour nos usages :
+//  - QoS 1 implique un PUBACK du broker a chaque message : trafic reseau
+//    marginalement superieur (~quelques octets supplementaires), negligeable
+//    sur notre debit (~20 publications/heure en regime nominal).
+//  - En contrepartie, livraison fiabilisee et confirmation de bout en bout
+//    accessible via MQTT_EVENT_PUBLISHED (utilisee pour le heartbeat Bridge).
+//
+// La notification _onPublishSuccess n'est PLUS appelee ici : elle est deplacee
+// dans mqttEventHandler sur MQTT_EVENT_PUBLISHED, qui confirme la reception
+// effective par le broker (semantique plus forte pour le heartbeat BridgeManager).
 // =============================================================================
 void MqttManager::onDataPushed(const DataRecord& record)
 {
@@ -307,18 +353,17 @@ void MqttManager::onDataPushed(const DataRecord& record)
 
     String csv = formatCsvPayload(record);
 
-    int msgId = esp_mqtt_client_publish(
+    int msgId = esp_mqtt_client_enqueue(
         (esp_mqtt_client_handle_t)mqttClient,
         topic.c_str(),
         csv.c_str(), csv.length(),
-        0, false
+        1,           // qos=1 (requis pour MQTT_EVENT_PUBLISHED)
+        false,       // retain=false
+        true         // store=true (requis pour que enqueue accepte le message)
     );
 
-    if (msgId >= 0) {
-        // Notification publication réussie (utilisé par BridgeManager pour le heartbeat)
-        if (_onPublishSuccess) _onPublishSuccess();
-    } else {
-        Console::warn(TAG, "Échec publication " + topic);
+    if (msgId < 0) {
+        Console::warn(TAG, "Enqueue échoué " + topic);
     }
 }
 

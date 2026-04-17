@@ -13,6 +13,17 @@
 //   LilyGo → Waveshare :
 //     STATE|0 ou STATE|1    — disponibilité SMS (~30s)
 //     ACK                   — SMS envoyé par le modem
+//
+// Architecture heartbeat cross-thread :
+//   - onMqttPublish() est appele depuis le thread esp_mqtt (via MQTT_EVENT_PUBLISHED).
+//     Il se contente d'incrementer publishCounter et, toutes les 5 publications,
+//     de lever le flag _heartbeatPending. AUCUN acces UDP dans ce thread.
+//   - handle() (thread TaskManager) consulte _heartbeatPending a chaque tour et,
+//     si leve, envoie le paquet HB en UDP puis efface le flag.
+//   - Cette separation garantit que WiFiUDP (non thread-safe) n'est accede que
+//     par un seul thread (TaskManager). Elle conserve la semantique forte du
+//     heartbeat : il n'est envoye que lorsqu'une publication MQTT a ete
+//     effectivement transmise sur la socket (MQTT_EVENT_PUBLISHED).
 
 #include "Connectivity/BridgeManager.h"
 #include "Connectivity/WiFiManager.h"
@@ -38,6 +49,7 @@ uint8_t              BridgeManager::smsAttempt            = 0;
 uint32_t             BridgeManager::smsSentMs             = 0;
 bool                 BridgeManager::ackReceived           = false;
 uint8_t              BridgeManager::publishCounter        = 0;
+volatile bool        BridgeManager::_heartbeatPending     = false;
 
 // =============================================================================
 // Initialisation — pas de socket UDP ici
@@ -54,6 +66,9 @@ void BridgeManager::init()
     smsState        = SmsState::IDLE;
     ackReceived     = false;
     publishCounter  = 0;
+
+    // Flag heartbeat cross-thread
+    _heartbeatPending = false;
 
     Console::info(TAG, "Initialise (demarrage differe "
                       + String(BRIDGE_START_DELAY_MS / 60000) + " minutes)");
@@ -75,6 +90,12 @@ void BridgeManager::handle()
         Console::info(TAG, "Demarre — ecoute UDP port " + String(BRIDGE_UDP_PORT_LOCAL)
                           + ", envoi vers LilyGo port " + String(BRIDGE_UDP_PORT_REMOTE));
         return;
+    }
+
+    // ─── Heartbeat differe (leve par onMqttPublish dans thread esp_mqtt) ─
+    if (_heartbeatPending) {
+        _heartbeatPending = false;
+        sendHeartbeat();
     }
 
     // ─── Fonctionnement normal ───────────────────────────────────────────
@@ -206,11 +227,15 @@ void BridgeManager::sendSmsPacket(const SmsSlot& sms)
 }
 
 // =============================================================================
-// Callback MqttManager → compteur publications réussies → heartbeat
+// Callback MqttManager → compteur publications réussies → heartbeat differe
 //
-// Appelé par MqttManager à chaque publication MQTT réussie.
-// Compteur modulo 5 : le heartbeat signifie
-// "la Waveshare est vivante ET produit des données MQTT".
+// ATTENTION : appele depuis le thread esp_mqtt (via MQTT_EVENT_PUBLISHED).
+// Ne fait qu'incrementer un compteur et lever un flag. AUCUN acces UDP ici :
+// WiFiUDP n'est pas thread-safe, et l'envoi reel est differe vers handle()
+// qui tourne dans le thread TaskManager.
+//
+// Compteur modulo 5 : le heartbeat signifie "la Waveshare est vivante ET
+// produit des donnees MQTT effectivement transmises au broker".
 // =============================================================================
 void BridgeManager::onMqttPublish()
 {
@@ -218,13 +243,14 @@ void BridgeManager::onMqttPublish()
 
     publishCounter++;
     if (publishCounter >= 5) {
-        sendHeartbeat();
+        _heartbeatPending = true;
         publishCounter = 0;
     }
 }
 
 // =============================================================================
 // Heartbeat — envoi UDP fire-and-forget
+// Appele uniquement depuis handle() (thread TaskManager).
 // =============================================================================
 void BridgeManager::sendHeartbeat()
 {

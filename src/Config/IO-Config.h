@@ -13,14 +13,19 @@
 
 // =============================================================================
 // Relais (6 canaux — actif HIGH)
+//
+// Affectation actuelle : les 6 relais pilotent des électrovannes d'arrosage
+// via ValveManager (Actuators/ValveManager). Affectation provisoire — pourra
+// être réduite à 4 vannes plus tard, les relais libérés pouvant piloter
+// d'autres actionneurs (éclairage, volets, ventilation...).
 // =============================================================================
 
-#define RELAY_CH1_PIN      1
-#define RELAY_CH2_PIN      2
-#define RELAY_CH3_PIN      41
-#define RELAY_CH4_PIN      42
-#define RELAY_CH5_PIN      45
-#define RELAY_CH6_PIN      46
+#define RELAY_CH1_PIN      1     // Vanne 1
+#define RELAY_CH2_PIN      2     // Vanne 2
+#define RELAY_CH3_PIN      41    // Vanne 3
+#define RELAY_CH4_PIN      42    // Vanne 4
+#define RELAY_CH5_PIN      45    // Vanne 5
+#define RELAY_CH6_PIN      46    // Vanne 6
 
 // =============================================================================
 // RS485 (UART isolé)

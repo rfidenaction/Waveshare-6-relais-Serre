@@ -26,6 +26,9 @@
 #include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
 
+#include "Actuators/ValveManager.h"
+#include "Actuators/ValveCycler.h"     // TEST — À SUPPRIMER en production
+
 #include "Storage/DataLogger.h"
 
 #include "Web/WebServer.h"
@@ -56,6 +59,13 @@ void setup()
     delay(200);
 
     Console::begin(Console::Level::INFO);
+
+    // *** PROTECTION MATÉRIELLE IMMÉDIATE ***
+    // Force les 6 GPIO relais en OUTPUT LOW (= fermé) dès le début de setup(),
+    // avant toute autre init logicielle. Empêche tout état flottant au boot
+    // qui pourrait coller un relais brièvement.
+    ValveManager::initPinsSafe();
+    // *** FIN PROTECTION MATÉRIELLE ***
 
     bootTimeMs = millis();
     startTime  = bootTimeMs;
@@ -159,6 +169,12 @@ static void loopInit()
     // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
 
+    // *** AJOUT VALVE *** — Initialisation pilote électrovannes
+    ValveManager::init();
+    // Chenillard de test (À SUPPRIMER en production)
+    ValveCycler::init();
+    // *** FIN AJOUT VALVE ***
+
     // --- SafeReboot ---
     SafeReboot::init();
 
@@ -250,6 +266,19 @@ static void loopInit()
         []() { FakeVoltage::handle(); },
         30000
     );
+
+    // *** AJOUT VALVE *** — Scrutation des timers de fermeture des vannes
+    TaskManager::addTask(
+        []() { ValveManager::handle(); },
+        1000
+    );
+
+    // Chenillard de test des 6 relais (À SUPPRIMER en production)
+    TaskManager::addTask(
+        []() { ValveCycler::handle(); },
+        1000
+    );
+    // *** FIN AJOUT VALVE ***
 
     // SafeReboot (reboot préventif mensuel)
     TaskManager::addTask(

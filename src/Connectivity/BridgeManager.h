@@ -30,11 +30,18 @@
  *   - Aucun appel réseau bloquant, jamais
  *   - canAcceptSms est mis à jour passivement par les paquets STATE
  *
- * Heartbeat :
- *   - MqttManager notifie BridgeManager à chaque publication réussie
- *     via le callback onMqttPublish()
- *   - BridgeManager compte et envoie un heartbeat UDP toutes les 5 publications
- *   - Le heartbeat signifie "la Waveshare est vivante ET produit des données"
+ * Heartbeat (architecture asynchrone cross-thread) :
+ *   - MqttManager notifie BridgeManager::onMqttPublish() depuis le thread
+ *     esp_mqtt, sur reception de MQTT_EVENT_PUBLISHED (transmission reelle
+ *     confirmee).
+ *   - onMqttPublish() incremente publishCounter et, toutes les 5 publications,
+ *     leve simplement le flag _heartbeatPending. Aucun appel UDP dans ce
+ *     thread : WiFiUDP n'est pas thread-safe, et les accès UDP sont reserves
+ *     au thread TaskManager.
+ *   - handle() consulte _heartbeatPending a chaque tour (toutes les 500ms).
+ *     Si leve, handle() envoie le paquet UDP HB et efface le flag.
+ *   - Le heartbeat conserve sa semantique forte : "la Waveshare est vivante
+ *     ET produit des donnees MQTT effectivement transmises au broker".
  *
  * Cycle SMS :
  *   1. SMS en queue + canAcceptSms → envoi UDP
@@ -57,7 +64,9 @@ public:
     static void handle();       // Appelé par TaskManager (~500ms)
 
     // ─── Heartbeat (callback appelé par MqttManager après chaque pub) ────
-    static void onMqttPublish();    // Compte et envoie HB toutes les 5 pubs
+    // ATTENTION : appele dans le thread esp_mqtt (pas TaskManager).
+    // Ne fait qu'incrementer un compteur et lever un flag : aucun UDP ici.
+    static void onMqttPublish();
 
     // ─── SMS (appelé par SmsManager) ─────────────────────────────────────
     // Retourne false si queue pleine (2 max) — le SMS est rejeté + loggé
@@ -104,6 +113,13 @@ private:
 
     // ─── Compteur heartbeat ──────────────────────────────────────────────
     static uint8_t   publishCounter;        // Publications MQTT réussies depuis dernier HB
+
+    // ─── Flag cross-thread pour heartbeat differe ────────────────────────
+    // Leve par onMqttPublish() (thread esp_mqtt) toutes les 5 publications.
+    // Consulte et efface par handle() (thread TaskManager) qui envoie le HB UDP.
+    // volatile : garantit que les lectures/ecritures ne sont pas optimisees par
+    // le compilateur. L'ecriture d'un bool aligne est atomique sur ESP32-S3.
+    static volatile bool _heartbeatPending;
 
     // ─── Méthodes internes ───────────────────────────────────────────────
     static void processIncoming();                          // recvfrom non-bloquant, dispatch STATE/ACK

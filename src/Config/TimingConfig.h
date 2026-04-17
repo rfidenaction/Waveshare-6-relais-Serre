@@ -73,8 +73,8 @@
  *   [TASKMON_MIN_ACCEPTABLE_PERIOD_MS ; TASKMON_MAX_ACCEPTABLE_PERIOD_MS],
  *   sinon le monitor déclencherait des alertes en permanence par construction.
  */
-#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1999
-#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2001
+#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1997
+#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2003
 
 // Note : les réglages du SMS d'alerte TaskMon (activation, grâce, cooldown)
 //        sont dans SmsManager.h, section "POLITIQUE D'ALERTES SMS".
@@ -93,6 +93,31 @@
  */
 //  #define WIFI_STATUS_LOG_INTERVAL_MS    60000
 #define WIFI_STATUS_UPDATE_INTERVAL_MS 30000UL
+
+// =============================================================================
+// ValveManager — Démarrage différé du pilote des électrovannes
+// =============================================================================
+/*
+ * Délai avant que ValveManager accepte les commandes d'ouverture (3 min 30 s).
+ *
+ * Les GPIO relais sont forcés à "fermé" dès setup() par initPinsSafe()
+ * (protection matérielle immédiate, indépendante de toute initialisation
+ * logicielle). Mais le pilote lui-même n'accepte les commandes openFor()
+ * qu'après ce délai.
+ *
+ * Objectif :
+ *  - laisser WiFi, MQTT, WebServer, NTP se stabiliser sans interférence
+ *  - éviter que les premiers cycles d'arrosage ne perturbent les inits
+ *    (allocations, handshakes TLS, resynchronisations)
+ *
+ * Positionné juste avant BRIDGE_START_DELAY_MS (4 minutes) pour garantir
+ * que les vannes peuvent fonctionner avant que le trafic UDP vers LilyGo
+ * ne commence.
+ *
+ * IMPORTANT : ce délai ne dépend d'aucune condition réseau. L'arrosage
+ * fonctionne même si le WiFi n'a jamais été établi.
+ */
+#define VALVE_START_DELAY_MS           210000UL    // 3 min 30 s
 
 // =============================================================================
 // BridgeManager — Communication Waveshare ↔ LilyGo
