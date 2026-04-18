@@ -27,6 +27,13 @@
  * Refactoring META :
  * - buildSchemaJson() lit tout depuis META (source de vérité unique)
  * - jsonEscape() et escapeCSV() centralisées dans DataLogger
+ *
+ * Dispatcher de commandes entrantes :
+ * - Abonnement à "serre/cmd/#"
+ * - Topics : serre/cmd/{id} où {id} est l'id META (ex: serre/cmd/4 = Valve1)
+ * - Payload : durée en secondes en ASCII décimal
+ * - Validation : isValidId + type == Actuator
+ * - Délégation thread-safe via ValveManager::enqueueCommand() (queue FreeRTOS)
  */
 class MqttManager {
 public:
@@ -45,6 +52,11 @@ private:
     static bool schemaPublished;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
+
+    // Dispatcher des commandes entrantes (appelé sur MQTT_EVENT_DATA).
+    // Parse serre/cmd/{id} + payload (secondes) et délègue à ValveManager
+    // via sa queue FreeRTOS thread-safe.
+    static void dispatchCommand(void* eventData);
 
     static void publishOnline();
     static void publishSchema();

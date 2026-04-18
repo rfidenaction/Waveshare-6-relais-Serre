@@ -27,7 +27,6 @@
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
 
 #include "Actuators/ValveManager.h"
-#include "Actuators/ValveCycler.h"     // TEST — À SUPPRIMER en production
 
 #include "Storage/DataLogger.h"
 
@@ -64,6 +63,9 @@ void setup()
     // Force les 6 GPIO relais en OUTPUT LOW (= fermé) dès le début de setup(),
     // avant toute autre init logicielle. Empêche tout état flottant au boot
     // qui pourrait coller un relais brièvement.
+    // Seule action côté ValveManager pendant tout le boot : aucune allocation,
+    // aucune queue, rien d'autre. Le reste est différé à VALVE_START_DELAY_MS
+    // et géré paresseusement dans ValveManager::handle() lui-même.
     ValveManager::initPinsSafe();
     // *** FIN PROTECTION MATÉRIELLE ***
 
@@ -169,11 +171,11 @@ static void loopInit()
     // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
 
-    // *** AJOUT VALVE *** — Initialisation pilote électrovannes
-    ValveManager::init();
-    // Chenillard de test (À SUPPRIMER en production)
-    ValveCycler::init();
-    // *** FIN AJOUT VALVE ***
+    // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
+    // à LOW dès setup() par initPinsSafe(). Le reste (queue FreeRTOS,
+    // publication initiale, acceptation des commandes) est différé et géré
+    // paresseusement par ValveManager::handle() au premier passage après
+    // VALVE_START_DELAY_MS.
 
     // --- SafeReboot ---
     SafeReboot::init();
@@ -267,18 +269,12 @@ static void loopInit()
         30000
     );
 
-    // *** AJOUT VALVE *** — Scrutation des timers de fermeture des vannes
+    // ValveManager — unique tâche côté vannes. Dormante (if/return) tant que
+    // millis() < VALVE_START_DELAY_MS, puis démarrage paresseux automatique.
     TaskManager::addTask(
         []() { ValveManager::handle(); },
         1000
     );
-
-    // Chenillard de test des 6 relais (À SUPPRIMER en production)
-    TaskManager::addTask(
-        []() { ValveCycler::handle(); },
-        1000
-    );
-    // *** FIN AJOUT VALVE ***
 
     // SafeReboot (reboot préventif mensuel)
     TaskManager::addTask(

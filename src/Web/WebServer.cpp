@@ -12,12 +12,20 @@
 //  - Le filtrage par DataId, le sous-échantillonnage et la construction
 //    du graphique sont faits côté client dans PagePrincipale.cpp
 //  - Même principe que le client MQTT distant (RecepteurV4_serre.html)
+//
+// Ajout page Actionneurs :
+//  - GET  /actuators        → page web de pilotage des vannes (PageActuators)
+//  - POST /actuators/open   → commande d'ouverture (id=<DataId>, duration=<secondes>)
+//    Valide via isValidId + type == Actuator, délègue à ValveManager::enqueueCommand
+//    (même porte d'entrée thread-safe que MQTT).
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"
 #include "Web/Pages/PageLogs.h"
+#include "Web/Pages/PageActuators.h"
 #include "Connectivity/WiFiManager.h"
 #include "Storage/DataLogger.h"
+#include "Actuators/ValveManager.h"
 #include "Utils/Console.h"
 
 #include <SPIFFS.h>
@@ -66,6 +74,10 @@ void WebServer::init()
     server.on("/logs/download", HTTP_GET, handleLogsDownload);
     server.on("/logs/clear", HTTP_POST, handleLogsClear);
     server.on("/logs", HTTP_GET, handleLogs);
+
+    // Routes de pilotage des actionneurs
+    server.on("/actuators", HTTP_GET, handleActuators);
+    server.on("/actuators/open", HTTP_POST, handleActuatorsOpen);
 
     // Démarrage du serveur asynchrone
     server.begin();
@@ -118,6 +130,88 @@ void WebServer::handleLogs(AsyncWebServerRequest *request)
     String html = PageLogs::getHtml(stats);
     Console::info(TAG, "HTML généré, taille=" + String(html.length()));
     request->send(200, "text/html", html);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page Actionneurs
+// ─────────────────────────────────────────────────────────────────────────────
+
+void WebServer::handleActuators(AsyncWebServerRequest *request)
+{
+    String html = PageActuators::getHtml();
+    request->send(200, "text/html", html);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commande d'ouverture d'une vanne
+//
+// POST /actuators/open
+// Body form-urlencoded : id=<DataId>&duration=<secondes>
+//
+// Validation identique au dispatcher MQTT :
+//   - id doit être un DataId connu de META
+//   - getMeta(id).type doit être Actuator
+//   - duration doit être > 0
+//
+// Succès : 204 No Content. Erreur : 400 Bad Request avec message explicite.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void WebServer::handleActuatorsOpen(AsyncWebServerRequest *request)
+{
+    // ─── Récupération des paramètres POST (form-urlencoded) ──────────────
+    if (!request->hasParam("id", true) || !request->hasParam("duration", true)) {
+        request->send(400, "text/plain", "Parametres manquants (id, duration)");
+        return;
+    }
+
+    String idStr  = request->getParam("id", true)->value();
+    String durStr = request->getParam("duration", true)->value();
+
+    long idLong  = idStr.toInt();
+    long durLong = durStr.toInt();
+
+    if (idLong < 0 || idLong > 255) {
+        request->send(400, "text/plain", "id hors plage");
+        return;
+    }
+
+    uint8_t idByte = (uint8_t)idLong;
+
+    if (!DataLogger::isValidId(idByte)) {
+        request->send(400, "text/plain", "id inconnu de META");
+        Console::warn(TAG, "POST /actuators/open : id inconnu " + String(idByte));
+        return;
+    }
+
+    DataId id = (DataId)idByte;
+    const DataMeta& meta = DataLogger::getMeta(id);
+    if (meta.type != DataType::Actuator) {
+        request->send(400, "text/plain", "id n'est pas un actionneur");
+        Console::warn(TAG, "POST /actuators/open : id=" + String(idByte) +
+                      " non-actionneur (" + String(meta.label) + ")");
+        return;
+    }
+
+    if (durLong <= 0) {
+        request->send(400, "text/plain", "duration doit etre > 0");
+        return;
+    }
+
+    // ─── Dépose dans la queue FreeRTOS de ValveManager ──────────────────
+    ValveManager::ValveCommand cmd;
+    cmd.id         = id;
+    cmd.durationMs = (uint32_t)durLong * 1000UL;
+
+    if (ValveManager::enqueueCommand(cmd)) {
+        Console::info(TAG, "Commande HTTP acceptée : id=" + String(idByte) +
+                      " (" + String(meta.label) + ") pour " +
+                      String(durLong) + " s");
+        request->send(204);
+    } else {
+        Console::warn(TAG, "Commande HTTP rejetée (queue pleine) : id=" +
+                      String(idByte));
+        request->send(503, "text/plain", "File de commandes pleine");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -5,6 +5,8 @@
 //  - Suppression handleGsmToggle (pas de modem cellulaire)
 //  - Suppression handleGraphData : les graphiques sont servis via /logs/download
 //    (bundle complet), le filtrage se fait côté client
+//  - Ajout handleActuators (page web pilotage vannes)
+//  - Ajout handleActuatorsOpen (POST commande d'ouverture)
 #pragma once
 
 #include <Arduino.h>
@@ -33,4 +35,8 @@ private:
     static void handleLogs(AsyncWebServerRequest *request);
     static void handleLogsDownload(AsyncWebServerRequest *request);
     static void handleLogsClear(AsyncWebServerRequest *request);
+
+    // Handlers pour la page Actionneurs (pilotage vannes)
+    static void handleActuators(AsyncWebServerRequest *request);
+    static void handleActuatorsOpen(AsyncWebServerRequest *request);
 };

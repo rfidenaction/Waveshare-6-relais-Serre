@@ -12,6 +12,7 @@
 //  - Nouvelle carte Alimentation avec DataId::SupplyVoltage
 //  - Graphique adapté : tension alimentation, échelle Y 5–40 V
 //  - Logger → Console
+//  - Ajout lien "Arrosage" vers /actuators
 //
 // Refactoring graphique (Façon 1) :
 //  - showSupplyGraph() appelle désormais /logs/download au lieu de /graphdata
@@ -462,6 +463,13 @@ setInterval(() => {
 <div class="card">
   <p>Durée de fonctionnement</p>
   <p class="value">)HTML" + getUptimeString() + R"HTML(</p>
+</div>
+
+<div class="card" style="margin-top: 40px;">
+  <a href="/actuators" style="color: white; text-decoration: none; display: block;">
+    <p style="font-size: 1.2em;">💧 Arrosage</p>
+    <p style="font-size: 0.9em;">Pilotage des vannes</p>
+  </a>
 </div>
 
 <div class="card" style="margin-top: 40px;">

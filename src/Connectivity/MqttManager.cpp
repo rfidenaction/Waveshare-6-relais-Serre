@@ -19,15 +19,28 @@
 //  - La notification _onPublishSuccess est deplacee dans l'event handler,
 //    sur MQTT_EVENT_PUBLISHED : elle ne se declenche que lorsque le broker
 //    a confirme la reception du message (confirmation de bout en bout).
+//
+// Dispatcher de commandes entrantes (serre/cmd/{id}) :
+//  - Topic : serre/cmd/{id} où {id} est l'id META (ex: serre/cmd/4 = Valve1)
+//  - Payload : durée en secondes en ASCII décimal (ex: "45")
+//  - Validation : isValidId(id) && getMeta(id).type == DataType::Actuator
+//  - Thread-safety : mqttEventHandler tourne dans le thread esp_mqtt.
+//    On n'appelle PAS ValveManager::openFor() directement (races + appel
+//    indirect à DataLogger::push qui n'est pas thread-safe). On dépose la
+//    commande dans la queue FreeRTOS de ValveManager via enqueueCommand(),
+//    et c'est handle() côté TaskManager qui consomme et exécute.
 
 #include "Connectivity/MqttManager.h"
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
 #include "Storage/DataLogger.h"
+#include "Actuators/ValveManager.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
 #include <variant>
+#include <stdlib.h>
+#include <string.h>
 
 // Tag pour logs Console
 static const char* TAG = "MQTT";
@@ -175,16 +188,113 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
-        if (event->topic && event->topic_len > 0) {
-            String topic(event->topic, event->topic_len);
-            String payload(event->data, event->data_len);
-            Console::info(TAG, "Message reçu: " + topic + " → " + payload);
-            // TODO Phase 4 : dispatcher les commandes
-        }
+        // Dispatcher serre/cmd/{id} — délègue à ValveManager via queue FreeRTOS.
+        // Aucun accès direct à l'état des vannes ni à DataLogger depuis ce thread.
+        dispatchCommand(event);
         break;
 
     default:
         break;
+    }
+}
+
+// =============================================================================
+// Dispatcher des commandes entrantes — appelé sur MQTT_EVENT_DATA
+//
+// Topic attendu : serre/cmd/{id} où {id} est un entier décimal correspondant
+// à un DataId META de type Actuator (aujourd'hui : les 6 vannes).
+// Payload attendu : durée d'ouverture en secondes, ASCII décimal.
+//
+// Comportement en cas de format invalide : log warn + rejet silencieux
+// (pas de topic de retour/ack côté MQTT pour l'instant).
+//
+// THREAD esp_mqtt : seul accès externe = ValveManager::enqueueCommand()
+// qui est thread-safe par construction (queue FreeRTOS avec xQueueSend).
+// =============================================================================
+void MqttManager::dispatchCommand(void* eventData)
+{
+    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)eventData;
+
+    if (!event->topic || event->topic_len <= 0) return;
+
+    // Les champs topic/data d'esp_mqtt NE SONT PAS null-terminés.
+    // On copie dans des buffers locaux de taille raisonnable.
+    char topicBuf[64];
+    char dataBuf[32];
+
+    int tlen = event->topic_len;
+    if (tlen >= (int)sizeof(topicBuf)) tlen = sizeof(topicBuf) - 1;
+    memcpy(topicBuf, event->topic, tlen);
+    topicBuf[tlen] = '\0';
+
+    int dlen = event->data_len;
+    if (dlen < 0) dlen = 0;
+    if (dlen >= (int)sizeof(dataBuf)) dlen = sizeof(dataBuf) - 1;
+    if (dlen > 0) memcpy(dataBuf, event->data, dlen);
+    dataBuf[dlen] = '\0';
+
+    // ─── Vérification du préfixe ────────────────────────────────────────
+    static const char PREFIX[] = "serre/cmd/";
+    const int PREFIX_LEN = sizeof(PREFIX) - 1;
+    if (strncmp(topicBuf, PREFIX, PREFIX_LEN) != 0) {
+        Console::warn(TAG, "Topic commande inattendu : " + String(topicBuf));
+        return;
+    }
+
+    // ─── Extraction et validation de l'ID ───────────────────────────────
+    const char* idStr = topicBuf + PREFIX_LEN;
+    if (*idStr == '\0') {
+        Console::warn(TAG, "Topic commande sans id : " + String(topicBuf));
+        return;
+    }
+
+    char* endPtr = nullptr;
+    long idLong = strtol(idStr, &endPtr, 10);
+    if (endPtr == idStr || *endPtr != '\0' || idLong < 0 || idLong > 255) {
+        Console::warn(TAG, "Id non numérique dans topic : " + String(topicBuf));
+        return;
+    }
+    uint8_t idByte = (uint8_t)idLong;
+
+    if (!DataLogger::isValidId(idByte)) {
+        Console::warn(TAG, "Id inconnu de META : " + String(idByte));
+        return;
+    }
+
+    DataId id = (DataId)idByte;
+    const DataMeta& meta = DataLogger::getMeta(id);
+    if (meta.type != DataType::Actuator) {
+        Console::warn(TAG, "Commande sur DataId non-actionneur : id=" +
+                      String(idByte) + " (" + String(meta.label) + ")");
+        return;
+    }
+
+    // ─── Parsing de la durée (secondes ASCII) ────────────────────────────
+    if (dlen == 0) {
+        Console::warn(TAG, "Payload vide pour commande id=" + String(idByte));
+        return;
+    }
+
+    endPtr = nullptr;
+    long secLong = strtol(dataBuf, &endPtr, 10);
+    if (endPtr == dataBuf || secLong <= 0) {
+        Console::warn(TAG, "Durée invalide pour commande id=" + String(idByte) +
+                      " : '" + String(dataBuf) + "'");
+        return;
+    }
+
+    // ─── Dépose dans la queue FreeRTOS de ValveManager ──────────────────
+    ValveManager::ValveCommand cmd;
+    cmd.id         = id;
+    cmd.durationMs = (uint32_t)secLong * 1000UL;
+
+    if (ValveManager::enqueueCommand(cmd)) {
+        Console::info(TAG, "Commande acceptée : id=" + String(idByte) +
+                      " (" + String(meta.label) + ") pour " +
+                      String(secLong) + " s");
+    } else {
+        Console::warn(TAG, "Commande rejetée (queue pleine) : id=" +
+                      String(idByte));
     }
 }
 

@@ -3,6 +3,12 @@ projet/
 ├── src/
 │   ├── main.cpp                      // setup() + loop() + orchestration globale
 │   │
+│   ├── Actuators/
+│   │   ├── ValveCycler.h         
+│   │   ├── ValveCycler.cpp        
+│   │   ├── ValveManager.h           // Configuration réseau : SSID, passwords, MQTT broker, NTP, etc.
+│   │   └── ValveManager.cpp    
+│   │
 │   ├── Config/
 │   │   ├── Config.h                  // Include global – point d'entrée principal
 │   │   ├── IO-Config.h               // Configuration des broches E/S
