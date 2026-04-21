@@ -1,34 +1,12 @@
 // src/Connectivity/MqttManager.cpp
 //
-// Refactoring META (source de vérité unique) :
-//  - Suppression ID_TO_TYPE[] (DataType vient de META)
-//  - Suppression DATATYPE_LABELS[] (typeLabel vient de META)
-//  - Suppression jsonEscape() locale (centralisée dans DataLogger)
-//  - Suppression escapeCSV() locale (centralisée dans DataLogger)
-//  - buildSchemaJson() génère tout depuis META
+// Client MQTT non-bloquant. Voir MqttManager.h pour l'architecture générale
+// (tampon FIFO amont + watchdog zombie).
 //
-// Refactoring asynchrone (MQTT non-bloquant) :
-//  - onDataPushed() utilise esp_mqtt_client_enqueue() au lieu de publish()
-//    → rend la main en quelques µs, ne bloque plus TaskManager
-//    → le thread esp_mqtt consomme la queue interne a son rythme
-//  - Publication en QoS 1 : requis pour recevoir MQTT_EVENT_PUBLISHED
-//    (l'evenement n'est pas emis en QoS 0, qui ne prevoit aucun acquittement).
-//  - Parametre store=true : requis pour que enqueue accepte les messages
-//    (sans ca, la fonction refuse et retourne -1 systematiquement pour
-//    les QoS 0 et bloque l'ensemble du flux meme en QoS 1 si absent).
-//  - La notification _onPublishSuccess est deplacee dans l'event handler,
-//    sur MQTT_EVENT_PUBLISHED : elle ne se declenche que lorsque le broker
-//    a confirme la reception du message (confirmation de bout en bout).
-//
-// Dispatcher de commandes entrantes (serre/cmd/{id}) :
-//  - Topic : serre/cmd/{id} où {id} est l'id META (ex: serre/cmd/4 = Valve1)
-//  - Payload : durée en secondes en ASCII décimal (ex: "45")
-//  - Validation : isValidId(id) && getMeta(id).type == DataType::Actuator
-//  - Thread-safety : mqttEventHandler tourne dans le thread esp_mqtt.
-//    On n'appelle PAS ValveManager::openFor() directement (races + appel
-//    indirect à DataLogger::push qui n'est pas thread-safe). On dépose la
-//    commande dans la queue FreeRTOS de ValveManager via enqueueCommand(),
-//    et c'est handle() côté TaskManager qui consomme et exécute.
+// Dépendance à META : tous les IDs, types et libellés manipulés ici
+// proviennent de META (tableau DataLogger). META est la référence UNIQUE
+// du projet pour la sémantique des datas. Aucune table locale ne duplique
+// ni ne redéfinit quoi que ce soit de META.
 
 #include "Connectivity/MqttManager.h"
 #include "Connectivity/WiFiManager.h"
@@ -42,22 +20,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Tag pour logs Console
 static const char* TAG = "MQTT";
 
-// =============================================================================
-// Variables statiques
-// =============================================================================
+// ─── Variables statiques ─────────────────────────────────────────────────
 void*         MqttManager::mqttClient      = nullptr;
 volatile bool MqttManager::mqttConnected   = false;
 bool          MqttManager::mqttStarted     = false;
 bool          MqttManager::schemaPublished = false;
 
-// Callback publication réussie (nullptr = pas de callback)
 void (*MqttManager::_onPublishSuccess)() = nullptr;
 
-// =============================================================================
-// Callback publication réussie
+MqttManager::BufferSlot MqttManager::buffer[BUFFER_CAPACITY] = {};
+uint8_t  MqttManager::bufferHead    = 0;
+uint8_t  MqttManager::bufferCount   = 0;
+uint32_t MqttManager::evictionCount = 0;
+
+volatile uint32_t MqttManager::messagesEnqueued  = 0;
+volatile uint32_t MqttManager::messagesPublished = 0;
+volatile uint32_t MqttManager::watchdogSeconds   = MqttManager::WATCHDOG_SECONDS;
+uint32_t          MqttManager::forcedDisconnectCount = 0;
+
 // =============================================================================
 void MqttManager::setOnPublishSuccess(void (*callback)())
 {
@@ -65,7 +47,7 @@ void MqttManager::setOnPublishSuccess(void (*callback)())
 }
 
 // =============================================================================
-// Initialisation
+// Initialisation (esp_mqtt configuré mais pas démarré : attend WiFi STA).
 // =============================================================================
 void MqttManager::init()
 {
@@ -90,10 +72,7 @@ void MqttManager::init()
 
     cfg.buffer_size = 1024;
 
-    // Limite tout blocage interne d'esp_mqtt (mutex client, send TCP) a 2s
-    // au lieu des 10s par defaut. Protection conservee comme filet de securite
-    // pour le thread esp_mqtt lui-meme (n'affecte plus TaskManager depuis
-    // le passage a enqueue).
+    // Filet de sécurité pour le thread esp_mqtt (2 s au lieu des 10 s par défaut).
     cfg.network_timeout_ms = 2000;
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
@@ -116,10 +95,13 @@ void MqttManager::init()
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
     Console::info(TAG, "Broker: " + String(MQTT_BROKER_URI));
     Console::info(TAG, "Client ID: " + String(MQTT_CLIENT_ID));
+    Console::info(TAG, "Tampon amont : " + String(BUFFER_CAPACITY) + " entrées");
+    Console::info(TAG, "Watchdog zombie : seuil gap=" + String(WATCHDOG_GAP_THRESHOLD)
+                      + ", fenêtre=" + String(WATCHDOG_SECONDS / 60) + " min");
 }
 
 // =============================================================================
-// Démarrage conditionnel
+// Démarrage effectif (esp_mqtt_client_start) dès que WiFi STA est up.
 // =============================================================================
 void MqttManager::ensureMqttStarted()
 {
@@ -137,10 +119,8 @@ void MqttManager::ensureMqttStarted()
 }
 
 // =============================================================================
-// Event handler esp_mqtt
-//
-// IMPORTANT : ce handler tourne dans le thread esp_mqtt, pas dans TaskManager.
-// Toute action declenchee ici doit etre non-bloquante et thread-safe.
+// Event handler esp_mqtt — tourne dans le thread esp_mqtt (PAS TaskManager).
+// Toute action déclenchée ici doit être non-bloquante et thread-safe.
 // =============================================================================
 void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
                                     int32_t eventId, void* eventData)
@@ -173,9 +153,11 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_PUBLISHED:
-        // Le broker a acquitte le message (PUBACK pour QoS 1).
-        // Confirmation aval de bout en bout : Waveshare -> broker OK.
-        // Utilisee par BridgeManager pour le heartbeat toutes les 5 publications.
+        // PUBACK reçu (QoS 1). Reset du watchdog zombie + notification externe.
+        messagesEnqueued  = 0;
+        messagesPublished = 0;
+        watchdogSeconds   = WATCHDOG_SECONDS;
+
         if (_onPublishSuccess) _onPublishSuccess();
         break;
 
@@ -188,8 +170,6 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
-        // Dispatcher serre/cmd/{id} — délègue à ValveManager via queue FreeRTOS.
-        // Aucun accès direct à l'état des vannes ni à DataLogger depuis ce thread.
         dispatchCommand(event);
         break;
 
@@ -199,17 +179,11 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 }
 
 // =============================================================================
-// Dispatcher des commandes entrantes — appelé sur MQTT_EVENT_DATA
-//
-// Topic attendu : serre/cmd/{id} où {id} est un entier décimal correspondant
-// à un DataId META de type Actuator (aujourd'hui : les 6 vannes).
-// Payload attendu : durée d'ouverture en secondes, ASCII décimal.
-//
-// Comportement en cas de format invalide : log warn + rejet silencieux
-// (pas de topic de retour/ack côté MQTT pour l'instant).
-//
-// THREAD esp_mqtt : seul accès externe = ValveManager::enqueueCommand()
-// qui est thread-safe par construction (queue FreeRTOS avec xQueueSend).
+// Dispatcher des commandes entrantes serre/cmd/{id} (payload = durée en s).
+// Validation via META : seuls les DataId déclarés dans META avec
+// type == Actuator sont acceptés (isValidId puis getMeta().type).
+// Délègue à ValveManager via sa queue FreeRTOS (aucun accès direct depuis
+// le thread esp_mqtt aux structures non thread-safe).
 // =============================================================================
 void MqttManager::dispatchCommand(void* eventData)
 {
@@ -217,8 +191,7 @@ void MqttManager::dispatchCommand(void* eventData)
 
     if (!event->topic || event->topic_len <= 0) return;
 
-    // Les champs topic/data d'esp_mqtt NE SONT PAS null-terminés.
-    // On copie dans des buffers locaux de taille raisonnable.
+    // Les champs topic/data d'esp_mqtt ne sont pas null-terminés.
     char topicBuf[64];
     char dataBuf[32];
 
@@ -233,7 +206,6 @@ void MqttManager::dispatchCommand(void* eventData)
     if (dlen > 0) memcpy(dataBuf, event->data, dlen);
     dataBuf[dlen] = '\0';
 
-    // ─── Vérification du préfixe ────────────────────────────────────────
     static const char PREFIX[] = "serre/cmd/";
     const int PREFIX_LEN = sizeof(PREFIX) - 1;
     if (strncmp(topicBuf, PREFIX, PREFIX_LEN) != 0) {
@@ -241,7 +213,6 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    // ─── Extraction et validation de l'ID ───────────────────────────────
     const char* idStr = topicBuf + PREFIX_LEN;
     if (*idStr == '\0') {
         Console::warn(TAG, "Topic commande sans id : " + String(topicBuf));
@@ -269,7 +240,6 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    // ─── Parsing de la durée (secondes ASCII) ────────────────────────────
     if (dlen == 0) {
         Console::warn(TAG, "Payload vide pour commande id=" + String(idByte));
         return;
@@ -283,7 +253,6 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    // ─── Dépose dans la queue FreeRTOS de ValveManager ──────────────────
     ValveManager::ValveCommand cmd;
     cmd.id         = id;
     cmd.durationMs = (uint32_t)secLong * 1000UL;
@@ -299,8 +268,6 @@ void MqttManager::dispatchCommand(void* eventData)
 }
 
 // =============================================================================
-// Publication "online" (retain)
-// =============================================================================
 void MqttManager::publishOnline()
 {
     esp_mqtt_client_publish(
@@ -313,7 +280,7 @@ void MqttManager::publishOnline()
 }
 
 // =============================================================================
-// Publication du schéma (retain) — une seule fois au boot
+// Publication du schéma JSON (retain) — une seule fois au boot.
 // =============================================================================
 void MqttManager::publishSchema()
 {
@@ -335,8 +302,8 @@ void MqttManager::publishSchema()
 }
 
 // =============================================================================
-// Génération du schéma JSON depuis META (source de vérité unique)
-// Format identique à buildBundleHeader() dans WebServer.cpp
+// Génération du schéma JSON depuis META (source de vérité unique).
+// Format identique à buildBundleHeader() dans WebServer.cpp.
 // =============================================================================
 String MqttManager::buildSchemaJson()
 {
@@ -345,7 +312,6 @@ String MqttManager::buildSchemaJson()
 
     p += "{\n";
 
-    // Timestamp de génération (heure locale)
     char dateBuf[24] = "";
     {
         time_t now = time(nullptr);
@@ -357,11 +323,10 @@ String MqttManager::buildSchemaJson()
     }
     p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
 
-    // Colonnes CSV
     p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
-    // ── Table DataType (dédupliquée depuis META) ────────────────────────────
+    // Table DataType (dédupliquée depuis META).
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
     for (uint8_t t = 0; t <= 3; t++) {
@@ -381,7 +346,7 @@ String MqttManager::buildSchemaJson()
     }
     p += "\n  ],\n";
 
-    // ── Table DataId (depuis META) ──────────────────────────────────────────
+    // Table DataId (depuis META).
     p += "  \"dataIds\": [\n";
     for (size_t i = 0; i < META_COUNT; i++) {
         const DataMeta& m = META[i];
@@ -397,13 +362,11 @@ String MqttManager::buildSchemaJson()
 
         p += ", \"type\": "; p += (uint8_t)m.type;
 
-        // Min/Max (uniquement pour metrique)
         if (m.nature == DataNature::metrique) {
             p += ", \"min\": "; p += String(m.min, 1);
             p += ", \"max\": "; p += String(m.max, 1);
         }
 
-        // Mapping états (uniquement pour nature == etat)
         if (m.nature == DataNature::etat && m.stateLabels != nullptr) {
             p += ", \"states\": [";
             for (uint8_t s = 0; s < m.stateLabelCount; s++) {
@@ -429,56 +392,97 @@ String MqttManager::buildSchemaJson()
 }
 
 // =============================================================================
-// Callback DataLogger → mise en queue MQTT asynchrone
-//
-// esp_mqtt_client_enqueue() copie le message dans la queue interne (outbox) du
-// thread esp_mqtt et rend la main en quelques µs. La transmission reelle sur la
-// socket TCP se fait ensuite dans le thread esp_mqtt, sans bloquer TaskManager.
-//
-// Parametres :
-//  - qos=1  : necessaire pour recevoir MQTT_EVENT_PUBLISHED. Avec QoS 0 cet
-//             evenement n'est jamais emis (pas d'acquittement broker prevu
-//             par le protocole MQTT en QoS 0).
-//  - store=true : autorise l'outbox a accepter les messages. Avec store=false,
-//                 enqueue refuse et retourne -1 systematiquement (confirme
-//                 par le code source esp-mqtt, issue Espressif #9719).
-//
-// Impact reel pour nos usages :
-//  - QoS 1 implique un PUBACK du broker a chaque message : trafic reseau
-//    marginalement superieur (~quelques octets supplementaires), negligeable
-//    sur notre debit (~20 publications/heure en regime nominal).
-//  - En contrepartie, livraison fiabilisee et confirmation de bout en bout
-//    accessible via MQTT_EVENT_PUBLISHED (utilisee pour le heartbeat Bridge).
-//
-// La notification _onPublishSuccess n'est PLUS appelee ici : elle est deplacee
-// dans mqttEventHandler sur MQTT_EVENT_PUBLISHED, qui confirme la reception
-// effective par le broker (semantique plus forte pour le heartbeat BridgeManager).
+// Callback DataLogger → alimentation du tampon FIFO amont.
+// Alimente TOUJOURS, même hors connexion. Éviction de la plus ancienne si plein.
 // =============================================================================
 void MqttManager::onDataPushed(const DataRecord& record)
 {
-    ensureMqttStarted();
-    if (!mqttConnected || !mqttClient) return;
-
-    String topic = "serre/data/" + String((uint8_t)record.id);
-
     String csv = formatCsvPayload(record);
 
-    int msgId = esp_mqtt_client_enqueue(
-        (esp_mqtt_client_handle_t)mqttClient,
-        topic.c_str(),
-        csv.c_str(), csv.length(),
-        1,           // qos=1 (requis pour MQTT_EVENT_PUBLISHED)
-        false,       // retain=false
-        true         // store=true (requis pour que enqueue accepte le message)
-    );
+    if (csv.length() >= sizeof(buffer[0].payload)) {
+        Console::warn(TAG, "Payload trop longue (" + String(csv.length())
+                          + " octets) pour id=" + String((uint8_t)record.id)
+                          + " — message non publié sur MQTT");
+        return;
+    }
 
-    if (msgId < 0) {
-        Console::warn(TAG, "Enqueue échoué " + topic);
+    if (bufferCount == BUFFER_CAPACITY) {
+        evictionCount++;
+        Console::warn(TAG, "Éviction tampon : message id="
+                          + String(buffer[bufferHead].id)
+                          + " perdu pour MQTT (cumul évictions : "
+                          + String(evictionCount) + ")");
+        bufferHead = (bufferHead + 1) % BUFFER_CAPACITY;
+        bufferCount--;
+    }
+
+    uint8_t writeIdx = (bufferHead + bufferCount) % BUFFER_CAPACITY;
+    buffer[writeIdx].id = (uint8_t)record.id;
+    strncpy(buffer[writeIdx].payload, csv.c_str(),
+            sizeof(buffer[writeIdx].payload) - 1);
+    buffer[writeIdx].payload[sizeof(buffer[writeIdx].payload) - 1] = '\0';
+    bufferCount++;
+}
+
+// =============================================================================
+// Drain 1 entrée/s du tampon vers esp-mqtt + watchdog zombie.
+// Tâche TaskManager période 1 s. Non-bloquant (latence max 2 s via
+// network_timeout_ms). En cas d'échec enqueue, l'entrée reste en tête et
+// sera retentée au prochain tour.
+// =============================================================================
+void MqttManager::handle()
+{
+    if (!mqttClient) return;
+    ensureMqttStarted();
+    if (!mqttConnected) return;
+
+    if (watchdogSeconds > 0) {
+        watchdogSeconds--;
+    }
+
+    if (bufferCount > 0) {
+        const BufferSlot& slot = buffer[bufferHead];
+        String topic = "serre/data/" + String(slot.id);
+
+        int msgId = esp_mqtt_client_enqueue(
+            (esp_mqtt_client_handle_t)mqttClient,
+            topic.c_str(),
+            slot.payload, strlen(slot.payload),
+            1,           // qos=1 (requis pour MQTT_EVENT_PUBLISHED)
+            false,       // retain=false
+            true         // store=true (requis pour que enqueue accepte)
+        );
+
+        if (msgId >= 0) {
+            messagesEnqueued++;
+            bufferHead = (bufferHead + 1) % BUFFER_CAPACITY;
+            bufferCount--;
+        } else {
+            Console::warn(TAG, "Enqueue échoué id=" + String(slot.id)
+                              + " — réessai au prochain tour");
+        }
+    }
+
+    // Cast int32_t : tolère une race PUBACK vs enqueue sans fausse alerte.
+    int32_t gap = (int32_t)(messagesEnqueued - messagesPublished);
+    if (gap >= (int32_t)WATCHDOG_GAP_THRESHOLD && watchdogSeconds == 0) {
+        forcedDisconnectCount++;
+        Console::warn(TAG,
+            "Zombie MQTT détecté (gap=" + String(gap) +
+            ", " + String(WATCHDOG_SECONDS / 60) + " min sans PUBACK) — "
+            "disconnect forcé (cumul depuis boot : " +
+            String(forcedDisconnectCount) + ")");
+
+        esp_mqtt_client_disconnect((esp_mqtt_client_handle_t)mqttClient);
+
+        messagesEnqueued  = 0;
+        messagesPublished = 0;
+        watchdogSeconds   = WATCHDOG_SECONDS;
     }
 }
 
 // =============================================================================
-// Formatage CSV 7 champs
+// Formatage CSV 7 champs :
 // timestamp,UTC_available,UTC_reliable,type,id,valueType,value
 // =============================================================================
 String MqttManager::formatCsvPayload(const DataRecord& record)
@@ -509,8 +513,6 @@ String MqttManager::formatCsvPayload(const DataRecord& record)
     return csv;
 }
 
-// =============================================================================
-// Accesseur
 // =============================================================================
 bool MqttManager::isMqttConnected()
 {

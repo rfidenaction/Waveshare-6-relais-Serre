@@ -236,6 +236,15 @@ static void loopInit()
         DATALOGGER_HANDLE_PERIOD_MS
     );
 
+    // *** MQTT *** — Drain du tampon FIFO amont (Variante 1)
+    // Démarre paresseusement le client esp_mqtt et publie UNE entrée du tampon
+    // par tour. Non-bloquant. Voir MqttManager.h pour la doc complète.
+    TaskManager::addTask(
+        []() { MqttManager::handle(); },
+        1000
+    );
+    // *** FIN MQTT ***
+
     // WiFi status → DataLogger
     TaskManager::addTask(
         []() {
