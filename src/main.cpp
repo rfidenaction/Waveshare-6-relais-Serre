@@ -26,6 +26,7 @@
 #include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
 
+#include "Actuators/RelayManager.h"
 #include "Actuators/ValveManager.h"
 
 #include "Storage/DataLogger.h"
@@ -60,13 +61,13 @@ void setup()
     Console::begin(Console::Level::INFO);
 
     // *** PROTECTION MATÉRIELLE IMMÉDIATE ***
-    // Force les 6 GPIO relais en OUTPUT LOW (= fermé) dès le début de setup(),
-    // avant toute autre init logicielle. Empêche tout état flottant au boot
-    // qui pourrait coller un relais brièvement.
-    // Seule action côté ValveManager pendant tout le boot : aucune allocation,
-    // aucune queue, rien d'autre. Le reste est différé à VALVE_START_DELAY_MS
-    // et géré paresseusement dans ValveManager::handle() lui-même.
-    ValveManager::initPinsSafe();
+    // Force les 6 GPIO relais en OUTPUT LOW (= relais désactivé) dès le début
+    // de setup(), avant toute autre init logicielle. Empêche tout état
+    // flottant au boot qui pourrait coller un relais brièvement.
+    // Portée par RelayManager (driver matériel pur) : aucune allocation,
+    // aucune queue, aucune notion métier. Les managers métier (ValveManager
+    // aujourd'hui) démarrent plus tard, paresseusement.
+    RelayManager::initPinsSafe();
     // *** FIN PROTECTION MATÉRIELLE ***
 
     bootTimeMs = millis();
@@ -172,10 +173,10 @@ static void loopInit()
     FakeVoltage::init();
 
     // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
-    // à LOW dès setup() par initPinsSafe(). Le reste (queue FreeRTOS,
-    // publication initiale, acceptation des commandes) est différé et géré
-    // paresseusement par ValveManager::handle() au premier passage après
-    // VALVE_START_DELAY_MS.
+    // à LOW dès setup() par RelayManager::initPinsSafe(). La construction
+    // des slots depuis RELAYS[], la création de la queue FreeRTOS et la
+    // publication de l'état initial sont différées et gérées paresseusement
+    // par ValveManager::handle() au premier passage après VALVE_START_DELAY_MS.
 
     // --- SafeReboot ---
     SafeReboot::init();

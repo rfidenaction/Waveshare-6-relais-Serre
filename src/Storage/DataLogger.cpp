@@ -43,6 +43,10 @@ size_t DataLogger::pendingCount = 0;   // nombre d'éléments valides
 
 std::map<DataId, LastDataForWeb> DataLogger::lastDataForWeb;
 
+// Queue intake de commandes (thread-safe, remplie par enqueueCommand depuis
+// n'importe quel thread, drainée par handle() côté TaskManager)
+QueueHandle_t DataLogger::commandIntake = nullptr;
+
 static unsigned long lastFlushMs = 0;
 
 // Callback publication (nullptr = pas de callback)
@@ -72,6 +76,23 @@ String DataLogger::escapeCSV(const String& text)
     }
     escaped += "\"";
     return escaped;
+}
+
+// Libellé canonique d'un DataType.
+// Source de vérité unique pour l'affichage des types dans les schémas JSON.
+// Couvre aussi les types absents de META (CommandManual, CommandAuto).
+const char* DataLogger::typeLabel(DataType t)
+{
+    switch (t) {
+        case DataType::Power:          return "Alimentation";
+        case DataType::Sensor:         return "Capteur";
+        case DataType::Actuator:       return "Actionneur";
+        case DataType::System:         return "Système";
+        case DataType::CommandGeneric: return "Commande";
+        case DataType::CommandManual:  return "Commande manuelle";
+        case DataType::CommandAuto:    return "Commande automatique";
+    }
+    return "?";
 }
 
 // Échappement JSON minimal (caractères critiques uniquement)
@@ -135,6 +156,17 @@ void DataLogger::init()
 
     pendingHead  = 0;
     pendingCount = 0;
+
+    // Queue intake de commandes — créée une seule fois au boot.
+    // Si la création échoue, enqueueCommand renverra false et les commandes
+    // seront perdues pour la trace (mais l'exécution par ValveManager reste).
+    if (commandIntake == nullptr) {
+        commandIntake = xQueueCreate(COMMAND_INTAKE_CAPACITY,
+                                     sizeof(CommandIntakeItem));
+        if (commandIntake == nullptr) {
+            Console::error(TAG, "Échec création queue commandIntake — trace commandes désactivée");
+        }
+    }
 
     // Reconstruction LastDataForWeb depuis la flash
     // LECTURE UNIQUE du fichier CSV : on parcourt toutes les lignes
@@ -295,6 +327,118 @@ void DataLogger::push(DataId id, const String& textValue)
 }
 
 // -----------------------------------------------------------------------------
+// ENQUEUE COMMAND — API publique thread-safe, non-bloquante
+//
+// Captures les DEUX horloges au plus tôt (VirtualClock pour LIVE, TimeUTC
+// pour PENDING + lastDataForWeb), puis dépose dans la queue FreeRTOS. Le
+// record effectif est construit dans drainCommandIntake() côté TaskManager.
+// Appelable depuis n'importe quel thread (esp_mqtt, AsyncTCP, TaskManager).
+// -----------------------------------------------------------------------------
+bool DataLogger::enqueueCommand(DataId cmdId, DataType origin, float durationSec)
+{
+    if (commandIntake == nullptr) {
+        Console::warn(TAG, "enqueueCommand : queue intake pas prête — commande "
+                      "id=" + String((uint8_t)cmdId) + " perdue pour la trace");
+        return false;
+    }
+
+    if (!isValidId((uint8_t)cmdId)) {
+        Console::warn(TAG, "enqueueCommand rejeté : id=" +
+                      String((uint8_t)cmdId) + " inconnu de META");
+        return false;
+    }
+
+    if (getMeta(cmdId).type != DataType::CommandGeneric) {
+        Console::warn(TAG, "enqueueCommand rejeté : id=" +
+                      String((uint8_t)cmdId) +
+                      " n'est pas une entité Commande (META.type != CommandGeneric)");
+        return false;
+    }
+
+    if (origin != DataType::CommandManual && origin != DataType::CommandAuto) {
+        Console::warn(TAG, "enqueueCommand rejeté : origin invalide pour id=" +
+                      String((uint8_t)cmdId));
+        return false;
+    }
+
+    // Capture des deux horloges au plus tôt, avant toute latence de queue.
+    TimeUTC t = ManagerUTC::readUTC();
+
+    CommandIntakeItem item;
+    item.cmdId         = cmdId;
+    item.origin        = origin;
+    item.durationSec   = durationSec;
+    item.vClock        = static_cast<uint32_t>(VirtualClock::nowVirtual());
+    item.utcTimestamp  = static_cast<uint32_t>(t.timestamp);
+    item.UTC_available = t.UTC_available;
+    item.UTC_reliable  = t.UTC_reliable;
+
+    if (xQueueSend(commandIntake, &item, 0) != pdTRUE) {
+        Console::warn(TAG, "enqueueCommand : queue intake pleine — commande "
+                      "id=" + String((uint8_t)cmdId) + " perdue pour la trace");
+        return false;
+    }
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// DRAIN COMMAND INTAKE — consomme la queue depuis handle() (TaskManager)
+// -----------------------------------------------------------------------------
+void DataLogger::drainCommandIntake()
+{
+    if (commandIntake == nullptr) return;
+
+    CommandIntakeItem item;
+    while (xQueueReceive(commandIntake, &item, 0) == pdTRUE) {
+        pushCommandRecord(item);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// PUSH COMMAND RECORD — assemble le triplet LIVE + PENDING + lastDataForWeb
+//
+// Miroir exact de push() sauf sur un point : le champ `type` du record est
+// forcé à item.origin (CommandManual ou CommandAuto), PAS déduit de META
+// (qui vaut CommandGeneric pour les entités CommandValve*).
+//
+// Appelée uniquement depuis drainCommandIntake() → thread TaskManager.
+// -----------------------------------------------------------------------------
+void DataLogger::pushCommandRecord(const CommandIntakeItem& item)
+{
+    // LIVE — horloge VirtualClock capturée à l'enqueue (axe métier)
+    DataRecord liveRec;
+    liveRec.type          = item.origin;
+    liveRec.id            = item.cmdId;
+    liveRec.value         = item.durationSec;
+    liveRec.timestamp     = item.vClock;
+    liveRec.UTC_available = true;
+    liveRec.UTC_reliable  = false;
+    addLive(liveRec);
+
+    // PENDING — horloge TimeUTC capturée à l'enqueue. Si UTC_available était
+    // false, la logique de réparation de handle() corrigera le timestamp dès
+    // que l'UTC sera disponible.
+    DataRecord pendRec;
+    pendRec.type          = item.origin;
+    pendRec.id            = item.cmdId;
+    pendRec.value         = item.durationSec;
+    pendRec.timestamp     = item.utcTimestamp;
+    pendRec.UTC_available = item.UTC_available;
+    pendRec.UTC_reliable  = item.UTC_reliable;
+    addPending(pendRec);
+
+    // Vue Web — dernière commande demandée (valeur + horodatage UTC capturé)
+    LastDataForWeb& w = lastDataForWeb[item.cmdId];
+    w.value         = item.durationSec;
+    w.timestamp     = item.utcTimestamp;
+    w.UTC_available = item.UTC_available;
+    w.UTC_reliable  = item.UTC_reliable;
+
+    // Notification publication (MQTT ou autre)
+    if (_onPushCallback) _onPushCallback(pendRec);
+}
+
+// -----------------------------------------------------------------------------
 // LIVE
 // -----------------------------------------------------------------------------
 void DataLogger::addLive(const DataRecord& r)
@@ -325,6 +469,12 @@ void DataLogger::addPending(const DataRecord& r)
 // -----------------------------------------------------------------------------
 void DataLogger::handle()
 {
+    // Drain de la queue intake EN PREMIER, avant la réparation UTC et le
+    // flush. Les records de commande (empilés par des threads externes) sont
+    // ainsi injectés dans PENDING à temps pour bénéficier de la réparation
+    // UTC de ce même tick si l'UTC vient d'arriver.
+    drainCommandIntake();
+
     TimeUTC t = ManagerUTC::readUTC();
     if (t.UTC_available) {
         for (size_t i = 0; i < pendingCount; ++i) {

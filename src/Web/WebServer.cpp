@@ -197,6 +197,16 @@ void WebServer::handleActuatorsOpen(AsyncWebServerRequest *request)
         return;
     }
 
+    // ─── Trace d'intention (queue intake thread-safe de DataLogger) ──────
+    // Non-bloquant, capturée avant même l'envoi vers ValveManager.
+    DataId cmdId;
+    if (ValveManager::commandIdForValve(id, cmdId)) {
+        DataLogger::enqueueCommand(cmdId, DataType::CommandManual, (float)durLong);
+    } else {
+        Console::warn(TAG, "Pas de commande associée pour id=" + String(idByte) +
+                      " (slots pas encore construits ?) — log commande omis");
+    }
+
     // ─── Dépose dans la queue FreeRTOS de ValveManager ──────────────────
     ValveManager::ValveCommand cmd;
     cmd.id         = id;
@@ -256,25 +266,19 @@ static void buildBundleHeader(String& p)
     p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
-    // ── Table DataType (dédupliquée depuis META) ────────────────────────────
-    // Parcourt les valeurs DataType 0-3, trouve le typeLabel dans META
+    // ── Table DataType — énumère TOUS les types possibles (META + records) ──
+    // Inclut les types absents de META (CommandManual, CommandAuto) pour que
+    // l'UI sache rendre les records de commande. Libellés via
+    // DataLogger::typeLabel (source de vérité unique).
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
-    for (uint8_t t = 0; t <= 3; t++) {
-        // Chercher le premier META avec ce type pour obtenir le typeLabel
-        const char* typeLabel = nullptr;
-        for (size_t m = 0; m < META_COUNT; m++) {
-            if ((uint8_t)META[m].type == t) {
-                typeLabel = META[m].typeLabel;
-                break;
-            }
-        }
-        if (!typeLabel) continue;  // Aucun DataId de ce type
-
+    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandAuto; t++) {
         if (!firstType) p += ",\n";
         firstType = false;
         p += "    {\"id\": "; p += t;
-        p += ", \"label\": \""; p += DataLogger::jsonEscape(typeLabel); p += "\"}";
+        p += ", \"label\": \"";
+        p += DataLogger::jsonEscape(DataLogger::typeLabel((DataType)t));
+        p += "\"}";
     }
     p += "\n  ],\n";
 

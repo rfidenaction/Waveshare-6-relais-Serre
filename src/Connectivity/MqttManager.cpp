@@ -253,6 +253,16 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
+    // Trace d'intention : enregistrée dès validation, AVANT ValveManager.
+    // Non-bloquant — passe par la queue intake thread-safe de DataLogger.
+    DataId cmdId;
+    if (ValveManager::commandIdForValve(id, cmdId)) {
+        DataLogger::enqueueCommand(cmdId, DataType::CommandManual, (float)secLong);
+    } else {
+        Console::warn(TAG, "Pas de commande associée pour id=" + String(idByte) +
+                      " (slots pas encore construits ?) — log commande omis");
+    }
+
     ValveManager::ValveCommand cmd;
     cmd.id         = id;
     cmd.durationMs = (uint32_t)secLong * 1000UL;
@@ -326,23 +336,18 @@ String MqttManager::buildSchemaJson()
     p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
-    // Table DataType (dédupliquée depuis META).
+    // Table DataType — énumère TOUS les types possibles (META + records),
+    // y compris ceux absents de META (CommandManual, CommandAuto). Libellés
+    // fournis par DataLogger::typeLabel (source de vérité unique).
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
-    for (uint8_t t = 0; t <= 3; t++) {
-        const char* typeLabel = nullptr;
-        for (size_t m = 0; m < META_COUNT; m++) {
-            if ((uint8_t)META[m].type == t) {
-                typeLabel = META[m].typeLabel;
-                break;
-            }
-        }
-        if (!typeLabel) continue;
-
+    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandAuto; t++) {
         if (!firstType) p += ",\n";
         firstType = false;
         p += "    {\"id\": "; p += t;
-        p += ", \"label\": \""; p += DataLogger::jsonEscape(typeLabel); p += "\"}";
+        p += ", \"label\": \"";
+        p += DataLogger::jsonEscape(DataLogger::typeLabel((DataType)t));
+        p += "\"}";
     }
     p += "\n  ],\n";
 

@@ -1,51 +1,107 @@
 // Actuators/ValveManager.cpp
-// Pilote des 6 électrovannes — voir ValveManager.h
+// Manager métier "vanne" — voir ValveManager.h
 //
-// Refonte META :
-//   - Tableau unique slots[] indexé par position interne, contenant
-//     (DataId, GPIO, état, deadline). Aucun "index 0..5" exposé.
-//   - Toutes les fonctions publiques parlent en DataId, pas en index.
-//   - findSlot(DataId) est la SEULE primitive de recherche.
+// Construction dynamique de slots[] :
+//   Au premier passage de handle() après VALVE_START_DELAY_MS, le manager
+//   scanne RELAYS[] (IO-Config.h) et ramasse les canaux dont l'entity est
+//   une vanne (Valve1..Valve6). Il ne voit pas les autres affectations
+//   (futures lumières, ventilations...), qui seront gérées par d'autres
+//   managers métier sur le même RelayManager.
 //
-// Silence total avant VALVE_START_DELAY_MS :
-//   - Aucune init() publique : handle() fait tout au premier passage après
-//     le délai (création queue + publication état initial).
-//   - Avant le délai : handle() est un simple if/return, rien d'autre.
+// Pilotage matériel :
+//   Toute action physique passe par RelayManager::activate/deactivate(ch).
+//   Ce module ne contient plus aucun digitalWrite/pinMode. La protection
+//   immédiate au boot (GPIO forcés LOW) est portée par
+//   RelayManager::initPinsSafe(), appelée dans main.cpp::setup().
 //
-// Thread-safety (option B2 — queue FreeRTOS) :
-//   - Les commandes MQTT arrivent dans le thread esp_mqtt.
-//   - Les commandes HTTP arrivent dans le thread AsyncWebServer.
-//   - Les dispatchers appellent enqueueCommand() qui fait xQueueSend (thread-safe).
-//   - handle() consomme la queue via xQueueReceive dans le thread TaskManager.
+// Thread-safety (inchangée) :
+//   - Commandes MQTT dans le thread esp_mqtt, HTTP dans AsyncWebServer.
+//   - Les dispatchers appellent enqueueCommand() qui fait xQueueSend.
+//   - handle() consomme via xQueueReceive dans le thread TaskManager.
 //   - Aucune variable d'état n'est accédée concurremment.
 
 #include "Actuators/ValveManager.h"
+#include "Actuators/RelayManager.h"
 #include "Config/IO-Config.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "ValveManager";
 
 // -----------------------------------------------------------------------------
-// Tableau slots[] — SEULE source de vérité DataId ↔ GPIO dans tout le code
+// État statique
 // -----------------------------------------------------------------------------
-ValveManager::ValveSlot ValveManager::slots[VALVE_COUNT] = {
-    { DataId::Valve1, RELAY_CH1_PIN, VALVE_CLOSED, 0 },
-    { DataId::Valve2, RELAY_CH2_PIN, VALVE_CLOSED, 0 },
-    { DataId::Valve3, RELAY_CH3_PIN, VALVE_CLOSED, 0 },
-    { DataId::Valve4, RELAY_CH4_PIN, VALVE_CLOSED, 0 },
-    { DataId::Valve5, RELAY_CH5_PIN, VALVE_CLOSED, 0 },
-    { DataId::Valve6, RELAY_CH6_PIN, VALVE_CLOSED, 0 },
-};
-
+ValveManager::ValveSlot ValveManager::slots[VALVE_COUNT] = {};
+uint8_t       ValveManager::slotCount        = 0;
 bool          ValveManager::valveSystemReady = false;
 QueueHandle_t ValveManager::cmdQueue         = nullptr;
 
 // -----------------------------------------------------------------------------
-// Recherche linéaire dans slots[] (6 éléments, coût négligeable)
+// Un DataId est-il une vanne gérée par ce manager ?
+// Le ValveManager revendique explicitement Valve1..Valve6 ; les autres entités
+// présentes dans RELAYS[] (lumière, ventilation…) seront prises en charge par
+// d'autres managers métier.
+// -----------------------------------------------------------------------------
+static bool isValveEntity(DataId id)
+{
+    switch (id) {
+        case DataId::Valve1:
+        case DataId::Valve2:
+        case DataId::Valve3:
+        case DataId::Valve4:
+        case DataId::Valve5:
+        case DataId::Valve6:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Mapping statique vanne → commande associée.
+// Seul endroit du code qui fait cette correspondance ; reporté ensuite dans
+// slot.commandId pour que toute la suite se fasse par consultation de slots[].
+// -----------------------------------------------------------------------------
+static DataId commandIdFromValveEntity(DataId valveId)
+{
+    switch (valveId) {
+        case DataId::Valve1: return DataId::CommandValve1;
+        case DataId::Valve2: return DataId::CommandValve2;
+        case DataId::Valve3: return DataId::CommandValve3;
+        case DataId::Valve4: return DataId::CommandValve4;
+        case DataId::Valve5: return DataId::CommandValve5;
+        case DataId::Valve6: return DataId::CommandValve6;
+        default:             return DataId::Valve1;  // neutralisé par isValveEntity en amont
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Construction de slots[] par scan de RELAYS[]
+// Accède directement aux membres statiques slots[] et slotCount.
+// -----------------------------------------------------------------------------
+void ValveManager::buildSlotsFromRelays()
+{
+    slotCount = 0;
+    for (size_t i = 0; i < RELAYS_COUNT; i++) {
+        if (!isValveEntity(RELAYS[i].entity)) continue;
+        if (slotCount >= VALVE_COUNT) {
+            Console::warn(TAG, "RELAYS[] contient plus de vannes que VALVE_COUNT — surplus ignoré");
+            return;
+        }
+        slots[slotCount].id        = RELAYS[i].entity;
+        slots[slotCount].commandId = commandIdFromValveEntity(RELAYS[i].entity);
+        slots[slotCount].relayCh   = RELAYS[i].ch;
+        slots[slotCount].state     = VALVE_CLOSED;
+        slots[slotCount].deadline  = 0;
+        slotCount++;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Recherche linéaire dans slots[] (au plus 6 éléments, coût négligeable)
 // -----------------------------------------------------------------------------
 bool ValveManager::findSlot(DataId id, ValveSlot*& outSlot)
 {
-    for (uint8_t i = 0; i < VALVE_COUNT; i++) {
+    for (uint8_t i = 0; i < slotCount; i++) {
         if (slots[i].id == id) {
             outSlot = &slots[i];
             return true;
@@ -55,24 +111,7 @@ bool ValveManager::findSlot(DataId id, ValveSlot*& outSlot)
 }
 
 // -----------------------------------------------------------------------------
-// Protection matérielle immédiate (appelée dans setup())
-// Aucun log, aucune dépendance logicielle autre que l'API Arduino.
-// Aucune allocation, aucune queue — strictement les GPIO.
-// -----------------------------------------------------------------------------
-void ValveManager::initPinsSafe()
-{
-    for (uint8_t i = 0; i < VALVE_COUNT; i++) {
-        pinMode(slots[i].gpio, OUTPUT);
-        digitalWrite(slots[i].gpio, LOW);   // actif HIGH → LOW = fermée
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Scrutation périodique (1000 ms) — unique tâche côté vannes
-//
-// Silence total avant VALVE_START_DELAY_MS : un simple if/return, rien d'autre.
-// Au premier passage après le délai : création paresseuse de la queue et
-// publication de l'état initial des 6 vannes.
 // -----------------------------------------------------------------------------
 void ValveManager::handle()
 {
@@ -83,6 +122,8 @@ void ValveManager::handle()
 
     // ─── Démarrage paresseux au premier passage après le délai ────────────
     if (!valveSystemReady) {
+        buildSlotsFromRelays();
+
         cmdQueue = xQueueCreate(VALVE_COUNT, sizeof(ValveCommand));
         if (cmdQueue == nullptr) {
             Console::error(TAG, "Échec création queue FreeRTOS — commandes ignorées");
@@ -91,17 +132,16 @@ void ValveManager::handle()
         }
 
         valveSystemReady = true;
-        Console::info(TAG, "Système vannes opérationnel — commandes acceptées");
+        Console::info(TAG, "Système vannes opérationnel — " +
+                      String(slotCount) + " vanne(s) affectée(s)");
 
-        // Publie l'état initial (fermée) des 6 vannes dans DataLogger → MQTT
-        for (uint8_t i = 0; i < VALVE_COUNT; i++) {
+        // Publie l'état initial "Fermée" des vannes effectivement affectées
+        for (uint8_t i = 0; i < slotCount; i++) {
             DataLogger::push(slots[i].id, 0.0f);
         }
     }
 
     // ─── Consommation de la queue de commandes (non-bloquant) ────────────
-    // Vide tout ce qui est arrivé depuis le dernier tour. Chaque commande
-    // passe par openFor() qui applique clamp / anti-rebond / publication.
     ValveCommand cmd;
     while (xQueueReceive(cmdQueue, &cmd, 0) == pdTRUE) {
         openFor(cmd.id, cmd.durationMs);
@@ -109,7 +149,7 @@ void ValveManager::handle()
 
     // ─── Ferme les vannes dont le timer a expiré ─────────────────────────
     uint32_t now = millis();
-    for (uint8_t i = 0; i < VALVE_COUNT; i++) {
+    for (uint8_t i = 0; i < slotCount; i++) {
         ValveSlot& s = slots[i];
         if (s.state == VALVE_OPENED && (int32_t)(now - s.deadline) >= 0) {
             Console::info(TAG, "Vanne id=" + String((uint8_t)s.id) +
@@ -133,7 +173,7 @@ void ValveManager::openFor(DataId id, uint32_t durationMs)
     ValveSlot* slot = nullptr;
     if (!findSlot(id, slot)) {
         Console::warn(TAG, "openFor ignoré : DataId " +
-                      String((uint8_t)id) + " inconnu");
+                      String((uint8_t)id) + " inconnu ou non affecté");
         return;
     }
 
@@ -159,17 +199,12 @@ void ValveManager::openFor(DataId id, uint32_t durationMs)
 
 // -----------------------------------------------------------------------------
 // Point d'entrée thread-safe pour producteurs externes (esp_mqtt, HTTP, etc.)
-//
-// Avant VALVE_START_DELAY_MS : cmdQueue == nullptr → retour false immédiat,
-// la commande est rejetée côté dispatcher (log warn).
 // -----------------------------------------------------------------------------
 bool ValveManager::enqueueCommand(const ValveCommand& cmd)
 {
     if (cmdQueue == nullptr) return false;
 
-    // xQueueSend avec timeout 0 : non-bloquant. Retourne pdTRUE si accepté,
-    // pdFALSE si la queue est pleine. La queue FreeRTOS garantit la
-    // thread-safety de bout en bout sur ESP32-S3 SMP.
+    // Non-bloquant. La queue FreeRTOS garantit la thread-safety sur ESP32-S3 SMP.
     return (xQueueSend(cmdQueue, &cmd, 0) == pdTRUE);
 }
 
@@ -182,12 +217,44 @@ bool ValveManager::isReady()
 }
 
 // -----------------------------------------------------------------------------
+// Pont commande ↔ observation — consulte slots[] (source unique).
+// Renvoie false si les slots ne sont pas encore construits ou si la clé est
+// inconnue ; l'appelant doit traiter ce cas (typiquement : ignorer le log).
+// -----------------------------------------------------------------------------
+bool ValveManager::commandIdForValve(DataId valveId, DataId& out)
+{
+    for (uint8_t i = 0; i < slotCount; i++) {
+        if (slots[i].id == valveId) {
+            out = slots[i].commandId;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ValveManager::getCommandTargetFor(DataId cmdId, DataId& out)
+{
+    for (uint8_t i = 0; i < slotCount; i++) {
+        if (slots[i].commandId == cmdId) {
+            out = slots[i].id;
+            return true;
+        }
+    }
+    return false;
+}
+
+// -----------------------------------------------------------------------------
 // Application physique d'un nouvel état + journalisation
+// Délègue l'action matérielle au RelayManager, via le canal relais du slot.
 // -----------------------------------------------------------------------------
 void ValveManager::applyValveState(ValveSlot& slot, uint8_t newState)
 {
     slot.state = newState;
-    digitalWrite(slot.gpio, (newState == VALVE_OPENED) ? HIGH : LOW);
+    if (newState == VALVE_OPENED) {
+        RelayManager::activate(slot.relayCh);
+    } else {
+        RelayManager::deactivate(slot.relayCh);
+    }
 
     DataLogger::push(slot.id,
                      (newState == VALVE_OPENED) ? 1.0f : 0.0f);

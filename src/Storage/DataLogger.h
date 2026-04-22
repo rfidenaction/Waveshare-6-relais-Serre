@@ -24,16 +24,35 @@
 #include <map>
 #include <time.h>
 #include <variant>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DataType — domaine fonctionnel (enum manuel, 4 entrées stables)
+// DataType — domaine fonctionnel
+//
+// Invariant META vs CSV/MQTT :
+//   Certaines valeurs décrivent des ENTITÉS (elles apparaissent dans META) ;
+//   d'autres qualifient des ÉVÉNEMENTS (elles n'apparaissent que dans le champ
+//   `type` d'un DataRecord écrit en CSV ou publié sur MQTT). Les deux ensembles
+//   sont disjoints.
+//
+//     Power, Sensor, Actuator, System   → META ET records (entité = événement)
+//     CommandGeneric                    → META uniquement (jamais dans un record)
+//     CommandManual, CommandAuto        → records uniquement (jamais dans META)
+//
+//   Les records de commande portent l'origine (Manuelle/Auto) dans `record.type`
+//   et l'identité de la commande dans `record.id` (ex. CommandValve1). META.type
+//   de ces entités vaut CommandGeneric — pas d'origine figée côté description.
 // ═════════════════════════════════════════════════════════════════════════════
 
 enum class DataType : uint8_t {
-    Power    = 0,   // Alimentation
-    Sensor   = 1,   // Capteurs environnementaux
-    Actuator = 2,   // Actionneurs (relais, vannes...)
-    System   = 3    // Connectivité / système
+    Power          = 0,   // Alimentation            (META + records)
+    Sensor         = 1,   // Capteurs                (META + records)
+    Actuator       = 2,   // Actionneurs             (META + records)
+    System         = 3,   // Connectivité / système  (META + records)
+    CommandGeneric = 4,   // Entité « commande »     (META uniquement)
+    CommandManual  = 5,   // Record : commande manuelle  (records uniquement)
+    CommandAuto    = 6    // Record : commande auto      (records uniquement)
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -119,7 +138,16 @@ inline constexpr const char* const valve6StateLabels[] = { "Fermée", "Ouverte" 
     X(13, Valve3,           Actuator, "Actionneur",   "Vanne 3",            "",    etat,        0.0f,   0.0f, valve3StateLabels,      2) \
     X(14, Valve4,           Actuator, "Actionneur",   "Vanne 4",            "",    etat,        0.0f,   0.0f, valve4StateLabels,      2) \
     X(15, Valve5,           Actuator, "Actionneur",   "Vanne 5",            "",    etat,        0.0f,   0.0f, valve5StateLabels,      2) \
-    X(16, Valve6,           Actuator, "Actionneur",   "Vanne 6",            "",    etat,        0.0f,   0.0f, valve6StateLabels,      2)
+    X(16, Valve6,           Actuator, "Actionneur",   "Vanne 6",            "",    etat,        0.0f,   0.0f, valve6StateLabels,      2) \
+    \
+    /* ── Commandes (entités META, type=CommandGeneric). Records portent      */ \
+    /*    CommandManual|CommandAuto dans record.type, jamais CommandGeneric. */ \
+    X(17, CommandValve1,    CommandGeneric, "Commande", "Commande vanne 1", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    X(18, CommandValve2,    CommandGeneric, "Commande", "Commande vanne 2", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    X(19, CommandValve3,    CommandGeneric, "Commande", "Commande vanne 3", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    X(20, CommandValve4,    CommandGeneric, "Commande", "Commande vanne 4", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    X(21, CommandValve5,    CommandGeneric, "Commande", "Commande vanne 5", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    X(22, CommandValve6,    CommandGeneric, "Commande", "Commande vanne 6", "s",   metrique,    1.0f, 900.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST
@@ -219,6 +247,23 @@ public:
     // DataType est déduit automatiquement de META (source de vérité unique)
     static void push(DataId id, const String& textValue);
 
+    // Enqueue thread-safe d'un record de COMMANDE (trace d'intention,
+    // indépendante de l'exécution effective par ValveManager/GardenManager).
+    //
+    // Appelable depuis N'IMPORTE QUEL thread (esp_mqtt, AsyncTCP, TaskManager…).
+    // Non-bloquant. L'horodatage (TimeUTC 3 niveaux) est capturé DANS cette
+    // fonction, au plus tôt, puis transporté dans la queue interne. Le record
+    // est assemblé et déposé dans PENDING depuis handle() (thread TaskManager).
+    //
+    //   cmdId       : DataId de la commande (META.type doit être CommandGeneric).
+    //   origin      : DataType::CommandManual ou DataType::CommandAuto.
+    //   durationSec : durée demandée en secondes (portée dans record.value).
+    //
+    // Retour : true si empilé, false si cmdId/origin invalides, queue pas
+    // encore initialisée, ou queue pleine (warn loggé, commande perdue pour
+    // la trace — le record d'ouverture vanne reste indépendant).
+    static bool enqueueCommand(DataId cmdId, DataType origin, float durationSec);
+
     static void handle();           // Réparation UTC + flush
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
@@ -268,7 +313,46 @@ public:
     static String jsonEscape(const char* s);
     static String escapeCSV(const String& text);
 
+    // Libellé canonique d'un DataType, y compris pour les types purement
+    // « record » (CommandManual, CommandAuto) absents de META. Utilisé par les
+    // générateurs de schéma JSON (MqttManager, WebServer).
+    static const char* typeLabel(DataType t);
+
 private:
+    // ───────────── Intake de commandes (thread-safe) ─────────────
+    // Tampon symétrique du tampon sortant de MqttManager : les producteurs
+    // externes (esp_mqtt, AsyncTCP, GardenManager…) déposent ici via
+    // enqueueCommand(), et handle() draine côté TaskManager. Aucune primitive
+    // DataLogger (live/pending/lastDataForWeb) n'est touchée hors TaskManager.
+    struct CommandIntakeItem {
+        DataId   cmdId;
+        DataType origin;          // CommandManual ou CommandAuto
+        float    durationSec;
+
+        // Deux horloges capturées au plus tôt dans enqueueCommand :
+        //   vClock       → LIVE (référence métier de l'automatisme,
+        //                  indépendante de RTC/NTP/réseau)
+        //   utcTimestamp → PENDING + lastDataForWeb (stockage durable,
+        //                  réparable via handle() si UTC_available=false
+        //                  au moment de l'enqueue)
+        uint32_t vClock;
+        uint32_t utcTimestamp;
+        bool     UTC_available;
+        bool     UTC_reliable;
+    };
+    static constexpr uint8_t COMMAND_INTAKE_CAPACITY = 20;
+    static QueueHandle_t commandIntake;
+
+    // Vide la queue et assemble les records (appelée depuis handle(),
+    // thread TaskManager).
+    static void drainCommandIntake();
+
+    // Construit LIVE + PENDING + lastDataForWeb depuis un item et déclenche
+    // le callback MQTT. Reproduit exactement la logique de push() sauf pour
+    // le champ `type` du record : c'est `item.origin` (CommandManual/Auto),
+    // pas `getMeta(id).type` (qui vaut CommandGeneric pour les CommandValveN).
+    static void pushCommandRecord(const CommandIntakeItem& item);
+
     // ───────────── Buffers ─────────────
     static constexpr size_t LIVE_SIZE    = 200;
     static constexpr size_t PENDING_SIZE = 2000;
