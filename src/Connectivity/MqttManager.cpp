@@ -12,7 +12,7 @@
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
 #include "Storage/DataLogger.h"
-#include "Actuators/ValveManager.h"
+#include "Core/CommandRouter.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -142,9 +142,9 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 
         esp_mqtt_client_subscribe(
             (esp_mqtt_client_handle_t)mqttClient,
-            "serre/cmd/#", 1
+            "serre/cmd", 1
         );
-        Console::info(TAG, "Abonné à serre/cmd/#");
+        Console::info(TAG, "Abonné à serre/cmd");
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -179,11 +179,17 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 }
 
 // =============================================================================
-// Dispatcher des commandes entrantes serre/cmd/{id} (payload = durée en s).
-// Validation via META : seuls les DataId déclarés dans META avec
-// type == Actuator sont acceptés (isValidId puis getMeta().type).
-// Délègue à ValveManager via sa queue FreeRTOS (aucun accès direct depuis
-// le thread esp_mqtt aux structures non thread-safe).
+// Dispatcher des commandes entrantes sur serre/cmd. Payload = CSV 7 champs
+// "timestamp,UTC_available,UTC_reliable,type,id,valueType,value" dont les 3
+// premiers doivent être vides ou "0" (l'émetteur n'horodate pas).
+//
+// Ce module ne connaît aucun actionneur par son nom ; il vérifie le topic puis
+// orchestre trois étapes aux responsabilités disjointes :
+//   1. DataLogger::parseCommand    : décode et valide (fonction pure).
+//   2. DataLogger::traceCommand    : journalise dans PENDING (best-effort).
+//   3. CommandRouter::route        : exécute via RELAYS[].
+// Aucun return de MQTT vers l'émetteur : le protocole est fire-and-forget.
+// Les rejets sont simplement loggés.
 // =============================================================================
 void MqttManager::dispatchCommand(void* eventData)
 {
@@ -191,90 +197,41 @@ void MqttManager::dispatchCommand(void* eventData)
 
     if (!event->topic || event->topic_len <= 0) return;
 
-    // Les champs topic/data d'esp_mqtt ne sont pas null-terminés.
-    char topicBuf[64];
-    char dataBuf[32];
-
-    int tlen = event->topic_len;
-    if (tlen >= (int)sizeof(topicBuf)) tlen = sizeof(topicBuf) - 1;
-    memcpy(topicBuf, event->topic, tlen);
-    topicBuf[tlen] = '\0';
-
-    int dlen = event->data_len;
-    if (dlen < 0) dlen = 0;
-    if (dlen >= (int)sizeof(dataBuf)) dlen = sizeof(dataBuf) - 1;
-    if (dlen > 0) memcpy(dataBuf, event->data, dlen);
-    dataBuf[dlen] = '\0';
-
-    static const char PREFIX[] = "serre/cmd/";
-    const int PREFIX_LEN = sizeof(PREFIX) - 1;
-    if (strncmp(topicBuf, PREFIX, PREFIX_LEN) != 0) {
-        Console::warn(TAG, "Topic commande inattendu : " + String(topicBuf));
+    // Vérification topic strict (abonnement = match exact "serre/cmd").
+    static const char TOPIC_CMD[] = "serre/cmd";
+    const int TOPIC_LEN = sizeof(TOPIC_CMD) - 1;
+    if (event->topic_len != TOPIC_LEN ||
+        memcmp(event->topic, TOPIC_CMD, TOPIC_LEN) != 0) {
+        char topicBuf[64];
+        int tlen = event->topic_len;
+        if (tlen >= (int)sizeof(topicBuf)) tlen = sizeof(topicBuf) - 1;
+        memcpy(topicBuf, event->topic, tlen);
+        topicBuf[tlen] = '\0';
+        Console::warn(TAG, "Topic inattendu : " + String(topicBuf));
         return;
     }
 
-    const char* idStr = topicBuf + PREFIX_LEN;
-    if (*idStr == '\0') {
-        Console::warn(TAG, "Topic commande sans id : " + String(topicBuf));
+    DataLogger::ParsedCommand cmd;
+    auto res = DataLogger::parseCommand(
+        event->data, (size_t)event->data_len, cmd);
+    if (res != DataLogger::CommandParseResult::OK) {
+        Console::warn(TAG, "Commande MQTT rejetée au parse (code=" +
+                      String((int)res) + ")");
         return;
     }
 
-    char* endPtr = nullptr;
-    long idLong = strtol(idStr, &endPtr, 10);
-    if (endPtr == idStr || *endPtr != '\0' || idLong < 0 || idLong > 255) {
-        Console::warn(TAG, "Id non numérique dans topic : " + String(topicBuf));
-        return;
-    }
-    uint8_t idByte = (uint8_t)idLong;
+    DataLogger::traceCommand(cmd);
 
-    if (!DataLogger::isValidId(idByte)) {
-        Console::warn(TAG, "Id inconnu de META : " + String(idByte));
+    if (!CommandRouter::route(cmd.cmdId, cmd.durationMs)) {
+        Console::warn(TAG, "Commande MQTT non routée : cmdId=" +
+                      String((uint8_t)cmd.cmdId) +
+                      " (absente de RELAYS[] ou manager non prêt)");
         return;
     }
 
-    DataId id = (DataId)idByte;
-    const DataMeta& meta = DataLogger::getMeta(id);
-    if (meta.type != DataType::Actuator) {
-        Console::warn(TAG, "Commande sur DataId non-actionneur : id=" +
-                      String(idByte) + " (" + String(meta.label) + ")");
-        return;
-    }
-
-    if (dlen == 0) {
-        Console::warn(TAG, "Payload vide pour commande id=" + String(idByte));
-        return;
-    }
-
-    endPtr = nullptr;
-    long secLong = strtol(dataBuf, &endPtr, 10);
-    if (endPtr == dataBuf || secLong <= 0) {
-        Console::warn(TAG, "Durée invalide pour commande id=" + String(idByte) +
-                      " : '" + String(dataBuf) + "'");
-        return;
-    }
-
-    // Trace d'intention : enregistrée dès validation, AVANT ValveManager.
-    // Non-bloquant — passe par la queue intake thread-safe de DataLogger.
-    DataId cmdId;
-    if (ValveManager::commandIdForValve(id, cmdId)) {
-        DataLogger::enqueueCommand(cmdId, DataType::CommandManual, (float)secLong);
-    } else {
-        Console::warn(TAG, "Pas de commande associée pour id=" + String(idByte) +
-                      " (slots pas encore construits ?) — log commande omis");
-    }
-
-    ValveManager::ValveCommand cmd;
-    cmd.id         = id;
-    cmd.durationMs = (uint32_t)secLong * 1000UL;
-
-    if (ValveManager::enqueueCommand(cmd)) {
-        Console::info(TAG, "Commande acceptée : id=" + String(idByte) +
-                      " (" + String(meta.label) + ") pour " +
-                      String(secLong) + " s");
-    } else {
-        Console::warn(TAG, "Commande rejetée (queue pleine) : id=" +
-                      String(idByte));
-    }
+    Console::info(TAG, "Commande MQTT acceptée : cmdId=" +
+                  String((uint8_t)cmd.cmdId) +
+                  " durée=" + String(cmd.durationMs) + "ms");
 }
 
 // =============================================================================

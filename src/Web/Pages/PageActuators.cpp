@@ -7,11 +7,17 @@
 //    la page le reflète automatiquement.
 //  - État actuel lu via DataLogger::hasLastDataForWeb (vue RAM alimentée
 //    par DataLogger::push côté ValveManager).
-//  - Commande envoyée en POST local vers /actuators/open (pas de MQTT).
+//  - Commande envoyée en POST text/plain vers /command, payload = CSV 7 champs
+//    identique au format MQTT serre/cmd (timestamp,UTC_available,UTC_reliable,
+//    type,id,valueType,value) — les 3 premiers champs vides, type = 5
+//    (CommandManual), id = DataId de la commande (CommandValveN récupéré
+//    depuis RELAYS[] à la génération de la page), valueType = 0, value = durée
+//    en secondes.
 //  - Style aligné sur PagePrincipale (fond bleu, cartes transparentes).
 #include "Web/Pages/PageActuators.h"
 
 #include "Storage/DataLogger.h"
+#include "Config/IO-Config.h"
 #include "Utils/Console.h"
 
 #include <time.h>
@@ -74,11 +80,26 @@ static String stateLabel(const DataMeta& m, int intVal)
 }
 
 // ─────────────────────────────────────────────
+// Helper : récupère le DataId de la commande associée à une entité vanne.
+// RELAYS[] (IO-Config.h) = source de vérité unique du câblage fonctionnel.
+// Invariant : chaque relais a toujours une commande, donc chaque Valve1..6
+// présente dans META a forcément une ligne correspondante.
+// ─────────────────────────────────────────────
+static DataId commandIdForValveEntity(DataId entity)
+{
+    for (size_t i = 0; i < RELAYS_COUNT; i++) {
+        if (RELAYS[i].entity == entity) return RELAYS[i].command;
+    }
+    return (DataId)0;
+}
+
+// ─────────────────────────────────────────────
 // Helper : construit la carte HTML d'une vanne
 // ─────────────────────────────────────────────
 static String buildValveCard(const DataMeta& m)
 {
-    uint8_t idByte = (uint8_t)m.id;
+    uint8_t idByte  = (uint8_t)m.id;
+    uint8_t cmdByte = (uint8_t)commandIdForValveEntity(m.id);
 
     // État actuel
     String stateText     = "—";
@@ -120,8 +141,10 @@ static String buildValveCard(const DataMeta& m)
     html += "<button class=\"duration-btn\"          data-sec=\"30\" onclick=\"selectDuration(this)\">30 s</button>";
     html += "</div>";
 
-    // Bouton d'action
+    // Bouton d'action — data-cmd-id = DataId CommandValveN (pour CSV /command),
+    // data-id = DataId de la vanne (utilisé uniquement pour cibler card-N).
     html += "<button class=\"action-btn\" data-id=\""; html += idByte;
+    html += "\" data-cmd-id=\""; html += cmdByte;
     html += "\" onclick=\"sendCommand(this)\">Arroser</button>";
 
     html += "</div>";
@@ -288,9 +311,13 @@ function selectDuration(btn) {
   btn.classList.add('selected');
 }
 
-// Envoi d'une commande d'ouverture via POST HTTP local
+// Envoi d'une commande via POST /command. Body = CSV 7 champs identique
+// au format MQTT serre/cmd. Les 3 premiers champs (timestamp, UTC_available,
+// UTC_reliable) sont laissés vides : la carte les remplit à réception.
+// type=5 = CommandManual, valueType=0 = float (durée en secondes).
 function sendCommand(btn) {
-  var id = btn.dataset.id;
+  var id    = btn.dataset.id;       // DataId de la vanne (pour l'UI seulement)
+  var cmdId = btn.dataset.cmdId;    // DataId de la commande (CommandValveN)
   var card = document.getElementById('card-' + id);
   if (!card) return;
 
@@ -302,16 +329,17 @@ function sendCommand(btn) {
   status.textContent = 'Envoi de la commande...';
   status.classList.add('visible');
 
-  var body = 'id=' + encodeURIComponent(id) + '&duration=' + encodeURIComponent(sec);
+  // Ordre des champs : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+  var body = ',,,5,' + cmdId + ',0,' + sec;
 
-  fetch('/actuators/open', {
+  fetch('/command', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'text/plain' },
     body: body
   })
   .then(function(response) {
     if (response.ok || response.status === 204) {
-      status.textContent = '✅ Commande envoyée (vanne id=' + id + ', ' + sec + ' s)';
+      status.textContent = '✅ Commande envoyée (cmdId=' + cmdId + ', ' + sec + ' s)';
       card.classList.remove('flash');
       void card.offsetWidth;
       card.classList.add('flash');

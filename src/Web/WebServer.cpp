@@ -15,9 +15,14 @@
 //
 // Ajout page Actionneurs :
 //  - GET  /actuators        → page web de pilotage des vannes (PageActuators)
-//  - POST /actuators/open   → commande d'ouverture (id=<DataId>, duration=<secondes>)
-//    Valide via isValidId + type == Actuator, délègue à ValveManager::enqueueCommand
-//    (même porte d'entrée thread-safe que MQTT).
+//  - POST /command          → commande unifiée (même format que MQTT serre/cmd)
+//    Body = CSV 7 champs en text/plain : les 3 premiers (timestamp,
+//    UTC_available, UTC_reliable) doivent être vides ou "0" (l'émetteur
+//    n'horodate pas). Le body arrive par chunks (handleCommandBody),
+//    est accumulé dans request->_tempObject puis traité à la fin
+//    (handleCommandFinal) en trois étapes disjointes :
+//      DataLogger::parseCommand (validation) → DataLogger::traceCommand
+//      (journalisation) → CommandRouter::route (exécution via RELAYS[]).
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"
@@ -25,7 +30,7 @@
 #include "Web/Pages/PageActuators.h"
 #include "Connectivity/WiFiManager.h"
 #include "Storage/DataLogger.h"
-#include "Actuators/ValveManager.h"
+#include "Core/CommandRouter.h"
 #include "Utils/Console.h"
 
 #include <SPIFFS.h>
@@ -77,7 +82,14 @@ void WebServer::init()
 
     // Routes de pilotage des actionneurs
     server.on("/actuators", HTTP_GET, handleActuators);
-    server.on("/actuators/open", HTTP_POST, handleActuatorsOpen);
+
+    // POST /command : entrée unifiée MQTT + HTTP. AsyncWebServer appelle
+    // handleCommandBody pour chaque chunk du body, puis handleCommandFinal
+    // une fois la requête complète. Pas d'uploadHandler (3ème arg = nullptr).
+    server.on("/command", HTTP_POST,
+              handleCommandFinal,
+              nullptr,
+              handleCommandBody);
 
     // Démarrage du serveur asynchrone
     server.begin();
@@ -143,85 +155,109 @@ void WebServer::handleActuators(AsyncWebServerRequest *request)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Commande d'ouverture d'une vanne
+// POST /command — entrée commande unifiée (même circuit que MQTT serre/cmd)
 //
-// POST /actuators/open
-// Body form-urlencoded : id=<DataId>&duration=<secondes>
+// Body : CSV 7 champs en text/plain
+//   "timestamp,UTC_available,UTC_reliable,type,id,valueType,value"
+// Les 3 premiers champs doivent être vides ou "0" (l'émetteur n'horodate
+// pas, la carte le fait à réception).
 //
-// Validation identique au dispatcher MQTT :
-//   - id doit être un DataId connu de META
-//   - getMeta(id).type doit être Actuator
-//   - duration doit être > 0
-//
-// Succès : 204 No Content. Erreur : 400 Bad Request avec message explicite.
+// AsyncWebServer livre le body par chunks → accumulation dans une String*
+// stockée dans request->_tempObject, puis traitement final.
+// Succès : 204 No Content. Erreur : 400/503 + message explicite.
 // ─────────────────────────────────────────────────────────────────────────────
 
-void WebServer::handleActuatorsOpen(AsyncWebServerRequest *request)
+void WebServer::handleCommandBody(AsyncWebServerRequest *request,
+                                  uint8_t *data, size_t len,
+                                  size_t index, size_t total)
 {
-    // ─── Récupération des paramètres POST (form-urlencoded) ──────────────
-    if (!request->hasParam("id", true) || !request->hasParam("duration", true)) {
-        request->send(400, "text/plain", "Parametres manquants (id, duration)");
+    // Premier chunk : alloue le buffer d'accumulation.
+    if (index == 0) {
+        // Garde-fou : un CSV de commande fait ~20 octets. 256 couvre toute
+        // extension raisonnable ; au-delà on refuse (le final handler verra
+        // _tempObject nul et renverra 413).
+        if (total > 256) {
+            Console::warn(TAG, "POST /command : body " + String((uint32_t)total) +
+                          " octets rejeté (>256)");
+            return;
+        }
+        String* body = new String();
+        if (!body) return;
+        body->reserve(total);
+        request->_tempObject = body;
+
+        // Garantit la libération si la connexion tombe avant handleCommandFinal.
+        request->onDisconnect([request]() {
+            if (request->_tempObject) {
+                delete (String*)request->_tempObject;
+                request->_tempObject = nullptr;
+            }
+        });
+    }
+
+    String* body = (String*)request->_tempObject;
+    if (!body) return;
+    for (size_t i = 0; i < len; i++) body->concat((char)data[i]);
+}
+
+void WebServer::handleCommandFinal(AsyncWebServerRequest *request)
+{
+    String* body = (String*)request->_tempObject;
+
+    if (!body || body->length() == 0) {
+        request->send(400, "text/plain", "Body vide ou trop volumineux");
         return;
     }
 
-    String idStr  = request->getParam("id", true)->value();
-    String durStr = request->getParam("duration", true)->value();
+    DataLogger::ParsedCommand cmd;
+    auto res = DataLogger::parseCommand(body->c_str(), body->length(), cmd);
 
-    long idLong  = idStr.toInt();
-    long durLong = durStr.toInt();
+    delete body;
+    request->_tempObject = nullptr;
 
-    if (idLong < 0 || idLong > 255) {
-        request->send(400, "text/plain", "id hors plage");
+    // Étape 1 : parse/validation. Rejet → 400 avec message explicite.
+    switch (res) {
+        case DataLogger::CommandParseResult::OK:
+            break;
+        case DataLogger::CommandParseResult::BadFormat:
+            request->send(400, "text/plain", "CSV format invalide");
+            return;
+        case DataLogger::CommandParseResult::TimestampSet:
+            request->send(400, "text/plain", "Horodatage non autorise");
+            return;
+        case DataLogger::CommandParseResult::InvalidType:
+            request->send(400, "text/plain", "type doit etre 5 (Manual) ou 6 (Auto)");
+            return;
+        case DataLogger::CommandParseResult::UnknownId:
+            request->send(400, "text/plain", "id inconnu de META");
+            return;
+        case DataLogger::CommandParseResult::NotACommand:
+            request->send(400, "text/plain", "id n'est pas une commande");
+            return;
+        case DataLogger::CommandParseResult::BadValueType:
+            request->send(400, "text/plain", "valueType doit etre 0");
+            return;
+        case DataLogger::CommandParseResult::BadValue:
+            request->send(400, "text/plain", "value doit etre > 0");
+            return;
+    }
+
+    // Étape 2 : journalisation (best-effort — n'échoue pas la requête).
+    DataLogger::traceCommand(cmd);
+
+    // Étape 3 : routage applicatif via RELAYS[].
+    if (!CommandRouter::route(cmd.cmdId, cmd.durationMs)) {
+        Console::warn(TAG, "Commande non routee : cmdId=" +
+                      String((uint8_t)cmd.cmdId) +
+                      " (absente de RELAYS[] ou manager non pret)");
+        request->send(503, "text/plain", "Actionneur indisponible");
         return;
     }
 
-    uint8_t idByte = (uint8_t)idLong;
-
-    if (!DataLogger::isValidId(idByte)) {
-        request->send(400, "text/plain", "id inconnu de META");
-        Console::warn(TAG, "POST /actuators/open : id inconnu " + String(idByte));
-        return;
-    }
-
-    DataId id = (DataId)idByte;
-    const DataMeta& meta = DataLogger::getMeta(id);
-    if (meta.type != DataType::Actuator) {
-        request->send(400, "text/plain", "id n'est pas un actionneur");
-        Console::warn(TAG, "POST /actuators/open : id=" + String(idByte) +
-                      " non-actionneur (" + String(meta.label) + ")");
-        return;
-    }
-
-    if (durLong <= 0) {
-        request->send(400, "text/plain", "duration doit etre > 0");
-        return;
-    }
-
-    // ─── Trace d'intention (queue intake thread-safe de DataLogger) ──────
-    // Non-bloquant, capturée avant même l'envoi vers ValveManager.
-    DataId cmdId;
-    if (ValveManager::commandIdForValve(id, cmdId)) {
-        DataLogger::enqueueCommand(cmdId, DataType::CommandManual, (float)durLong);
-    } else {
-        Console::warn(TAG, "Pas de commande associée pour id=" + String(idByte) +
-                      " (slots pas encore construits ?) — log commande omis");
-    }
-
-    // ─── Dépose dans la queue FreeRTOS de ValveManager ──────────────────
-    ValveManager::ValveCommand cmd;
-    cmd.id         = id;
-    cmd.durationMs = (uint32_t)durLong * 1000UL;
-
-    if (ValveManager::enqueueCommand(cmd)) {
-        Console::info(TAG, "Commande HTTP acceptée : id=" + String(idByte) +
-                      " (" + String(meta.label) + ") pour " +
-                      String(durLong) + " s");
-        request->send(204);
-    } else {
-        Console::warn(TAG, "Commande HTTP rejetée (queue pleine) : id=" +
-                      String(idByte));
-        request->send(503, "text/plain", "File de commandes pleine");
-    }
+    Console::info(TAG, "Commande HTTP acceptée : cmdId=" +
+                  String((uint8_t)cmd.cmdId) +
+                  " durée=" + String(cmd.durationMs) + "ms");
+    request->send(204);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

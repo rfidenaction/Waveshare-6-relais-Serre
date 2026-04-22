@@ -14,9 +14,12 @@
 //   immédiate au boot (GPIO forcés LOW) est portée par
 //   RelayManager::initPinsSafe(), appelée dans main.cpp::setup().
 //
-// Thread-safety (inchangée) :
+// Thread-safety :
 //   - Commandes MQTT dans le thread esp_mqtt, HTTP dans AsyncWebServer.
-//   - Les dispatchers appellent enqueueCommand() qui fait xQueueSend.
+//   - Chaque dispatcher parse et valide via DataLogger::parseCommand, trace
+//     via DataLogger::traceCommand, puis route via CommandRouter::route.
+//     Ce dernier consulte RELAYS[] et invoque le handler qui y est stocké —
+//     pour ce module, enqueueByEntity() — qui fait xQueueSend.
 //   - handle() consomme via xQueueReceive dans le thread TaskManager.
 //   - Aucune variable d'état n'est accédée concurremment.
 
@@ -57,26 +60,10 @@ static bool isValveEntity(DataId id)
 }
 
 // -----------------------------------------------------------------------------
-// Mapping statique vanne → commande associée.
-// Seul endroit du code qui fait cette correspondance ; reporté ensuite dans
-// slot.commandId pour que toute la suite se fasse par consultation de slots[].
-// -----------------------------------------------------------------------------
-static DataId commandIdFromValveEntity(DataId valveId)
-{
-    switch (valveId) {
-        case DataId::Valve1: return DataId::CommandValve1;
-        case DataId::Valve2: return DataId::CommandValve2;
-        case DataId::Valve3: return DataId::CommandValve3;
-        case DataId::Valve4: return DataId::CommandValve4;
-        case DataId::Valve5: return DataId::CommandValve5;
-        case DataId::Valve6: return DataId::CommandValve6;
-        default:             return DataId::Valve1;  // neutralisé par isValveEntity en amont
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Construction de slots[] par scan de RELAYS[]
 // Accède directement aux membres statiques slots[] et slotCount.
+// Le couple (entity, command) est porté par chaque ligne de RELAYS[] : il n'y
+// a plus de mapping dupliqué ici. Voir IO-Config.h pour l'invariant.
 // -----------------------------------------------------------------------------
 void ValveManager::buildSlotsFromRelays()
 {
@@ -87,11 +74,10 @@ void ValveManager::buildSlotsFromRelays()
             Console::warn(TAG, "RELAYS[] contient plus de vannes que VALVE_COUNT — surplus ignoré");
             return;
         }
-        slots[slotCount].id        = RELAYS[i].entity;
-        slots[slotCount].commandId = commandIdFromValveEntity(RELAYS[i].entity);
-        slots[slotCount].relayCh   = RELAYS[i].ch;
-        slots[slotCount].state     = VALVE_CLOSED;
-        slots[slotCount].deadline  = 0;
+        slots[slotCount].id       = RELAYS[i].entity;
+        slots[slotCount].relayCh  = RELAYS[i].ch;
+        slots[slotCount].state    = VALVE_CLOSED;
+        slots[slotCount].deadline = 0;
         slotCount++;
     }
 }
@@ -198,13 +184,19 @@ void ValveManager::openFor(DataId id, uint32_t durationMs)
 }
 
 // -----------------------------------------------------------------------------
-// Point d'entrée thread-safe pour producteurs externes (esp_mqtt, HTTP, etc.)
+// Point d'entrée thread-safe — invoqué par CommandRouter::route via le
+// handler `enqueue` stocké dans RELAYS[] (Config/IO-Config.h). Appelé depuis
+// le thread du dispatcher (esp_mqtt, AsyncTCP…) après parseCommand+traceCommand.
 // -----------------------------------------------------------------------------
-bool ValveManager::enqueueCommand(const ValveCommand& cmd)
+bool ValveManager::enqueueByEntity(DataId entity, uint32_t durationMs)
 {
     if (cmdQueue == nullptr) return false;
 
-    // Non-bloquant. La queue FreeRTOS garantit la thread-safety sur ESP32-S3 SMP.
+    ValveCommand cmd;
+    cmd.id         = entity;
+    cmd.durationMs = durationMs;
+
+    // xQueueSend non-bloquant, thread-safe FreeRTOS.
     return (xQueueSend(cmdQueue, &cmd, 0) == pdTRUE);
 }
 
@@ -214,33 +206,6 @@ bool ValveManager::enqueueCommand(const ValveCommand& cmd)
 bool ValveManager::isReady()
 {
     return valveSystemReady;
-}
-
-// -----------------------------------------------------------------------------
-// Pont commande ↔ observation — consulte slots[] (source unique).
-// Renvoie false si les slots ne sont pas encore construits ou si la clé est
-// inconnue ; l'appelant doit traiter ce cas (typiquement : ignorer le log).
-// -----------------------------------------------------------------------------
-bool ValveManager::commandIdForValve(DataId valveId, DataId& out)
-{
-    for (uint8_t i = 0; i < slotCount; i++) {
-        if (slots[i].id == valveId) {
-            out = slots[i].commandId;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool ValveManager::getCommandTargetFor(DataId cmdId, DataId& out)
-{
-    for (uint8_t i = 0; i < slotCount; i++) {
-        if (slots[i].commandId == cmdId) {
-            out = slots[i].id;
-            return true;
-        }
-    }
-    return false;
 }
 
 // -----------------------------------------------------------------------------

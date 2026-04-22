@@ -4,9 +4,11 @@
 // Page HTML locale servie par le serveur embarqué. Utilisée quand aucun réseau
 // externe n'est disponible (AP local uniquement). Ne dépend pas de MQTT.
 //
-// Les commandes sont envoyées via POST HTTP local vers /actuators/open, qui
-// délègue à ValveManager::enqueueCommand() — même porte d'entrée thread-safe
-// que les commandes MQTT.
+// Les commandes sont envoyées via POST /command en text/plain, payload CSV
+// 7 champs identique au format MQTT serre/cmd. Le serveur enchaîne
+// DataLogger::parseCommand (validation) → DataLogger::traceCommand
+// (journalisation) → CommandRouter::route (dispatch vers le manager
+// propriétaire via RELAYS[]). Même circuit que les commandes MQTT.
 //
 // La liste des vannes est construite dynamiquement depuis META : tous les
 // DataIds dont type == Actuator et nature == etat sont affichés.

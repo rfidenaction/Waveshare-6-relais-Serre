@@ -327,58 +327,136 @@ void DataLogger::push(DataId id, const String& textValue)
 }
 
 // -----------------------------------------------------------------------------
-// ENQUEUE COMMAND — API publique thread-safe, non-bloquante
+// PARSE COMMAND — fonction PURE (pas d'effet de bord)
 //
-// Captures les DEUX horloges au plus tôt (VirtualClock pour LIVE, TimeUTC
-// pour PENDING + lastDataForWeb), puis dépose dans la queue FreeRTOS. Le
-// record effectif est construit dans drainCommandIntake() côté TaskManager.
-// Appelable depuis n'importe quel thread (esp_mqtt, AsyncTCP, TaskManager).
+// Décode et valide un CSV 7 champs. Les 3 premiers (timestamp, UTC_available,
+// UTC_reliable) DOIVENT être vides ou "0" (l'émetteur n'horodate pas ;
+// l'horodatage sera posé par traceCommand au plus tôt côté carte). En cas
+// d'OK, remplit `out`. Sinon, `out` est indéfini.
+//
+// Appelable depuis n'importe quel thread — aucune I/O, aucune allocation.
 // -----------------------------------------------------------------------------
-bool DataLogger::enqueueCommand(DataId cmdId, DataType origin, float durationSec)
+DataLogger::CommandParseResult DataLogger::parseCommand(
+    const char* csv, size_t len, ParsedCommand& out)
+{
+    // Copie locale null-terminée. 64 octets couvrent largement un CSV de
+    // commande (ex. ",,,5,255,0,99999" = 18 caractères).
+    char buf[64];
+    if (len == 0 || len >= sizeof(buf)) {
+        return CommandParseResult::BadFormat;
+    }
+    memcpy(buf, csv, len);
+    buf[len] = '\0';
+
+    // Localise les 6 virgules. Exactement 6 attendues, sinon format invalide.
+    const char* comma[6];
+    int nCommas = 0;
+    for (char* p = buf; *p; p++) {
+        if (*p == ',') {
+            if (nCommas >= 6) return CommandParseResult::BadFormat;
+            comma[nCommas++] = p;
+        }
+    }
+    if (nCommas != 6) return CommandParseResult::BadFormat;
+
+    // Découpe : null-terminaison en place à chaque virgule.
+    char* f[7];
+    f[0] = buf;
+    for (int i = 0; i < 6; i++) {
+        *const_cast<char*>(comma[i]) = '\0';
+        f[i + 1] = const_cast<char*>(comma[i]) + 1;
+    }
+
+    // ─── Champs 0..2 : timestamp / UTC_available / UTC_reliable ─────────
+    // Doivent être vides ou exactement "0". Tout autre contenu = rejet :
+    // l'émetteur ne doit pas prétendre avoir horodaté.
+    auto isEmptyOrZero = [](const char* s) -> bool {
+        if (*s == '\0') return true;
+        if (*s == '0' && *(s + 1) == '\0') return true;
+        return false;
+    };
+    if (!isEmptyOrZero(f[0]) || !isEmptyOrZero(f[1]) || !isEmptyOrZero(f[2])) {
+        return CommandParseResult::TimestampSet;
+    }
+
+    // ─── Champ 3 : type ∈ {CommandManual, CommandAuto} ──────────────────
+    char* end = nullptr;
+    long typeVal = strtol(f[3], &end, 10);
+    if (end == f[3] || *end != '\0') return CommandParseResult::InvalidType;
+    if (typeVal != (long)DataType::CommandManual &&
+        typeVal != (long)DataType::CommandAuto) {
+        return CommandParseResult::InvalidType;
+    }
+    DataType origin = (DataType)typeVal;
+
+    // ─── Champ 4 : id valide et META.type == CommandGeneric ─────────────
+    end = nullptr;
+    long idVal = strtol(f[4], &end, 10);
+    if (end == f[4] || *end != '\0' || idVal < 0 || idVal > 255) {
+        return CommandParseResult::UnknownId;
+    }
+    if (!isValidId((uint8_t)idVal)) {
+        return CommandParseResult::UnknownId;
+    }
+    DataId cmdId = (DataId)idVal;
+    if (getMeta(cmdId).type != DataType::CommandGeneric) {
+        return CommandParseResult::NotACommand;
+    }
+
+    // ─── Champ 5 : valueType == 0 (seules les commandes float sont acceptées) ─
+    if (f[5][0] != '0' || f[5][1] != '\0') {
+        return CommandParseResult::BadValueType;
+    }
+
+    // ─── Champ 6 : value > 0 (durée en secondes) ────────────────────────
+    end = nullptr;
+    float duration = strtof(f[6], &end);
+    if (end == f[6] || *end != '\0' || !(duration > 0.0f)) {
+        return CommandParseResult::BadValue;
+    }
+
+    out.cmdId      = cmdId;
+    out.origin     = origin;
+    out.durationMs = (uint32_t)(duration * 1000.0f);
+    return CommandParseResult::OK;
+}
+
+// -----------------------------------------------------------------------------
+// TRACE COMMAND — journalisation thread-safe, best-effort
+//
+// Capture les DEUX horloges au plus tôt (VirtualClock pour LIVE, TimeUTC pour
+// PENDING + lastDataForWeb), puis dépose dans la queue FreeRTOS. Le record
+// effectif est construit dans drainCommandIntake() côté TaskManager.
+//
+// Appelable depuis n'importe quel thread (esp_mqtt, AsyncTCP, TaskManager).
+// Ne retourne pas d'erreur : un échec (queue non prête ou saturée) est loggé
+// en warning mais n'interrompt pas le flux d'exécution de la commande — le
+// routage applicatif (CommandRouter::route) reste indépendant.
+// -----------------------------------------------------------------------------
+void DataLogger::traceCommand(const ParsedCommand& cmd)
 {
     if (commandIntake == nullptr) {
-        Console::warn(TAG, "enqueueCommand : queue intake pas prête — commande "
-                      "id=" + String((uint8_t)cmdId) + " perdue pour la trace");
-        return false;
-    }
-
-    if (!isValidId((uint8_t)cmdId)) {
-        Console::warn(TAG, "enqueueCommand rejeté : id=" +
-                      String((uint8_t)cmdId) + " inconnu de META");
-        return false;
-    }
-
-    if (getMeta(cmdId).type != DataType::CommandGeneric) {
-        Console::warn(TAG, "enqueueCommand rejeté : id=" +
-                      String((uint8_t)cmdId) +
-                      " n'est pas une entité Commande (META.type != CommandGeneric)");
-        return false;
-    }
-
-    if (origin != DataType::CommandManual && origin != DataType::CommandAuto) {
-        Console::warn(TAG, "enqueueCommand rejeté : origin invalide pour id=" +
-                      String((uint8_t)cmdId));
-        return false;
+        Console::warn(TAG, "traceCommand : queue intake pas prête — commande "
+                      "id=" + String((uint8_t)cmd.cmdId) + " perdue pour la trace");
+        return;
     }
 
     // Capture des deux horloges au plus tôt, avant toute latence de queue.
     TimeUTC t = ManagerUTC::readUTC();
 
     CommandIntakeItem item;
-    item.cmdId         = cmdId;
-    item.origin        = origin;
-    item.durationSec   = durationSec;
+    item.cmdId         = cmd.cmdId;
+    item.origin        = cmd.origin;
+    item.durationSec   = cmd.durationMs / 1000.0f;
     item.vClock        = static_cast<uint32_t>(VirtualClock::nowVirtual());
     item.utcTimestamp  = static_cast<uint32_t>(t.timestamp);
     item.UTC_available = t.UTC_available;
     item.UTC_reliable  = t.UTC_reliable;
 
     if (xQueueSend(commandIntake, &item, 0) != pdTRUE) {
-        Console::warn(TAG, "enqueueCommand : queue intake pleine — commande "
-                      "id=" + String((uint8_t)cmdId) + " perdue pour la trace");
-        return false;
+        Console::warn(TAG, "traceCommand : queue intake pleine — commande "
+                      "id=" + String((uint8_t)cmd.cmdId) + " perdue pour la trace");
     }
-    return true;
 }
 
 // -----------------------------------------------------------------------------

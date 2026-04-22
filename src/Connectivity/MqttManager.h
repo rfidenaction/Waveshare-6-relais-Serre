@@ -73,7 +73,8 @@ private:
     static bool schemaPublished;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
-    static void dispatchCommand(void* eventData);  // serre/cmd/{id} → ValveManager queue
+    // serre/cmd (CSV 7 champs) : parseCommand → traceCommand → CommandRouter::route
+    static void dispatchCommand(void* eventData);
     static void publishOnline();
     static void publishSchema();
     static String buildSchemaJson();

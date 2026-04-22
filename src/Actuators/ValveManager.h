@@ -14,8 +14,14 @@
 // Principe — META comme clé unique :
 //   Chaque vanne est identifiée de bout en bout par son DataId META
 //   (Valve1..Valve6). Aucun "index 0..5" n'est exposé dans l'API publique.
-//   Le tableau interne slots[] associe DataId ↔ canal relais, c'est le SEUL
-//   endroit du code qui fait cette correspondance côté vannes.
+//
+// Source de vérité du câblage fonctionnel :
+//   RELAYS[] dans Config/IO-Config.h. Chaque ligne déclare, pour un canal
+//   physique, le triplet (entity, command, ch). C'est le SEUL endroit du
+//   projet où la correspondance vanne ↔ commande ↔ canal relais est écrite.
+//   Le tableau interne slots[] n'en est qu'une vue runtime, construite une
+//   fois au démarrage (voir buildSlotsFromRelays) et utilisée ensuite pour
+//   tous les lookups et pour porter l'état d'ouverture de chaque vanne.
 //
 // Cycle de vie — silence total avant VALVE_START_DELAY_MS :
 //   - handle()      : unique tâche périodique, enregistrée dès le boot dans
@@ -33,10 +39,12 @@
 //   - openFor()     : ouvre une vanne pour une durée donnée.
 //                      Ignorée si la vanne est déjà ouverte (anti-rebond).
 //                      Durée clampée à VALVE_MAX_DURATION_MS (sécurité métier).
-//   - enqueueCommand() : point d'entrée thread-safe depuis d'autres threads
-//                        (notamment mqttEventHandler dans le thread esp_mqtt).
-//                        Si la queue n'existe pas encore (avant démarrage),
-//                        retourne false et la commande est rejetée côté appelant.
+//   - enqueueByEntity() : point d'entrée thread-safe unique, invoqué par
+//                         CommandRouter::route via le handler enregistré
+//                         ligne par ligne dans RELAYS[]. Aucun dispatcher
+//                         (MQTT, HTTP) ne l'appelle directement.
+//                         Si la queue n'existe pas encore (avant démarrage),
+//                         retourne false et la commande est perdue.
 //
 // Journalisation sur changement d'état :
 //   - Console::info
@@ -67,14 +75,6 @@ public:
     static constexpr uint8_t VALVE_CLOSED = 0;
     static constexpr uint8_t VALVE_OPENED = 1;
 
-    // ─── Structure de commande (transportée via la queue FreeRTOS) ───────
-    // Publique car construite par MqttManager (dispatcher serre/cmd/{id})
-    // et par WebServer (POST /actuators/open).
-    struct ValveCommand {
-        DataId   id;          // DataId META correspondant à la vanne
-        uint32_t durationMs;  // durée d'ouverture en millisecondes
-    };
-
     // ─── Cycle de vie ────────────────────────────────────────────────────
     // Unique tâche périodique (1000 ms) enregistrée dans TaskManager.
     //
@@ -96,40 +96,48 @@ public:
     // Appelée depuis le thread TaskManager uniquement.
     static void openFor(DataId id, uint32_t durationMs);
 
-    // Point d'entrée thread-safe pour producteurs externes (thread esp_mqtt,
-    // handler HTTP, etc.).
+    // Point d'entrée thread-safe unique pour le routage générique RELAYS[]
+    // (cf. IO-Config.h). Signature commune à tous les managers d'actionneurs :
+    // un pointeur &ValveManager::enqueueByEntity est stocké ligne par ligne
+    // dans RELAYS[] et invoqué par CommandRouter::route après parseCommand
+    // et traceCommand. Appelable depuis n'importe quel thread (MQTT, HTTP, …).
+    //
+    // N'effectue AUCUNE vérification supplémentaire : le routeur garantit par
+    // construction du câblage (RELAYS[]) que entity est bien une vanne gérée
+    // par ce manager.
+    //
     // Retourne true si acceptée, false si la queue n'existe pas encore
-    // (avant VALVE_START_DELAY_MS) ou si elle est pleine.
-    // Non-bloquant (timeout 0).
-    static bool enqueueCommand(const ValveCommand& cmd);
+    // (avant VALVE_START_DELAY_MS) ou si elle est pleine. Non-bloquant.
+    static bool enqueueByEntity(DataId entity, uint32_t durationMs);
 
     // true une fois VALVE_START_DELAY_MS écoulé ET queue créée.
     static bool isReady();
 
-    // ─── Pont commande ↔ observation ─────────────────────────────────────
-    // Chaque vanne META (Valve1..Valve6) a une commande META associée
-    // (CommandValve1..CommandValve6). Le lien est porté par ValveSlot
-    // (rempli dans buildSlotsFromRelays). Ces deux fonctions exposent ce
-    // lien aux émetteurs (MqttManager, WebServer) et aux consommateurs de
-    // schéma JSON, sans passer par une table de correspondance séparée.
-    //
-    // Retour : true si trouvé, out rempli. false si non trouvé, out inchangé.
-    // Pattern bool+out aligné sur DataLogger::hasLastDataForWeb.
-
-    // Sens vanne → commande. Utilisé par les émetteurs avant pushCommand.
-    static bool commandIdForValve(DataId valveId, DataId& out);
-
-    // Sens commande → vanne. Utilisé par les générateurs de schéma JSON.
-    static bool getCommandTargetFor(DataId cmdId, DataId& out);
-
 private:
-    // ─── Slot interne : associe DataId ↔ canal relais + état runtime ─────
-    // Rempli au démarrage par scan de RELAYS[]. Seul endroit du code qui
-    // fait la correspondance DataId vanne ↔ canal relais. Le GPIO physique
-    // est un détail porté par RelayManager, invisible ici.
+    // ─── Structure de commande interne (transportée via la queue FreeRTOS) ─
+    // Consommée uniquement par handle() dans le thread TaskManager ; remplie
+    // par enqueueByEntity depuis les threads producteurs (MQTT, HTTP…).
+    struct ValveCommand {
+        DataId   id;          // DataId META de la vanne cible
+        uint32_t durationMs;  // durée d'ouverture en millisecondes
+    };
+
+    // ─── Slot interne : vue runtime d'une ligne vanne de RELAYS[] ────────
+    // Double rôle :
+    //   1. Copie RAM de deux champs constants (entity, ch) de la ligne
+    //      RELAYS[] correspondant à cette vanne, pour éviter de reparcourir
+    //      RELAYS[] à chaque action.
+    //   2. Porteur de l'état runtime de la vanne (state + deadline), qui
+    //      n'a pas sa place dans RELAYS[] puisque celui-ci est constexpr.
+    // La source de vérité du câblage reste RELAYS[] ; slots[] n'en est
+    // qu'une projection rafraîchie une fois au démarrage par
+    // buildSlotsFromRelays. Le champ command de RELAYS[] n'est pas recopié
+    // ici : la traduction cmdId → entity est faite en amont par
+    // CommandRouter::route (qui parcourt RELAYS[]) avant d'appeler
+    // enqueueByEntity. Le GPIO physique est un détail porté par
+    // RelayManager, invisible ici.
     struct ValveSlot {
         DataId   id;        // DataId META de la vanne (clé de recherche)
-        DataId   commandId; // DataId META de la commande associée (CommandValveN)
         uint8_t  relayCh;   // canal RelayManager (1-based, cf. RELAYS[].ch)
         uint8_t  state;     // VALVE_CLOSED ou VALVE_OPENED
         uint32_t deadline;  // millis() cible de fermeture, 0 si fermée
@@ -153,8 +161,10 @@ private:
     // Application physique d'un nouvel état + journalisation.
     static void applyValveState(ValveSlot& slot, uint8_t newState);
 
-    // Construit slots[] à partir de RELAYS[] (IO-Config.h).
-    // Appelée une seule fois, au premier handle() après VALVE_START_DELAY_MS.
-    // Privée car elle touche au type interne ValveSlot.
+    // Construit slots[] à partir de RELAYS[] (IO-Config.h) : recopie, pour
+    // chaque ligne dont l'entity est une vanne, le triplet (entity, command,
+    // ch) dans un ValveSlot et initialise l'état runtime (VALVE_CLOSED,
+    // deadline=0). Appelée une seule fois, au premier handle() après
+    // VALVE_START_DELAY_MS. Privée car elle touche au type interne ValveSlot.
     static void buildSlotsFromRelays();
 };

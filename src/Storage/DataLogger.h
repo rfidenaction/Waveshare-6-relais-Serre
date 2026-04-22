@@ -247,22 +247,63 @@ public:
     // DataType est déduit automatiquement de META (source de vérité unique)
     static void push(DataId id, const String& textValue);
 
-    // Enqueue thread-safe d'un record de COMMANDE (trace d'intention,
-    // indépendante de l'exécution effective par ValveManager/GardenManager).
+    // ───────────── Entrée unifiée des commandes (MQTT + HTTP) ─────────────
     //
-    // Appelable depuis N'IMPORTE QUEL thread (esp_mqtt, AsyncTCP, TaskManager…).
-    // Non-bloquant. L'horodatage (TimeUTC 3 niveaux) est capturé DANS cette
-    // fonction, au plus tôt, puis transporté dans la queue interne. Le record
-    // est assemblé et déposé dans PENDING depuis handle() (thread TaskManager).
+    // Pipeline dispatcher (MqttManager / WebServer) :
+    //     ParsedCommand p;
+    //     auto r = DataLogger::parseCommand(csv, len, p);
+    //     if (r != CommandParseResult::OK) { /* rejet */ }
+    //     DataLogger::traceCommand(p);            // journalisation
+    //     CommandRouter::route(p.cmdId, p.durationMs);  // exécution
     //
-    //   cmdId       : DataId de la commande (META.type doit être CommandGeneric).
-    //   origin      : DataType::CommandManual ou DataType::CommandAuto.
-    //   durationSec : durée demandée en secondes (portée dans record.value).
+    // Chaque étape a une responsabilité disjointe : parseCommand ne fait que
+    // valider et décoder (pas d'effet de bord), traceCommand journalise dans
+    // PENDING (best-effort), CommandRouter exécute via RELAYS[].
+
+    // Résultat de parseCommand. OK = CSV conforme + contenu valide. Tous les
+    // autres codes sont des motifs de rejet disjoints.
+    enum class CommandParseResult : uint8_t {
+        OK            = 0,
+        BadFormat,          // Nombre de virgules incorrect ou CSV tronqué
+        TimestampSet,       // timestamp/UTC_available/UTC_reliable non vides ni zéro
+        InvalidType,        // type ∉ {CommandManual, CommandAuto}
+        UnknownId,          // id absent de META
+        NotACommand,        // META.type != CommandGeneric pour cet id
+        BadValueType,       // valueType != 0 (seules les commandes float sont acceptées)
+        BadValue             // value <= 0 (la durée doit être strictement positive)
+    };
+
+    // Résultat structuré de parseCommand. Renseigné seulement si retour == OK.
+    //   cmdId      : entité commande validée (META.type == CommandGeneric).
+    //   origin     : DataType::CommandManual ou DataType::CommandAuto.
+    //   durationMs : durée en ms, dérivée du champ `value` (secondes).
+    struct ParsedCommand {
+        DataId   cmdId;
+        DataType origin;
+        uint32_t durationMs;
+    };
+
+    // Parse un CSV 7 champs "timestamp,UTC_available,UTC_reliable,type,id,valueType,value"
+    // où les 3 premiers champs DOIVENT être vides ou "0" (l'émetteur n'horodate
+    // pas). Fonction PURE : aucun effet de bord, aucune journalisation. En cas
+    // d'OK, remplit out ; sinon out est indéfini.
     //
-    // Retour : true si empilé, false si cmdId/origin invalides, queue pas
-    // encore initialisée, ou queue pleine (warn loggé, commande perdue pour
-    // la trace — le record d'ouverture vanne reste indépendant).
-    static bool enqueueCommand(DataId cmdId, DataType origin, float durationSec);
+    //   csv, len : payload brut (MQTT data ou body HTTP), non null-terminé.
+    //
+    // Appelable depuis n'importe quel thread.
+    static CommandParseResult parseCommand(const char* csv, size_t len,
+                                           ParsedCommand& out);
+
+    // Journalise la commande déjà parsée dans LIVE + PENDING + lastDataForWeb
+    // (via la queue intake thread-safe). Capture les deux horloges (VirtualClock
+    // pour LIVE, TimeUTC pour PENDING) AU MOMENT DE L'APPEL, au plus tôt.
+    //
+    // Best-effort : si la queue intake est saturée ou pas encore initialisée,
+    // un warning est loggé mais la fonction retourne sans bloquer. Le routage
+    // applicatif (exécution effective) reste indépendant — voir CommandRouter.
+    //
+    // Appelable depuis n'importe quel thread.
+    static void traceCommand(const ParsedCommand& cmd);
 
     static void handle();           // Réparation UTC + flush
 
@@ -322,7 +363,7 @@ private:
     // ───────────── Intake de commandes (thread-safe) ─────────────
     // Tampon symétrique du tampon sortant de MqttManager : les producteurs
     // externes (esp_mqtt, AsyncTCP, GardenManager…) déposent ici via
-    // enqueueCommand(), et handle() draine côté TaskManager. Aucune primitive
+    // traceCommand(), et handle() draine côté TaskManager. Aucune primitive
     // DataLogger (live/pending/lastDataForWeb) n'est touchée hors TaskManager.
     struct CommandIntakeItem {
         DataId   cmdId;
