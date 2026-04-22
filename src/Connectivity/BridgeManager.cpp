@@ -6,10 +6,11 @@
 // BRIDGE_START_DELAY_MS (4 minutes), pour laisser WiFi STA, MQTT
 // et NTP se stabiliser sans encombrement réseau.
 //
-// Protocole UDP (4 types de paquets, sans identifiant) :
+// Protocole UDP (5 types de paquets, sans identifiant) :
 //   Waveshare → LilyGo :
 //     HB                    — heartbeat (après 5 publications MQTT)
 //     SMS|number|text        — ordre d'envoi de SMS
+//     MqttKo                — MQTT KO prolonge, demande renegociation PPP
 //   LilyGo → Waveshare :
 //     STATE|0 ou STATE|1    — disponibilité SMS (~30s)
 //     ACK                   — SMS envoyé par le modem
@@ -261,6 +262,26 @@ void BridgeManager::sendHeartbeat()
     udp.endPacket();
 
     Console::info(TAG, "Heartbeat envoye (signe de vie)");
+}
+
+// =============================================================================
+// MqttKo — envoi UDP fire-and-forget vers LilyGo
+//
+// Declenche cote LilyGo une renegociation PPP immediate (DATA→COMMAND→DATA
+// + enable_napt()) pour resynchroniser le NAPT / DNS. Appele par MqttManager
+// quand la connexion MQTT reste KO au-dela de MQTT_KO_FIRST_DELAY_MS, puis
+// toutes les MQTT_KO_REPEAT_DELAY_MS tant que MQTT reste KO.
+// =============================================================================
+void BridgeManager::sendMqttKo()
+{
+    if (!started) return;
+    if (!WiFiManager::isSTAConnected()) return;
+
+    udp.beginPacket(WIFI_STA_GATEWAY, BRIDGE_UDP_PORT_REMOTE);
+    udp.write((const uint8_t*)"MqttKo", 6);
+    udp.endPacket();
+
+    Console::warn(TAG, "MqttKo envoye a LilyGo — demande renegociation PPP");
 }
 
 // =============================================================================

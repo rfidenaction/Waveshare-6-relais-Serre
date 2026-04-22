@@ -17,6 +17,7 @@
  * Flux sortant (Waveshare → LilyGo) :
  *   HB                  — heartbeat après 5 publications MQTT
  *   SMS|number|text      — ordre d'envoi de SMS
+ *   MqttKo              — MQTT KO prolonge → LilyGo renegocie PPP
  *
  * Démarrage différé :
  *   - init() initialise les variables mais n'ouvre PAS le socket UDP
@@ -71,6 +72,12 @@ public:
     // ─── SMS (appelé par SmsManager) ─────────────────────────────────────
     // Retourne false si queue pleine (2 max) — le SMS est rejeté + loggé
     static bool queueSms(const String& number, const String& message);
+
+    // ─── MqttKo (appele par MqttManager) ─────────────────────────────────
+    // Envoie le paquet UDP "MqttKo" vers la LilyGo. Fire-and-forget.
+    // Sans effet si le bridge n'est pas encore demarre (before start delay).
+    // Le timing (premiere occurrence, repetitions) est gere par MqttManager.
+    static void sendMqttKo();
 
     // ─── Accesseur (lecture instantanée, non-bloquant) ───────────────────
     static bool canAcceptSms();

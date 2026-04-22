@@ -21,7 +21,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <map>
+#include <array>
 #include <time.h>
 #include <variant>
 #include "freertos/FreeRTOS.h"
@@ -411,7 +411,15 @@ private:
     static size_t     pendingCount;
 
     // ───────────── Web RAM ─────────────
-    static std::map<DataId, LastDataForWeb> lastDataForWeb;
+    // Tableau fixe indexé par la position dans META[] (via findMetaIndex).
+    // Remplace l'ancien std::map : évite toute restructuration d'arbre
+    // pendant une lecture concurrente depuis la tâche AsyncTCP — le pire
+    // cas restant est une lecture non atomique d'un slot, acceptable pour
+    // l'affichage Web (perte de donnée tolérée, pas de crash).
+    // Écritures : tâche loop() uniquement (push, pushCommandRecord, init).
+    // Lectures  : hasLastDataForWeb() depuis n'importe quel thread.
+    static std::array<LastDataForWeb, META_COUNT> lastDataForWeb;
+    static std::array<bool,           META_COUNT> lastDataForWebHas;
 
     // ───────────── Internes ─────────────
     static void addLive(const DataRecord& r);

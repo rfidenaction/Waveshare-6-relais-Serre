@@ -103,4 +103,18 @@ private:
     static volatile uint32_t messagesPublished;
     static volatile uint32_t watchdogSeconds;
     static uint32_t forcedDisconnectCount;  // diag cumul depuis boot
+
+    // ─── Signal MqttKo (Waveshare → LilyGo via BridgeManager) ────────────
+    // mqttKoDownSinceMs : horodatage millis() du debut de la deconnexion
+    //   courante. Arme (≠ 0) au premier MQTT_EVENT_DISCONNECTED qui suit
+    //   une periode connectee, desarme (= 0) a chaque MQTT_EVENT_CONNECTED.
+    // mqttKoLastSentMs : horodatage millis() du dernier MqttKo envoye
+    //   dans l'episode de deconnexion courant. Reset a chaque reconnexion.
+    // Ces deux champs ne sont ecrits QUE depuis handle() / event handler
+    // (thread esp_mqtt) ; lus uniquement dans handle() pour la decision
+    // d'envoi. Pas de cross-thread sensible (ecritures aux transitions
+    // connected/disconnected, lecture periodique 1 Hz).
+    static uint32_t mqttKoDownSinceMs;
+    static uint32_t mqttKoLastSentMs;
+    static uint32_t mqttKoSentCount;    // diag cumul depuis boot
 };

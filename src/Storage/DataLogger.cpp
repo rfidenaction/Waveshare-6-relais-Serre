@@ -41,7 +41,8 @@ size_t DataLogger::liveIndex    = 0;
 size_t DataLogger::pendingHead  = 0;   // index du plus ancien
 size_t DataLogger::pendingCount = 0;   // nombre d'éléments valides
 
-std::map<DataId, LastDataForWeb> DataLogger::lastDataForWeb;
+std::array<LastDataForWeb, META_COUNT> DataLogger::lastDataForWeb{};
+std::array<bool,           META_COUNT> DataLogger::lastDataForWebHas{};
 
 // Queue intake de commandes (thread-safe, remplie par enqueueCommand depuis
 // n'importe quel thread, drainée par handle() côté TaskManager)
@@ -233,15 +234,15 @@ void DataLogger::init()
 
     file.close();
 
-    // Peupler lastDataForWeb depuis la table temporaire
+    // Peupler lastDataForWeb depuis la table temporaire (indexé par position META)
     for (size_t m = 0; m < META_COUNT; m++) {
         if (lastSeen[m].found) {
-            LastDataForWeb e;
-            e.value         = lastSeen[m].value;
-            e.timestamp     = lastSeen[m].timestamp;
-            e.UTC_available = lastSeen[m].UTC_available;
-            e.UTC_reliable  = lastSeen[m].UTC_reliable;
-            lastDataForWeb[META[m].id] = e;
+            LastDataForWeb& w = lastDataForWeb[m];
+            w.value         = lastSeen[m].value;
+            w.timestamp     = lastSeen[m].timestamp;
+            w.UTC_available = lastSeen[m].UTC_available;
+            w.UTC_reliable  = lastSeen[m].UTC_reliable;
+            lastDataForWebHas[m] = true;
         }
     }
 }
@@ -275,12 +276,16 @@ void DataLogger::push(DataId id, float value)
     pendRec.UTC_reliable  = t.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — toujours alimenté
-    LastDataForWeb& w = lastDataForWeb[id];
-    w.value         = value;
-    w.timestamp     = t.timestamp;
-    w.UTC_available = t.UTC_available;
-    w.UTC_reliable  = t.UTC_reliable;
+    // Vue Web — toujours alimenté (slot indexé par position META)
+    int idx = findMetaIndex((uint8_t)id);
+    if (idx >= 0) {
+        LastDataForWeb& w = lastDataForWeb[idx];
+        w.value         = value;
+        w.timestamp     = t.timestamp;
+        w.UTC_available = t.UTC_available;
+        w.UTC_reliable  = t.UTC_reliable;
+        lastDataForWebHas[idx] = true;
+    }
 
     // Notification publication (MQTT ou autre)
     if (_onPushCallback) _onPushCallback(pendRec);
@@ -315,12 +320,16 @@ void DataLogger::push(DataId id, const String& textValue)
     pendRec.UTC_reliable  = t.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — toujours alimenté
-    LastDataForWeb& w = lastDataForWeb[id];
-    w.value         = textValue;
-    w.timestamp     = t.timestamp;
-    w.UTC_available = t.UTC_available;
-    w.UTC_reliable  = t.UTC_reliable;
+    // Vue Web — toujours alimenté (slot indexé par position META)
+    int idx = findMetaIndex((uint8_t)id);
+    if (idx >= 0) {
+        LastDataForWeb& w = lastDataForWeb[idx];
+        w.value         = textValue;
+        w.timestamp     = t.timestamp;
+        w.UTC_available = t.UTC_available;
+        w.UTC_reliable  = t.UTC_reliable;
+        lastDataForWebHas[idx] = true;
+    }
 
     // Notification publication (MQTT ou autre)
     if (_onPushCallback) _onPushCallback(pendRec);
@@ -505,12 +514,16 @@ void DataLogger::pushCommandRecord(const CommandIntakeItem& item)
     pendRec.UTC_reliable  = item.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — dernière commande demandée (valeur + horodatage UTC capturé)
-    LastDataForWeb& w = lastDataForWeb[item.cmdId];
-    w.value         = item.durationSec;
-    w.timestamp     = item.utcTimestamp;
-    w.UTC_available = item.UTC_available;
-    w.UTC_reliable  = item.UTC_reliable;
+    // Vue Web — dernière commande demandée (slot indexé par position META)
+    int idx = findMetaIndex((uint8_t)item.cmdId);
+    if (idx >= 0) {
+        LastDataForWeb& w = lastDataForWeb[idx];
+        w.value         = item.durationSec;
+        w.timestamp     = item.utcTimestamp;
+        w.UTC_available = item.UTC_available;
+        w.UTC_reliable  = item.UTC_reliable;
+        lastDataForWebHas[idx] = true;
+    }
 
     // Notification publication (MQTT ou autre)
     if (_onPushCallback) _onPushCallback(pendRec);
@@ -680,9 +693,10 @@ void DataLogger::clearHistory()
 // -----------------------------------------------------------------------------
 bool DataLogger::hasLastDataForWeb(DataId id, LastDataForWeb& out)
 {
-    auto it = lastDataForWeb.find(id);
-    if (it == lastDataForWeb.end()) return false;
-    out = it->second;
+    int idx = findMetaIndex((uint8_t)id);
+    if (idx < 0)                   return false;
+    if (!lastDataForWebHas[idx])   return false;
+    out = lastDataForWeb[idx];
     return true;
 }
 

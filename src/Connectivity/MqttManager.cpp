@@ -9,6 +9,7 @@
 // ni ne redéfinit quoi que ce soit de META.
 
 #include "Connectivity/MqttManager.h"
+#include "Connectivity/BridgeManager.h"
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
 #include "Storage/DataLogger.h"
@@ -39,6 +40,10 @@ volatile uint32_t MqttManager::messagesEnqueued  = 0;
 volatile uint32_t MqttManager::messagesPublished = 0;
 volatile uint32_t MqttManager::watchdogSeconds   = MqttManager::WATCHDOG_SECONDS;
 uint32_t          MqttManager::forcedDisconnectCount = 0;
+
+uint32_t MqttManager::mqttKoDownSinceMs = 0;
+uint32_t MqttManager::mqttKoLastSentMs  = 0;
+uint32_t MqttManager::mqttKoSentCount   = 0;
 
 // =============================================================================
 void MqttManager::setOnPublishSuccess(void (*callback)())
@@ -133,6 +138,10 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         Console::info(TAG, "Connecté au broker");
         mqttConnected = true;
 
+        // Desarme la temporisation MqttKo : le broker est de nouveau joignable.
+        mqttKoDownSinceMs = 0;
+        mqttKoLastSentMs  = 0;
+
         publishOnline();
 
         if (!schemaPublished) {
@@ -150,6 +159,14 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
     case MQTT_EVENT_DISCONNECTED:
         Console::warn(TAG, "Déconnecté du broker");
         mqttConnected = false;
+
+        // Arme la temporisation MqttKo au premier evenement DISCONNECTED
+        // de l'episode courant. Si deja armee, on conserve le t0 d'origine
+        // (les MQTT_EVENT_DISCONNECTED repetes ne reinitialisent pas l'horloge).
+        if (mqttKoDownSinceMs == 0) {
+            mqttKoDownSinceMs = millis();
+            mqttKoLastSentMs  = 0;
+        }
         break;
 
     case MQTT_EVENT_PUBLISHED:
@@ -396,6 +413,30 @@ void MqttManager::handle()
 {
     if (!mqttClient) return;
     ensureMqttStarted();
+
+    // ─── Signal MqttKo → LilyGo (evaluation quel que soit l'etat connecte) ─
+    // Premier envoi apres MQTT_KO_FIRST_DELAY_MS de deconnexion continue,
+    // puis repetition toutes les MQTT_KO_REPEAT_DELAY_MS tant que MQTT reste KO.
+    // Les temporisations sont desarmees des qu'un MQTT_EVENT_CONNECTED survient.
+    if (mqttKoDownSinceMs != 0) {
+        uint32_t now      = millis();
+        uint32_t downFor  = now - mqttKoDownSinceMs;
+        bool     shouldSend;
+        if (mqttKoLastSentMs == 0) {
+            shouldSend = (downFor >= MQTT_KO_FIRST_DELAY_MS);
+        } else {
+            shouldSend = ((now - mqttKoLastSentMs) >= MQTT_KO_REPEAT_DELAY_MS);
+        }
+        if (shouldSend) {
+            mqttKoSentCount++;
+            mqttKoLastSentMs = now;
+            Console::warn(TAG,
+                "MQTT KO depuis " + String(downFor / 1000) + "s — envoi MqttKo #"
+                + String(mqttKoSentCount) + " a LilyGo");
+            BridgeManager::sendMqttKo();
+        }
+    }
+
     if (!mqttConnected) return;
 
     if (watchdogSeconds > 0) {

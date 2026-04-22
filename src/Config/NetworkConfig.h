@@ -56,6 +56,23 @@ static constexpr const char* MQTT_SCHEMA_TOPIC = "serre/schema";
 static constexpr int         MQTT_KEEPALIVE_S  = 90;
 
 // =============================================================================
+// Signal MqttKo — Waveshare → LilyGo (UDP)
+//
+// Quand la connexion MQTT reste KO pendant un temps prolonge, la Waveshare
+// envoie le paquet UDP "MqttKo" a la LilyGo, qui declenche immediatement
+// une renegociation PPP complete (DATA→COMMAND→DATA + enable_napt()).
+// But : resynchroniser le NAPT / DNS cote LilyGo quand le DNS Internet
+// devient inaccessible depuis la Waveshare (getaddrinfo returns 202).
+//
+// Timing (stateless cote LilyGo, pas de cooldown) :
+//   - Premier envoi : apres MQTT_KO_FIRST_DELAY_MS de deconnexion continue
+//   - Repetitions  : toutes les MQTT_KO_REPEAT_DELAY_MS tant que MQTT reste KO
+//   - Reset complet des temporisations a chaque MQTT_EVENT_CONNECTED
+// =============================================================================
+static constexpr uint32_t MQTT_KO_FIRST_DELAY_MS  =  5UL * 60UL * 1000UL;  //  5 min
+static constexpr uint32_t MQTT_KO_REPEAT_DELAY_MS = 15UL * 60UL * 1000UL;  // 15 min
+
+// =============================================================================
 // MQTT — Certificat CA racine (TLS obligatoire sur HiveMQ Cloud)
 //
 // ISRG Root X1 (Let's Encrypt) — expire 2035-06-04
