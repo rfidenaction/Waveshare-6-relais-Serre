@@ -4,23 +4,23 @@ projet/
 │   ├── main.cpp                      // setup() + loop() + orchestration globale
 │   │
 │   ├── Actuators/
-│   │   ├── ValveCycler.h         
-│   │   ├── ValveCycler.cpp        
-│   │   ├── ValveManager.h           // Configuration réseau : SSID, passwords, MQTT broker, NTP, etc.
-│   │   └── ValveManager.cpp    
+│   │   ├── RelayManager.h
+│   │   ├── RelayManager.cpp          // Driver GPIO relais (CH1..CH6), sans logique métier
+│   │   ├── ValveManager.h
+│   │   └── ValveManager.cpp          // Manager métier vannes : file, timers, via RelayManager
 │   │
 │   ├── Config/
-│   │   ├── Config.h                  // Include global – point d'entrée principal
-│   │   ├── IO-Config.h               // Configuration des broches E/S
+│   │   ├── Config.h                  // Version firmware, nom appareil, fuseau système
+│   │   ├── IO-Config.h               // Configuration des broches E/S et tableau RELAYS[]
 │   │   ├── NetworkConfig.h           // Configuration réseau : SSID, passwords, MQTT broker, NTP, etc.
-│   │   └── TimingConfig.h            // TOUS les timings (périodes de mesure, arrosage, envoi données, etc.)
+│   │   └── TimingConfig.h            // TOUS les timings (périodes de mesure,envoi données, etc.)
 │   │
 │   ├── Connectivity/
 │   │   ├── BridgeManager.cpp
 │   │   ├── BridgeManager.h
 │   │   ├── ManagerUTC.h
 │   │   ├── ManagerUTC.cpp            // Synchronisation NTP
-│   │   ├── MqttManager.h            
+│   │   ├── MqttManager.h
 │   │   ├── MqttManager.cpp           // Gestion de MQTT
 │   │   ├── SmsManager.h
 │   │   ├── SmsManager.cpp            // Envoi SMS via POST HTTP vers LilyGo
@@ -28,6 +28,8 @@ projet/
 │   │   └── WifiManager.cpp           // WiFi STA + AP (machine d'états non-bloquante)
 │   │
 │   ├── Core/
+│   │   ├── CommandRouter.h
+│   │   ├── CommandRouter.cpp         // Dispatch commandes validées → handler RELAYS[] (MQTT, web, etc.)
 │   │   ├── EventManager.h
 │   │   ├── EventManager.cpp          // Observation états + futur moteur de règles
 │   │   ├── RTCManager.h
@@ -62,6 +64,8 @@ projet/
 │       └── Pages/
 │           ├── PagePrincipale.h
 │           ├── PagePrincipale.cpp    // Dashboard principal
+│           ├── PageActuators.h
+│           ├── PageActuators.cpp     // Pilotage vannes en local (AP), POST /command
 │           ├── PageLogs.h
 │           └── PageLogs.cpp          // Gestion et affichage des logs
 │
