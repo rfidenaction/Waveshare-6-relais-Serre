@@ -31,10 +31,9 @@ bool          MqttManager::schemaPublished = false;
 
 void (*MqttManager::_onPublishSuccess)() = nullptr;
 
-MqttManager::BufferSlot MqttManager::buffer[BUFFER_CAPACITY] = {};
-uint8_t  MqttManager::bufferHead    = 0;
-uint8_t  MqttManager::bufferCount   = 0;
-uint32_t MqttManager::evictionCount = 0;
+char    MqttManager::inFlightPayload[200] = {};
+uint8_t MqttManager::inFlightId           = 0;
+bool    MqttManager::inFlightBusy         = false;
 
 volatile uint32_t MqttManager::messagesEnqueued  = 0;
 volatile uint32_t MqttManager::messagesPublished = 0;
@@ -100,7 +99,7 @@ void MqttManager::init()
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
     Console::info(TAG, "Broker: " + String(MQTT_BROKER_URI));
     Console::info(TAG, "Client ID: " + String(MQTT_CLIENT_ID));
-    Console::info(TAG, "Tampon amont : " + String(BUFFER_CAPACITY) + " entrées");
+    Console::info(TAG, "Slot in-flight : 1 record (backpressure via DataLogger::egress)");
     Console::info(TAG, "Watchdog zombie : seuil gap=" + String(WATCHDOG_GAP_THRESHOLD)
                       + ", fenêtre=" + String(WATCHDOG_SECONDS / 60) + " min");
 }
@@ -371,43 +370,12 @@ String MqttManager::buildSchemaJson()
 }
 
 // =============================================================================
-// Callback DataLogger → alimentation du tampon FIFO amont.
-// Alimente TOUJOURS, même hors connexion. Éviction de la plus ancienne si plein.
-// =============================================================================
-void MqttManager::onDataPushed(const DataRecord& record)
-{
-    String csv = formatCsvPayload(record);
-
-    if (csv.length() >= sizeof(buffer[0].payload)) {
-        Console::warn(TAG, "Payload trop longue (" + String(csv.length())
-                          + " octets) pour id=" + String((uint8_t)record.id)
-                          + " — message non publié sur MQTT");
-        return;
-    }
-
-    if (bufferCount == BUFFER_CAPACITY) {
-        evictionCount++;
-        Console::warn(TAG, "Éviction tampon : message id="
-                          + String(buffer[bufferHead].id)
-                          + " perdu pour MQTT (cumul évictions : "
-                          + String(evictionCount) + ")");
-        bufferHead = (bufferHead + 1) % BUFFER_CAPACITY;
-        bufferCount--;
-    }
-
-    uint8_t writeIdx = (bufferHead + bufferCount) % BUFFER_CAPACITY;
-    buffer[writeIdx].id = (uint8_t)record.id;
-    strncpy(buffer[writeIdx].payload, csv.c_str(),
-            sizeof(buffer[writeIdx].payload) - 1);
-    buffer[writeIdx].payload[sizeof(buffer[writeIdx].payload) - 1] = '\0';
-    bufferCount++;
-}
-
-// =============================================================================
-// Drain 1 entrée/s du tampon vers esp-mqtt + watchdog zombie.
+// Drain 1 entrée/s de DataLogger::egress vers esp-mqtt + watchdog zombie.
 // Tâche TaskManager période 1 s. Non-bloquant (latence max 2 s via
-// network_timeout_ms). En cas d'échec enqueue, l'entrée reste en tête et
-// sera retentée au prochain tour.
+// network_timeout_ms). En cas d'échec enqueue, le payload reste dans le slot
+// in-flight et sera retenté au prochain tour — aucun record perdu sur
+// erreur transitoire. La backpressure globale (bursts + coupures WiFi) est
+// absorbée par DataLogger::egress en amont (capacité 20, éviction FIFO).
 // =============================================================================
 void MqttManager::handle()
 {
@@ -443,14 +411,36 @@ void MqttManager::handle()
         watchdogSeconds--;
     }
 
-    if (bufferCount > 0) {
-        const BufferSlot& slot = buffer[bufferHead];
-        String topic = "serre/data/" + String(slot.id);
+    // ─── Slot in-flight : recharge si libre ──────────────────────────────
+    // Pop un record de DataLogger::egress, format et stocke dans le slot
+    // in-flight. Si l'egress est vide, rien à faire. Si le payload formaté
+    // dépasse la taille du slot, warning et skip (record perdu — cas
+    // pathologique uniquement si META ajoute un texte > 199 caractères).
+    if (!inFlightBusy) {
+        DataRecord rec;
+        if (DataLogger::tryPopForPublish(rec)) {
+            String csv = formatCsvPayload(rec);
+            if (csv.length() >= sizeof(inFlightPayload)) {
+                Console::warn(TAG, "Payload trop longue (" + String(csv.length())
+                                  + " octets) pour id=" + String((uint8_t)rec.id)
+                                  + " — message non publié sur MQTT");
+            } else {
+                strncpy(inFlightPayload, csv.c_str(), sizeof(inFlightPayload) - 1);
+                inFlightPayload[sizeof(inFlightPayload) - 1] = '\0';
+                inFlightId   = (uint8_t)rec.id;
+                inFlightBusy = true;
+            }
+        }
+    }
+
+    // ─── Enqueue esp_mqtt du slot in-flight ──────────────────────────────
+    if (inFlightBusy) {
+        String topic = "serre/data/" + String(inFlightId);
 
         int msgId = esp_mqtt_client_enqueue(
             (esp_mqtt_client_handle_t)mqttClient,
             topic.c_str(),
-            slot.payload, strlen(slot.payload),
+            inFlightPayload, strlen(inFlightPayload),
             1,           // qos=1 (requis pour MQTT_EVENT_PUBLISHED)
             false,       // retain=false
             true         // store=true (requis pour que enqueue accepte)
@@ -458,10 +448,9 @@ void MqttManager::handle()
 
         if (msgId >= 0) {
             messagesEnqueued++;
-            bufferHead = (bufferHead + 1) % BUFFER_CAPACITY;
-            bufferCount--;
+            inFlightBusy = false;
         } else {
-            Console::warn(TAG, "Enqueue échoué id=" + String(slot.id)
+            Console::warn(TAG, "Enqueue échoué id=" + String(inFlightId)
                               + " — réessai au prochain tour");
         }
     }

@@ -167,9 +167,23 @@
 // DataLogger
 // =============================================================================
 /*
- * Période d'appel de DataLogger::handle() (flush SPIFFS + réparation UTC).
+ * Période d'appel de DataLogger::handle() (drain intake + réparation UTC +
+ * alimentation egress + décision flush SPIFFS).
+ *
+ * Calée sur 1 s depuis le refactor route unifiée :
+ *  - aligne la cadence de drain intake sur celle de MqttManager::handle,
+ *    ce qui rend symétriques les délais de publication des mesures, des
+ *    états et des commandes (plus d'asymétrie ON/OFF sur les vannes
+ *    courtes : ON et OFF tombent sur deux ticks DataLogger distincts et
+ *    sont publiés à l'intervalle physique réel, au pas de 1 s près).
+ *  - la politique de flush SPIFFS reste pilotée par FLUSH_SIZE (trigger
+ *    à 50 records en PENDING) et par la fenêtre horaire. La période de
+ *    handle n'influe pas sur la fréquence d'écriture flash, seulement
+ *    sur la réactivité d'évaluation des seuils.
+ *  - coût CPU par tick hors flush : quelques µs (drain + scan rapide
+ *    de PENDING). Négligeable à 1 Hz.
  */
-#define DATALOGGER_HANDLE_PERIOD_MS    30000
+#define DATALOGGER_HANDLE_PERIOD_MS    1000
 
 /*
  * Délai minimum entre deux flush horaires (55 min).

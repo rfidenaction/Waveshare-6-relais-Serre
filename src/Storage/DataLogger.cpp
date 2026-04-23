@@ -44,19 +44,15 @@ size_t DataLogger::pendingCount = 0;   // nombre d'éléments valides
 std::array<LastDataForWeb, META_COUNT> DataLogger::lastDataForWeb{};
 std::array<bool,           META_COUNT> DataLogger::lastDataForWebHas{};
 
-// Queue intake de commandes (thread-safe, remplie par enqueueCommand depuis
+// Queue intake unifiée (thread-safe, remplie par submit*() depuis
 // n'importe quel thread, drainée par handle() côté TaskManager)
-QueueHandle_t DataLogger::commandIntake = nullptr;
+QueueHandle_t DataLogger::intake = nullptr;
+
+// Queue egress unifiée (thread-safe, remplie par applyIntakeItem sur
+// TaskManager, drainée par MqttManager et autres subscribers à leur rythme)
+QueueHandle_t DataLogger::egress = nullptr;
 
 static unsigned long lastFlushMs = 0;
-
-// Callback publication (nullptr = pas de callback)
-void (*DataLogger::_onPushCallback)(const DataRecord&) = nullptr;
-
-void DataLogger::setOnPush(void (*callback)(const DataRecord&))
-{
-    _onPushCallback = callback;
-}
 
 // -----------------------------------------------------------------------------
 // Utilitaires partagés — centralisés ici, déclarés publics dans DataLogger.h
@@ -158,14 +154,27 @@ void DataLogger::init()
     pendingHead  = 0;
     pendingCount = 0;
 
-    // Queue intake de commandes — créée une seule fois au boot.
-    // Si la création échoue, enqueueCommand renverra false et les commandes
-    // seront perdues pour la trace (mais l'exécution par ValveManager reste).
-    if (commandIntake == nullptr) {
-        commandIntake = xQueueCreate(COMMAND_INTAKE_CAPACITY,
-                                     sizeof(CommandIntakeItem));
-        if (commandIntake == nullptr) {
-            Console::error(TAG, "Échec création queue commandIntake — trace commandes désactivée");
+    // Queue intake unifiée — créée une seule fois au boot.
+    // Tous les submit*() (mesures, états, textes, commandes) déposent ici
+    // depuis n'importe quel thread. handle() draine côté TaskManager.
+    // Si la création échoue, les submit*() perdront leurs items avec un
+    // warning mais ne bloqueront pas.
+    if (intake == nullptr) {
+        intake = xQueueCreate(INTAKE_CAPACITY, sizeof(IntakeItem));
+        if (intake == nullptr) {
+            Console::error(TAG, "Échec création queue intake — journalisation désactivée");
+        }
+    }
+
+    // Queue egress unifiée — créée une seule fois au boot.
+    // Alimentée par applyIntakeItem, drainée par tryPopForPublish (côté
+    // MqttManager et futurs subscribers). Si la création échoue, l'egress
+    // est silencieusement désactivé (le callback legacy reste opérationnel
+    // pour l'étape 2 de transition).
+    if (egress == nullptr) {
+        egress = xQueueCreate(EGRESS_CAPACITY, sizeof(EgressRecord));
+        if (egress == nullptr) {
+            Console::error(TAG, "Échec création queue egress — publication désactivée");
         }
     }
 
@@ -248,91 +257,63 @@ void DataLogger::init()
 }
 
 // -----------------------------------------------------------------------------
-// PUSH — point d'entrée pour valeurs NUMÉRIQUES (float)
-// DataType déduit automatiquement de META (source de vérité unique)
+// SUBMIT — point d'entrée unifié pour valeurs NUMÉRIQUES (float)
+// Thread-safe : enqueue dans l'intake sans toucher aux buffers internes.
+// DataType déduit automatiquement de META (source de vérité unique).
+// Capture horloge à l'appel (VirtualClock pour LIVE, TimeUTC pour PENDING).
 // -----------------------------------------------------------------------------
-void DataLogger::push(DataId id, float value)
+void DataLogger::submit(DataId id, float value)
 {
-    DataType type = getMeta(id).type;
     TimeUTC t = ManagerUTC::readUTC();
 
-    // LIVE — VirtualClock (axe métier, toujours un temps absolu)
-    DataRecord liveRec;
-    liveRec.type          = type;
-    liveRec.id            = id;
-    liveRec.value         = value;
-    liveRec.timestamp     = static_cast<uint32_t>(VirtualClock::nowVirtual());
-    liveRec.UTC_available = true;
-    liveRec.UTC_reliable  = false;
-    addLive(liveRec);
+    IntakeItem item;
+    item.id            = id;
+    item.type          = getMeta(id).type;
+    item.valueKind     = 0;
+    item.valueFloat    = value;
+    item.valueText[0]  = '\0';
+    item.vClock        = static_cast<uint32_t>(VirtualClock::nowVirtual());
+    item.utcTimestamp  = static_cast<uint32_t>(t.timestamp);
+    item.UTC_available = t.UTC_available;
+    item.UTC_reliable  = t.UTC_reliable;
 
-    // PENDING — readUTC() fournit toujours un temps
-    DataRecord pendRec;
-    pendRec.type          = type;
-    pendRec.id            = id;
-    pendRec.value         = value;
-    pendRec.timestamp     = static_cast<uint32_t>(t.timestamp);
-    pendRec.UTC_available = t.UTC_available;
-    pendRec.UTC_reliable  = t.UTC_reliable;
-    addPending(pendRec);
-
-    // Vue Web — toujours alimenté (slot indexé par position META)
-    int idx = findMetaIndex((uint8_t)id);
-    if (idx >= 0) {
-        LastDataForWeb& w = lastDataForWeb[idx];
-        w.value         = value;
-        w.timestamp     = t.timestamp;
-        w.UTC_available = t.UTC_available;
-        w.UTC_reliable  = t.UTC_reliable;
-        lastDataForWebHas[idx] = true;
-    }
-
-    // Notification publication (MQTT ou autre)
-    if (_onPushCallback) _onPushCallback(pendRec);
+    enqueueIntakeItem(item);
 }
 
 // -----------------------------------------------------------------------------
-// PUSH — point d'entrée pour valeurs TEXTUELLES (String)
-// DataType déduit automatiquement de META (source de vérité unique)
+// SUBMIT — point d'entrée unifié pour valeurs TEXTUELLES (String)
+// Thread-safe : enqueue dans l'intake sans toucher aux buffers internes.
+// Texte tronqué à 199 caractères dans la queue (stockage POD contraint par
+// memcpy FreeRTOS). Avertissement émis en cas de troncature.
 // -----------------------------------------------------------------------------
-void DataLogger::push(DataId id, const String& textValue)
+void DataLogger::submit(DataId id, const String& textValue)
 {
-    DataType type = getMeta(id).type;
     TimeUTC t = ManagerUTC::readUTC();
 
-    // LIVE — VirtualClock (axe métier)
-    DataRecord liveRec;
-    liveRec.type          = type;
-    liveRec.id            = id;
-    liveRec.value         = textValue;
-    liveRec.timestamp     = static_cast<uint32_t>(VirtualClock::nowVirtual());
-    liveRec.UTC_available = true;
-    liveRec.UTC_reliable  = false;
-    addLive(liveRec);
+    IntakeItem item;
+    item.id            = id;
+    item.type          = getMeta(id).type;
+    item.valueKind     = 1;
+    item.valueFloat    = 0.0f;
 
-    // PENDING — readUTC() fournit toujours un temps
-    DataRecord pendRec;
-    pendRec.type          = type;
-    pendRec.id            = id;
-    pendRec.value         = textValue;
-    pendRec.timestamp     = static_cast<uint32_t>(t.timestamp);
-    pendRec.UTC_available = t.UTC_available;
-    pendRec.UTC_reliable  = t.UTC_reliable;
-    addPending(pendRec);
-
-    // Vue Web — toujours alimenté (slot indexé par position META)
-    int idx = findMetaIndex((uint8_t)id);
-    if (idx >= 0) {
-        LastDataForWeb& w = lastDataForWeb[idx];
-        w.value         = textValue;
-        w.timestamp     = t.timestamp;
-        w.UTC_available = t.UTC_available;
-        w.UTC_reliable  = t.UTC_reliable;
-        lastDataForWebHas[idx] = true;
+    const size_t maxLen = sizeof(item.valueText) - 1;
+    size_t srcLen = textValue.length();
+    size_t copyLen = (srcLen > maxLen) ? maxLen : srcLen;
+    memcpy(item.valueText, textValue.c_str(), copyLen);
+    item.valueText[copyLen] = '\0';
+    if (srcLen > maxLen) {
+        Console::warn(TAG, "submit(String) : texte tronqué "
+                      + String((unsigned)srcLen) + " → "
+                      + String((unsigned)maxLen) + " caractères (id="
+                      + String((uint8_t)id) + ")");
     }
 
-    // Notification publication (MQTT ou autre)
-    if (_onPushCallback) _onPushCallback(pendRec);
+    item.vClock        = static_cast<uint32_t>(VirtualClock::nowVirtual());
+    item.utcTimestamp  = static_cast<uint32_t>(t.timestamp);
+    item.UTC_available = t.UTC_available;
+    item.UTC_reliable  = t.UTC_reliable;
+
+    enqueueIntakeItem(item);
 }
 
 // -----------------------------------------------------------------------------
@@ -431,72 +412,96 @@ DataLogger::CommandParseResult DataLogger::parseCommand(
 }
 
 // -----------------------------------------------------------------------------
-// TRACE COMMAND — journalisation thread-safe, best-effort
+// SUBMIT COMMAND — journalisation thread-safe d'une commande déjà parsée
 //
 // Capture les DEUX horloges au plus tôt (VirtualClock pour LIVE, TimeUTC pour
-// PENDING + lastDataForWeb), puis dépose dans la queue FreeRTOS. Le record
-// effectif est construit dans drainCommandIntake() côté TaskManager.
+// PENDING + lastDataForWeb), puis dépose dans l'intake. Le record effectif
+// est construit dans drainIntake() côté TaskManager.
 //
 // Appelable depuis n'importe quel thread (esp_mqtt, AsyncTCP, TaskManager).
 // Ne retourne pas d'erreur : un échec (queue non prête ou saturée) est loggé
 // en warning mais n'interrompt pas le flux d'exécution de la commande — le
 // routage applicatif (CommandRouter::route) reste indépendant.
 // -----------------------------------------------------------------------------
-void DataLogger::traceCommand(const ParsedCommand& cmd)
+void DataLogger::submitCommand(const ParsedCommand& cmd)
 {
-    if (commandIntake == nullptr) {
-        Console::warn(TAG, "traceCommand : queue intake pas prête — commande "
-                      "id=" + String((uint8_t)cmd.cmdId) + " perdue pour la trace");
-        return;
-    }
-
-    // Capture des deux horloges au plus tôt, avant toute latence de queue.
     TimeUTC t = ManagerUTC::readUTC();
 
-    CommandIntakeItem item;
-    item.cmdId         = cmd.cmdId;
-    item.origin        = cmd.origin;
-    item.durationSec   = cmd.durationMs / 1000.0f;
+    IntakeItem item;
+    item.id            = cmd.cmdId;
+    item.type          = cmd.origin;           // CommandManual ou CommandAuto
+    item.valueKind     = 0;
+    item.valueFloat    = cmd.durationMs / 1000.0f;
+    item.valueText[0]  = '\0';
     item.vClock        = static_cast<uint32_t>(VirtualClock::nowVirtual());
     item.utcTimestamp  = static_cast<uint32_t>(t.timestamp);
     item.UTC_available = t.UTC_available;
     item.UTC_reliable  = t.UTC_reliable;
 
-    if (xQueueSend(commandIntake, &item, 0) != pdTRUE) {
-        Console::warn(TAG, "traceCommand : queue intake pleine — commande "
-                      "id=" + String((uint8_t)cmd.cmdId) + " perdue pour la trace");
+    enqueueIntakeItem(item);
+}
+
+// -----------------------------------------------------------------------------
+// ENQUEUE INTAKE ITEM — helper privé, non-bloquant, thread-safe
+//
+// Point d'entrée FreeRTOS unique des trois submit*(). xQueueSend timeout 0 :
+// jamais de blocage. En cas de saturation ou d'init manquante, warning et
+// retour silencieux — l'item NEUF est perdu pour la trace (comportement
+// historique de traceCommand, étendu désormais aux mesures/états).
+// -----------------------------------------------------------------------------
+void DataLogger::enqueueIntakeItem(const IntakeItem& item)
+{
+    if (intake == nullptr) {
+        Console::warn(TAG, "submit : intake pas prêt — item id="
+                      + String((uint8_t)item.id) + " perdu");
+        return;
+    }
+
+    if (xQueueSend(intake, &item, 0) != pdTRUE) {
+        Console::warn(TAG, "submit : intake plein — item id="
+                      + String((uint8_t)item.id) + " perdu");
     }
 }
 
 // -----------------------------------------------------------------------------
-// DRAIN COMMAND INTAKE — consomme la queue depuis handle() (TaskManager)
+// DRAIN INTAKE — consomme la queue depuis handle() (TaskManager)
 // -----------------------------------------------------------------------------
-void DataLogger::drainCommandIntake()
+void DataLogger::drainIntake()
 {
-    if (commandIntake == nullptr) return;
+    if (intake == nullptr) return;
 
-    CommandIntakeItem item;
-    while (xQueueReceive(commandIntake, &item, 0) == pdTRUE) {
-        pushCommandRecord(item);
+    IntakeItem item;
+    while (xQueueReceive(intake, &item, 0) == pdTRUE) {
+        applyIntakeItem(item);
     }
 }
 
 // -----------------------------------------------------------------------------
-// PUSH COMMAND RECORD — assemble le triplet LIVE + PENDING + lastDataForWeb
+// APPLY INTAKE ITEM — assemble LIVE + PENDING + lastDataForWeb
 //
-// Miroir exact de push() sauf sur un point : le champ `type` du record est
-// forcé à item.origin (CommandManual ou CommandAuto), PAS déduit de META
-// (qui vaut CommandGeneric pour les entités CommandValve*).
+// Appelée uniquement depuis drainIntake() → thread TaskManager. C'est le
+// seul endroit du code qui écrit dans live[], pending[], lastDataForWeb[]
+// (hors init()). Invariant C2 des garanties FreeRTOS.
 //
-// Appelée uniquement depuis drainCommandIntake() → thread TaskManager.
+// Le champ `type` provient de l'item (déjà résolu par submit* : META pour
+// mesure/état/texte, CommandManual/Auto pour les commandes). META n'est PAS
+// reconsulté ici.
 // -----------------------------------------------------------------------------
-void DataLogger::pushCommandRecord(const CommandIntakeItem& item)
+void DataLogger::applyIntakeItem(const IntakeItem& item)
 {
+    // Valeur reconstruite depuis le POD de la queue (variant pour les records)
+    std::variant<float, String> value;
+    if (item.valueKind == 0) {
+        value = item.valueFloat;
+    } else {
+        value = String(item.valueText);
+    }
+
     // LIVE — horloge VirtualClock capturée à l'enqueue (axe métier)
     DataRecord liveRec;
-    liveRec.type          = item.origin;
-    liveRec.id            = item.cmdId;
-    liveRec.value         = item.durationSec;
+    liveRec.type          = item.type;
+    liveRec.id            = item.id;
+    liveRec.value         = value;
     liveRec.timestamp     = item.vClock;
     liveRec.UTC_available = true;
     liveRec.UTC_reliable  = false;
@@ -506,27 +511,106 @@ void DataLogger::pushCommandRecord(const CommandIntakeItem& item)
     // false, la logique de réparation de handle() corrigera le timestamp dès
     // que l'UTC sera disponible.
     DataRecord pendRec;
-    pendRec.type          = item.origin;
-    pendRec.id            = item.cmdId;
-    pendRec.value         = item.durationSec;
+    pendRec.type          = item.type;
+    pendRec.id            = item.id;
+    pendRec.value         = value;
     pendRec.timestamp     = item.utcTimestamp;
     pendRec.UTC_available = item.UTC_available;
     pendRec.UTC_reliable  = item.UTC_reliable;
     addPending(pendRec);
 
-    // Vue Web — dernière commande demandée (slot indexé par position META)
-    int idx = findMetaIndex((uint8_t)item.cmdId);
+    // Vue Web — dernière valeur (slot indexé par position META)
+    int idx = findMetaIndex((uint8_t)item.id);
     if (idx >= 0) {
         LastDataForWeb& w = lastDataForWeb[idx];
-        w.value         = item.durationSec;
+        w.value         = value;
         w.timestamp     = item.utcTimestamp;
         w.UTC_available = item.UTC_available;
         w.UTC_reliable  = item.UTC_reliable;
         lastDataForWebHas[idx] = true;
     }
 
-    // Notification publication (MQTT ou autre)
-    if (_onPushCallback) _onPushCallback(pendRec);
+    // Dépôt dans l'egress — route unifiée de publication.
+    // Les subscribers (MqttManager::handle pour l'instant, demain d'autres)
+    // drainent à leur rythme via tryPopForPublish.
+    enqueueEgress(pendRec);
+}
+
+// -----------------------------------------------------------------------------
+// ENQUEUE EGRESS — producteur unique (applyIntakeItem sur TaskManager)
+//
+// Sérialise un DataRecord en EgressRecord POD (variant → valueKind +
+// valueFloat/valueText). En cas de saturation, éviction FIFO silencieuse :
+// on dépile l'item le plus ancien puis on empile le nouveau. L'absence de
+// race est garantie par le fait que l'unique producteur tourne sur
+// TaskManager.
+// -----------------------------------------------------------------------------
+void DataLogger::enqueueEgress(const DataRecord& rec)
+{
+    if (egress == nullptr) return;
+
+    EgressRecord item;
+    item.id            = rec.id;
+    item.type          = rec.type;
+    item.timestamp     = rec.timestamp;
+    item.UTC_available = rec.UTC_available;
+    item.UTC_reliable  = rec.UTC_reliable;
+
+    if (std::holds_alternative<float>(rec.value)) {
+        item.valueKind    = 0;
+        item.valueFloat   = std::get<float>(rec.value);
+        item.valueText[0] = '\0';
+    } else {
+        const String& s = std::get<String>(rec.value);
+        item.valueKind  = 1;
+        item.valueFloat = 0.0f;
+        const size_t maxLen = sizeof(item.valueText) - 1;
+        size_t srcLen = s.length();
+        size_t copyLen = (srcLen > maxLen) ? maxLen : srcLen;
+        memcpy(item.valueText, s.c_str(), copyLen);
+        item.valueText[copyLen] = '\0';
+    }
+
+    if (xQueueSend(egress, &item, 0) != pdTRUE) {
+        // Queue pleine — éviction FIFO : dépile l'item le plus ancien
+        // et empile le nouveau. Producteur unique = pas de race.
+        EgressRecord evicted;
+        (void)xQueueReceive(egress, &evicted, 0);
+        Console::warn(TAG, "egress plein — record id="
+                      + String((uint8_t)evicted.id) + " évincé (FIFO)");
+        if (xQueueSend(egress, &item, 0) != pdTRUE) {
+            Console::warn(TAG, "egress : réempiler impossible — id="
+                          + String((uint8_t)item.id) + " perdu");
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// TRY POP FOR PUBLISH — consommateur (MqttManager, futurs subscribers)
+//
+// Non-bloquant (timeout 0). Reconstruit un DataRecord avec variant<float,
+// String> à partir de l'EgressRecord POD. Appelable depuis n'importe quel
+// thread (MqttManager::handle tourne sur TaskManager aujourd'hui mais
+// l'API reste thread-safe par construction FreeRTOS).
+// -----------------------------------------------------------------------------
+bool DataLogger::tryPopForPublish(DataRecord& out)
+{
+    if (egress == nullptr) return false;
+
+    EgressRecord item;
+    if (xQueueReceive(egress, &item, 0) != pdTRUE) return false;
+
+    out.id            = item.id;
+    out.type          = item.type;
+    out.timestamp     = item.timestamp;
+    out.UTC_available = item.UTC_available;
+    out.UTC_reliable  = item.UTC_reliable;
+    if (item.valueKind == 0) {
+        out.value = item.valueFloat;
+    } else {
+        out.value = String(item.valueText);
+    }
+    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -560,11 +644,12 @@ void DataLogger::addPending(const DataRecord& r)
 // -----------------------------------------------------------------------------
 void DataLogger::handle()
 {
-    // Drain de la queue intake EN PREMIER, avant la réparation UTC et le
-    // flush. Les records de commande (empilés par des threads externes) sont
-    // ainsi injectés dans PENDING à temps pour bénéficier de la réparation
-    // UTC de ce même tick si l'UTC vient d'arriver.
-    drainCommandIntake();
+    // Drain de l'intake EN PREMIER, avant la réparation UTC et le flush.
+    // Tous les items (mesures, états, textes, traces de commande empilés
+    // par n'importe quel thread) sont ainsi injectés dans PENDING à temps
+    // pour bénéficier de la réparation UTC de ce même tick si l'UTC vient
+    // d'arriver.
+    drainIntake();
 
     TimeUTC t = ManagerUTC::readUTC();
     if (t.UTC_available) {

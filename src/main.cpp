@@ -187,10 +187,11 @@ static void loopInit()
     // *** FIN AJOUT BRIDGE ***
 
     // *** MQTT *** — Initialisation MQTT + callbacks
+    // MqttManager::handle() draine DataLogger::egress à chaque tick
+    // (plus de callback setOnPush nécessaire depuis le refactor route unifiée).
     MqttManager::init();
-    DataLogger::setOnPush(MqttManager::onDataPushed);
     MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
-    Console::info("[MQTT] Callbacks DataLogger → MQTT → Bridge configurés");
+    Console::info("[MQTT] MqttManager initialisé (flux DataLogger::egress → MQTT → Bridge)");
     // *** FIN MQTT ***
 
     // *** SMS *** — Initialisation SmsManager (logique métier SMS)

@@ -239,26 +239,18 @@ class DataLogger {
 public:
     static void init();
 
-    // Push pour valeurs numériques (float)
-    // DataType est déduit automatiquement de META (source de vérité unique)
-    static void push(DataId id, float value);
-
-    // Push pour valeurs textuelles (String)
-    // DataType est déduit automatiquement de META (source de vérité unique)
-    static void push(DataId id, const String& textValue);
-
-    // ───────────── Entrée unifiée des commandes (MQTT + HTTP) ─────────────
+    // ───────────── Parseur de commande (fonction pure) ────────────────────
     //
     // Pipeline dispatcher (MqttManager / WebServer) :
     //     ParsedCommand p;
     //     auto r = DataLogger::parseCommand(csv, len, p);
     //     if (r != CommandParseResult::OK) { /* rejet */ }
-    //     DataLogger::traceCommand(p);            // journalisation
+    //     DataLogger::submitCommand(p);            // journalisation
     //     CommandRouter::route(p.cmdId, p.durationMs);  // exécution
     //
     // Chaque étape a une responsabilité disjointe : parseCommand ne fait que
-    // valider et décoder (pas d'effet de bord), traceCommand journalise dans
-    // PENDING (best-effort), CommandRouter exécute via RELAYS[].
+    // valider et décoder (pas d'effet de bord), submitCommand journalise via
+    // l'intake (best-effort), CommandRouter exécute via RELAYS[].
 
     // Résultat de parseCommand. OK = CSV conforme + contenu valide. Tous les
     // autres codes sont des motifs de rejet disjoints.
@@ -294,23 +286,58 @@ public:
     static CommandParseResult parseCommand(const char* csv, size_t len,
                                            ParsedCommand& out);
 
-    // Journalise la commande déjà parsée dans LIVE + PENDING + lastDataForWeb
-    // (via la queue intake thread-safe). Capture les deux horloges (VirtualClock
-    // pour LIVE, TimeUTC pour PENDING) AU MOMENT DE L'APPEL, au plus tôt.
+    // ───────────── Entrée unifiée thread-safe (tous producteurs) ──────────
     //
-    // Best-effort : si la queue intake est saturée ou pas encore initialisée,
-    // un warning est loggé mais la fonction retourne sans bloquer. Le routage
-    // applicatif (exécution effective) reste indépendant — voir CommandRouter.
+    // Toute donnée produite par le système (mesure, état, événement texte,
+    // trace de commande) passe par l'intake unique ci-dessous. Les trois
+    // surcharges enqueue un IntakeItem dans la queue FreeRTOS `intake` ;
+    // `handle()` draine côté TaskManager et construit les DataRecord.
     //
-    // Appelable depuis n'importe quel thread.
-    static void traceCommand(const ParsedCommand& cmd);
+    // Thread-safety : appelable depuis n'importe quel thread (TaskManager,
+    // esp_mqtt, AsyncTCP, future tâche automate). Non-bloquant (timeout 0
+    // sur xQueueSend). En cas de saturation, l'item NEUF est perdu et un
+    // warning est émis (comportement équivalent à l'historique
+    // traceCommand) ; aucun producteur ne se bloque.
+    //
+    // Capture horloge : les deux référentiels (VirtualClock pour LIVE,
+    // TimeUTC pour PENDING + lastDataForWeb) sont capturés AU MOMENT DE
+    // L'APPEL, avant l'enqueue. C'est exactement ce que faisait
+    // traceCommand ; le comportement est étendu aux mesures et états.
+    //
+    // DataType : déduit automatiquement de META pour submit(float) et
+    // submit(String). Pour submitCommand, il est imposé par ParsedCommand
+    // (CommandManual ou CommandAuto) — META.type vaut CommandGeneric pour
+    // les entités commande et ne serait pas l'origine correcte dans le
+    // record sortant.
+    static void submit(DataId id, float value);
+    static void submit(DataId id, const String& textValue);
+    static void submitCommand(const ParsedCommand& cmd);
+
+    // ───────────── Façades historiques (1:1 avec submit*) ─────────────────
+    // Conservées pour limiter le périmètre des commits de refactor et ne
+    // pas multiplier les sites d'appel à toucher. Elles délèguent sans
+    // traitement supplémentaire.
+    static void push(DataId id, float value)              { submit(id, value); }
+    static void push(DataId id, const String& textValue)  { submit(id, textValue); }
+    static void traceCommand(const ParsedCommand& cmd)    { submitCommand(cmd); }
 
     static void handle();           // Réparation UTC + flush
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
 
-    // ───────────── Callback publication ─────────────
-    static void setOnPush(void (*callback)(const DataRecord&));
+    // ───────────── Sortie unifiée thread-safe (tampon egress) ─────────────
+    //
+    // Tous les records produits par applyIntakeItem sont déposés dans la
+    // queue FreeRTOS `egress`. Les consommateurs (aujourd'hui MqttManager,
+    // demain d'éventuels logger SD, écran local, etc.) la drainent à leur
+    // rythme via tryPopForPublish. Politique d'éviction FIFO silencieuse
+    // si saturation : les records les plus anciens sont perdus, aucun
+    // producteur n'est bloqué.
+    //
+    // tryPopForPublish : retourne true si un record a été extrait
+    // (remplit `out`), false si la queue est vide. Non-bloquant
+    // (timeout 0). Appelable depuis n'importe quel thread.
+    static bool tryPopForPublish(DataRecord& out);
 
     // ───────────── Web ─────────────
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
@@ -360,17 +387,28 @@ public:
     static const char* typeLabel(DataType t);
 
 private:
-    // ───────────── Intake de commandes (thread-safe) ─────────────
-    // Tampon symétrique du tampon sortant de MqttManager : les producteurs
-    // externes (esp_mqtt, AsyncTCP, GardenManager…) déposent ici via
-    // traceCommand(), et handle() draine côté TaskManager. Aucune primitive
-    // DataLogger (live/pending/lastDataForWeb) n'est touchée hors TaskManager.
-    struct CommandIntakeItem {
-        DataId   cmdId;
-        DataType origin;          // CommandManual ou CommandAuto
-        float    durationSec;
+    // ───────────── Intake unifié (thread-safe) ─────────────
+    // Unique pont entre les producteurs (quelconque thread) et le cœur de
+    // DataLogger (TaskManager). Tous les submit*() enqueue ici ; handle()
+    // draine côté TaskManager. Aucune primitive DataLogger (live/pending/
+    // lastDataForWeb) n'est touchée hors TaskManager.
+    //
+    // Item POD à taille fixe : la queue FreeRTOS copie par memcpy, donc on
+    // ne peut pas y stocker de std::variant<float, String> (String détient
+    // un pointeur heap que le memcpy dupliquerait sans clone → double
+    // free). Texte stocké dans un buffer fixe, tronqué si dépassement.
+    struct IntakeItem {
+        DataId   id;
+        DataType type;            // Déduit de META pour mesure/état/texte ;
+                                  // imposé par ParsedCommand pour les
+                                  // commandes (CommandManual/Auto).
+        uint8_t  valueKind;       // 0 = float (valueFloat), 1 = texte (valueText).
+        float    valueFloat;      // Valide si valueKind == 0.
+        char     valueText[200];  // Valide si valueKind == 1. Null-terminé,
+                                  // tronqué si texte source > 199 caractères
+                                  // (warning émis par submit(String&)).
 
-        // Deux horloges capturées au plus tôt dans enqueueCommand :
+        // Deux horloges capturées au plus tôt dans submit*() :
         //   vClock       → LIVE (référence métier de l'automatisme,
         //                  indépendante de RTC/NTP/réseau)
         //   utcTimestamp → PENDING + lastDataForWeb (stockage durable,
@@ -381,18 +419,44 @@ private:
         bool     UTC_available;
         bool     UTC_reliable;
     };
-    static constexpr uint8_t COMMAND_INTAKE_CAPACITY = 20;
-    static QueueHandle_t commandIntake;
+    static constexpr uint8_t INTAKE_CAPACITY = 40;
+    static QueueHandle_t intake;
+
+    // Enqueue un item déjà rempli (horloges capturées en amont). Non-bloquant.
+    // Si la queue est saturée ou pas encore initialisée, warning et retour
+    // sans blocage — aucun producteur ne s'arrête.
+    static void enqueueIntakeItem(const IntakeItem& item);
 
     // Vide la queue et assemble les records (appelée depuis handle(),
     // thread TaskManager).
-    static void drainCommandIntake();
+    static void drainIntake();
 
-    // Construit LIVE + PENDING + lastDataForWeb depuis un item et déclenche
-    // le callback MQTT. Reproduit exactement la logique de push() sauf pour
-    // le champ `type` du record : c'est `item.origin` (CommandManual/Auto),
-    // pas `getMeta(id).type` (qui vaut CommandGeneric pour les CommandValveN).
-    static void pushCommandRecord(const CommandIntakeItem& item);
+    // Construit LIVE + PENDING + lastDataForWeb depuis un item, dépose dans
+    // l'egress et (transitoirement, étape 2) invoque aussi le callback.
+    static void applyIntakeItem(const IntakeItem& item);
+
+    // ───────────── Egress unifié (thread-safe) ─────────────
+    // Pont entre le cœur DataLogger (producteur unique = applyIntakeItem
+    // sur TaskManager) et les consommateurs (MqttManager et, à terme,
+    // autres subscribers). Item POD identique en esprit à IntakeItem mais
+    // porte la valeur déjà horodatée (timestamp PENDING, UTC flags).
+    struct EgressRecord {
+        DataId   id;
+        DataType type;
+        uint32_t timestamp;       // = pendRec.timestamp (PENDING horloge UTC)
+        bool     UTC_available;
+        bool     UTC_reliable;
+        uint8_t  valueKind;       // 0 = float, 1 = texte
+        float    valueFloat;      // Valide si valueKind == 0
+        char     valueText[200];  // Valide si valueKind == 1, null-terminé
+    };
+    static constexpr uint8_t EGRESS_CAPACITY = 20;
+    static QueueHandle_t egress;
+
+    // Dépose un record dans l'egress. Éviction FIFO silencieuse si saturé
+    // (pop de la tête puis push — sans race car producteur unique sur
+    // TaskManager). Appelée uniquement depuis applyIntakeItem.
+    static void enqueueEgress(const DataRecord& rec);
 
     // ───────────── Buffers ─────────────
     static constexpr size_t LIVE_SIZE    = 200;
@@ -416,7 +480,7 @@ private:
     // pendant une lecture concurrente depuis la tâche AsyncTCP — le pire
     // cas restant est une lecture non atomique d'un slot, acceptable pour
     // l'affichage Web (perte de donnée tolérée, pas de crash).
-    // Écritures : tâche loop() uniquement (push, pushCommandRecord, init).
+    // Écritures : tâche loop() uniquement (applyIntakeItem depuis drainIntake, init).
     // Lectures  : hasLastDataForWeb() depuis n'importe quel thread.
     static std::array<LastDataForWeb, META_COUNT> lastDataForWeb;
     static std::array<bool,           META_COUNT> lastDataForWebHas;
@@ -427,7 +491,4 @@ private:
 
     static void tryFlush();
     static void flushToFlash(size_t count);
-
-    // ───────────── Callback publication ─────────────
-    static void (*_onPushCallback)(const DataRecord&);
 };

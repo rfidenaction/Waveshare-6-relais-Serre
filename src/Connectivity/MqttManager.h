@@ -5,14 +5,17 @@
 #include "Storage/DataLogger.h"
 
 // Client MQTT non-bloquant (esp_mqtt natif ESP-IDF 4.4.4).
-// esp-mqtt gère sa propre tâche FreeRTOS ; MqttManager ajoute un tampon FIFO
-// amont (Variante 1) et un watchdog zombie pour robustesse face aux coupures
-// et aux brokers muets (pas de PUBACK).
+// esp-mqtt gère sa propre tâche FreeRTOS ; MqttManager se limite à un slot
+// « in-flight » (pour retry sur échec d'enqueue) et un watchdog zombie pour
+// la robustesse face aux coupures et aux brokers muets (pas de PUBACK).
+//
+// Le tampon FIFO amont historique a migré dans DataLogger::egress (queue
+// FreeRTOS) : c'est lui qui absorbe les bursts métier et les coupures WiFi.
 //
 // Intégration :
 //  - init() appelé dans loopInit() après WiFiManager
-//  - DataLogger::setOnPush(MqttManager::onDataPushed)
 //  - handle() en tâche TaskManager période 1 s
+//  - handle() pop 1 record/s de DataLogger::egress, format + enqueue esp_mqtt
 //  - setOnPublishSuccess(cb) : callback externe sur PUBACK (BridgeManager)
 
 class MqttManager {
@@ -21,9 +24,12 @@ public:
     //
     // Mécanisme global
     // ────────────────
-    // - onDataPushed() empile chaque data dans un tampon FIFO amont.
-    // - handle() draine 1 entrée/s du tampon vers esp-mqtt (enqueue) dès
-    //   que mqttConnected == true. Chaque enqueue incrémente messagesEnqueued.
+    // - handle() pop 1 record/s de DataLogger::egress dès que mqttConnected
+    //   == true, le formate en CSV et l'enqueue dans esp_mqtt. Chaque
+    //   enqueue incrémente messagesEnqueued.
+    // - Si l'enqueue échoue (esp_mqtt saturée / déconnectée), le record
+    //   formaté reste dans inFlightPayload et sera réémis au tour suivant
+    //   (pas de perte sur erreur transitoire).
     // - À chaque PUBACK reçu, les compteurs ET le décompte watchdogSeconds
     //   sont remis à zéro → le broker est prouvé réactif.
     // - Si le broker devient muet (aucun PUBACK), messagesEnqueued s'accumule
@@ -33,12 +39,6 @@ public:
     //
     // Rôle de chaque paramètre
     // ────────────────────────
-    // BUFFER_CAPACITY (datas) : taille du tampon FIFO amont. Détermine
-    //   combien de datas on peut conserver pendant une coupure WiFi.
-    //   Au-delà, éviction de la plus ancienne — pas de crash, mais perte
-    //   côté MQTT temps réel (les datas restent dans SPIFFS via DataLogger
-    //   PENDING). Règle : ≥ quelques bursts métier attendus.
-    //
     // WATCHDOG_GAP_THRESHOLD (enqueues sans PUBACK) : seuil à partir duquel
     //   le broker est suspecté muet. Plus bas = alerte plus sensible, sans
     //   conséquence tant que le watchdog n'expire pas. Règle : proche de la
@@ -55,12 +55,10 @@ public:
     //   quand mqttConnected == true (une coupure WiFi ne consomme pas la
     //   fenêtre).
     //
-    static constexpr uint8_t  BUFFER_CAPACITY        = 20;     // datas
     static constexpr uint32_t WATCHDOG_GAP_THRESHOLD = 7;      // enqueues sans PUBACK
     static constexpr uint32_t WATCHDOG_SECONDS       = 3900;   // 65 min
 
     static void init();
-    static void onDataPushed(const DataRecord& record);
     static void ensureMqttStarted();
     static bool isMqttConnected();
     static void handle();
@@ -73,7 +71,7 @@ private:
     static bool schemaPublished;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
-    // serre/cmd (CSV 7 champs) : parseCommand → traceCommand → CommandRouter::route
+    // serre/cmd (CSV 7 champs) : parseCommand → submitCommand → CommandRouter::route
     static void dispatchCommand(void* eventData);
     static void publishOnline();
     static void publishSchema();
@@ -82,17 +80,14 @@ private:
 
     static void (*_onPublishSuccess)();
 
-    // Tampon FIFO amont : producteur onDataPushed, consommateur handle.
-    // Les deux tournent dans TaskManager → aucune primitive FreeRTOS.
-    // Éviction FIFO quand plein (les datas évincées restent dans SPIFFS/PENDING).
-    struct BufferSlot {
-        uint8_t id;
-        char    payload[255];
-    };
-    static BufferSlot buffer[BUFFER_CAPACITY];
-    static uint8_t    bufferHead;
-    static uint8_t    bufferCount;
-    static uint32_t   evictionCount;
+    // Slot « in-flight » : un record déjà formaté en CSV, en attente de
+    // succès d'enqueue esp_mqtt. Si l'enqueue courant échoue, on retente
+    // le même payload au tour suivant — aucun record n'est perdu sur
+    // erreur transitoire. La backpressure globale (bursts, coupures WiFi)
+    // est portée par DataLogger::egress en amont.
+    static char    inFlightPayload[200];
+    static uint8_t inFlightId;
+    static bool    inFlightBusy;
 
     // Watchdog zombie MQTT.
     // Tout PUBACK remet les trois compteurs à zéro. handle() décrémente
