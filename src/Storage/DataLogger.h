@@ -15,9 +15,9 @@
 //
 // Référentiel temporel :
 //   Ce module ne fournit jamais d'heure locale.
-//   Chaque enregistrement porte deux booléens :
-//     UTC_available : true = timestamp est un temps UTC
-//     UTC_reliable  : true = source RTC (précis), false = VClock (dérive)
+//   Chaque enregistrement porte deux booléens alimentés par VirtualClock :
+//     VClock_available : true = timestamp est un temps UTC
+//     VClock_reliable  : true = source synchronisée < 24h, false sinon
 #pragma once
 
 #include <Arduino.h>
@@ -196,13 +196,13 @@ inline constexpr size_t META_COUNT = sizeof(META) / sizeof(META[0]);
 // ═════════════════════════════════════════════════════════════════════════════
 // Enregistrement (DataRecord)
 //
-// UTC_available et UTC_reliable : même sémantique que dans TimeUTC (ManagerUTC.h)
+// VClock_available et VClock_reliable : sémantique de TimeVClock (VirtualClock.h)
 // ═════════════════════════════════════════════════════════════════════════════
 
 struct DataRecord {
-    uint32_t timestamp;      // UTC si UTC_available, millis() sinon
-    bool     UTC_available;  // true = timestamp est un temps UTC
-    bool     UTC_reliable;   // true = RTC, false = VClock ou réparé
+    uint32_t timestamp;          // UTC si VClock_available, millis() sinon
+    bool     VClock_available;   // true = timestamp est un temps UTC
+    bool     VClock_reliable;    // true = source synchronisée < 24h
     DataType type;
     DataId   id;
     std::variant<float, String> value;
@@ -214,9 +214,9 @@ struct DataRecord {
 
 struct LastDataForWeb {
     std::variant<float, String> value;
-    time_t    timestamp     = 0;
-    bool      UTC_available = false;
-    bool      UTC_reliable  = false;
+    time_t    timestamp        = 0;
+    bool      VClock_available = false;
+    bool      VClock_reliable  = false;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -250,14 +250,14 @@ public:
     //
     // Chaque étape a une responsabilité disjointe : parseCommand ne fait que
     // valider et décoder (pas d'effet de bord), submitCommand journalise via
-    // l'intake (best-effort), CommandRouter exécute via RELAYS[].
+    // le LogBufferIn (best-effort), CommandRouter exécute via RELAYS[].
 
     // Résultat de parseCommand. OK = CSV conforme + contenu valide. Tous les
     // autres codes sont des motifs de rejet disjoints.
     enum class CommandParseResult : uint8_t {
         OK            = 0,
         BadFormat,          // Nombre de virgules incorrect ou CSV tronqué
-        TimestampSet,       // timestamp/UTC_available/UTC_reliable non vides ni zéro
+        TimestampSet,       // 3 premiers champs (timestamp, flags) non vides ni zéro
         InvalidType,        // type ∉ {CommandManual, CommandAuto}
         UnknownId,          // id absent de META
         NotACommand,        // META.type != CommandGeneric pour cet id
@@ -275,7 +275,7 @@ public:
         uint32_t durationMs;
     };
 
-    // Parse un CSV 7 champs "timestamp,UTC_available,UTC_reliable,type,id,valueType,value"
+    // Parse un CSV 7 champs "timestamp,VClock_available,VClock_reliable,type,id,valueType,value"
     // où les 3 premiers champs DOIVENT être vides ou "0" (l'émetteur n'horodate
     // pas). Fonction PURE : aucun effet de bord, aucune journalisation. En cas
     // d'OK, remplit out ; sinon out est indéfini.
@@ -289,8 +289,8 @@ public:
     // ───────────── Entrée unifiée thread-safe (tous producteurs) ──────────
     //
     // Toute donnée produite par le système (mesure, état, événement texte,
-    // trace de commande) passe par l'intake unique ci-dessous. Les trois
-    // surcharges enqueue un IntakeItem dans la queue FreeRTOS `intake` ;
+    // trace de commande) passe par le LogBufferIn unique ci-dessous. Les trois
+    // surcharges enqueue un LogBufferInItem dans la queue FreeRTOS `logBufferIn` ;
     // `handle()` draine côté TaskManager et construit les DataRecord.
     //
     // Thread-safety : appelable depuis n'importe quel thread (TaskManager,
@@ -299,10 +299,10 @@ public:
     // warning est émis (comportement équivalent à l'historique
     // traceCommand) ; aucun producteur ne se bloque.
     //
-    // Capture horloge : les deux référentiels (VirtualClock pour LIVE,
-    // TimeUTC pour PENDING + lastDataForWeb) sont capturés AU MOMENT DE
-    // L'APPEL, avant l'enqueue. C'est exactement ce que faisait
-    // traceCommand ; le comportement est étendu aux mesures et états.
+    // Capture horloge : une seule lecture VirtualClock::read() au moment
+    // de l'appel alimente LIVE et PENDING à l'identique. C'est exactement
+    // ce que faisait traceCommand ; le comportement est étendu aux
+    // mesures et états.
     //
     // DataType : déduit automatiquement de META pour submit(float) et
     // submit(String). Pour submitCommand, il est imposé par ParsedCommand
@@ -325,10 +325,10 @@ public:
 
     static void clearHistory();     // Supprime l'historique flash + réinitialise buffers
 
-    // ───────────── Sortie unifiée thread-safe (tampon egress) ─────────────
+    // ───────────── Sortie unifiée thread-safe (LogBufferOut) ──────────────
     //
-    // Tous les records produits par applyIntakeItem sont déposés dans la
-    // queue FreeRTOS `egress`. Les consommateurs (aujourd'hui MqttManager,
+    // Tous les records produits par applyLogBufferInItem sont déposés dans la
+    // queue FreeRTOS `logBufferOut`. Les consommateurs (aujourd'hui MqttManager,
     // demain d'éventuels logger SD, écran local, etc.) la drainent à leur
     // rythme via tryPopForPublish. Politique d'éviction FIFO silencieuse
     // si saturation : les records les plus anciens sont perdus, aucun
@@ -387,7 +387,7 @@ public:
     static const char* typeLabel(DataType t);
 
 private:
-    // ───────────── Intake unifié (thread-safe) ─────────────
+    // ───────────── LogBufferIn (thread-safe) ───────────────
     // Unique pont entre les producteurs (quelconque thread) et le cœur de
     // DataLogger (TaskManager). Tous les submit*() enqueue ici ; handle()
     // draine côté TaskManager. Aucune primitive DataLogger (live/pending/
@@ -397,7 +397,7 @@ private:
     // ne peut pas y stocker de std::variant<float, String> (String détient
     // un pointeur heap que le memcpy dupliquerait sans clone → double
     // free). Texte stocké dans un buffer fixe, tronqué si dépassement.
-    struct IntakeItem {
+    struct LogBufferInItem {
         DataId   id;
         DataType type;            // Déduit de META pour mesure/état/texte ;
                                   // imposé par ParsedCommand pour les
@@ -408,62 +408,57 @@ private:
                                   // tronqué si texte source > 199 caractères
                                   // (warning émis par submit(String&)).
 
-        // Deux horloges capturées au plus tôt dans submit*() :
-        //   vClock       → LIVE (référence métier de l'automatisme,
-        //                  indépendante de RTC/NTP/réseau)
-        //   utcTimestamp → PENDING + lastDataForWeb (stockage durable,
-        //                  réparable via handle() si UTC_available=false
-        //                  au moment de l'enqueue)
-        uint32_t vClock;
-        uint32_t utcTimestamp;
-        bool     UTC_available;
-        bool     UTC_reliable;
+        // Horloge unique capturée au plus tôt dans submit*() via
+        // VirtualClock::read(). Alimente LIVE et PENDING à l'identique.
+        // Si VClock_available=false (T < 4min), le timestamp est (uint32_t)millis()
+        // et sera réparé par handle() dès que VClock bascule available.
+        uint32_t timestamp;
+        bool     VClock_available;
+        bool     VClock_reliable;
     };
-    static constexpr uint8_t INTAKE_CAPACITY = 40;
-    static QueueHandle_t intake;
+    static constexpr uint8_t LOG_BUFFER_IN_CAPACITY = 40;
+    static QueueHandle_t logBufferIn;
 
     // Enqueue un item déjà rempli (horloges capturées en amont). Non-bloquant.
     // Si la queue est saturée ou pas encore initialisée, warning et retour
     // sans blocage — aucun producteur ne s'arrête.
-    static void enqueueIntakeItem(const IntakeItem& item);
+    static void enqueueLogBufferIn(const LogBufferInItem& item);
 
     // Vide la queue et assemble les records (appelée depuis handle(),
     // thread TaskManager).
-    static void drainIntake();
+    static void drainLogBufferIn();
 
     // Construit LIVE + PENDING + lastDataForWeb depuis un item, dépose dans
-    // l'egress et (transitoirement, étape 2) invoque aussi le callback.
-    static void applyIntakeItem(const IntakeItem& item);
+    // le LogBufferOut.
+    static void applyLogBufferInItem(const LogBufferInItem& item);
 
-    // ───────────── Egress unifié (thread-safe) ─────────────
-    // Pont entre le cœur DataLogger (producteur unique = applyIntakeItem
+    // ───────────── LogBufferOut (thread-safe) ──────────────
+    // Pont entre le cœur DataLogger (producteur unique = applyLogBufferInItem
     // sur TaskManager) et les consommateurs (MqttManager et, à terme,
-    // autres subscribers). Item POD identique en esprit à IntakeItem mais
+    // autres subscribers). Item POD identique en esprit à LogBufferInItem mais
     // porte la valeur déjà horodatée (timestamp PENDING, UTC flags).
-    struct EgressRecord {
+    struct LogBufferOutRecord {
         DataId   id;
         DataType type;
-        uint32_t timestamp;       // = pendRec.timestamp (PENDING horloge UTC)
-        bool     UTC_available;
-        bool     UTC_reliable;
-        uint8_t  valueKind;       // 0 = float, 1 = texte
-        float    valueFloat;      // Valide si valueKind == 0
-        char     valueText[200];  // Valide si valueKind == 1, null-terminé
+        uint32_t timestamp;           // = pendRec.timestamp (horloge VClock)
+        bool     VClock_available;
+        bool     VClock_reliable;
+        uint8_t  valueKind;           // 0 = float, 1 = texte
+        float    valueFloat;          // Valide si valueKind == 0
+        char     valueText[200];      // Valide si valueKind == 1, null-terminé
     };
-    static constexpr uint8_t EGRESS_CAPACITY = 20;
-    static QueueHandle_t egress;
+    static constexpr uint8_t LOG_BUFFER_OUT_CAPACITY = 20;
+    static QueueHandle_t logBufferOut;
 
-    // Dépose un record dans l'egress. Éviction FIFO silencieuse si saturé
+    // Dépose un record dans le LogBufferOut. Éviction FIFO silencieuse si saturé
     // (pop de la tête puis push — sans race car producteur unique sur
-    // TaskManager). Appelée uniquement depuis applyIntakeItem.
-    static void enqueueEgress(const DataRecord& rec);
+    // TaskManager). Appelée uniquement depuis applyLogBufferInItem.
+    static void enqueueLogBufferOut(const DataRecord& rec);
 
     // ───────────── Buffers ─────────────
     static constexpr size_t LIVE_SIZE    = 200;
     static constexpr size_t PENDING_SIZE = 2000;
     static constexpr size_t FLUSH_SIZE   = 50;
-
-    static constexpr uint32_t FLUSH_TIMEOUT_MS = 3600000UL; // 1 heure
 
     // LIVE (ring buffer simple)
     static DataRecord live[LIVE_SIZE];
@@ -480,7 +475,7 @@ private:
     // pendant une lecture concurrente depuis la tâche AsyncTCP — le pire
     // cas restant est une lecture non atomique d'un slot, acceptable pour
     // l'affichage Web (perte de donnée tolérée, pas de crash).
-    // Écritures : tâche loop() uniquement (applyIntakeItem depuis drainIntake, init).
+    // Écritures : tâche loop() uniquement (applyLogBufferInItem depuis drainLogBufferIn, init).
     // Lectures  : hasLastDataForWeb() depuis n'importe quel thread.
     static std::array<LastDataForWeb, META_COUNT> lastDataForWeb;
     static std::array<bool,           META_COUNT> lastDataForWebHas;

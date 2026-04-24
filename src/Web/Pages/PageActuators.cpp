@@ -8,8 +8,9 @@
 //  - État actuel lu via DataLogger::hasLastDataForWeb (vue RAM alimentée
 //    par DataLogger::push côté ValveManager).
 //  - Commande envoyée en POST text/plain vers /command, payload = CSV 7 champs
-//    identique au format MQTT serre/cmd (timestamp,UTC_available,UTC_reliable,
-//    type,id,valueType,value) — les 3 premiers champs vides, type = 5
+//    identique au format MQTT serre/cmd (timestamp,VClock_available,
+//    VClock_reliable,type,id,valueType,value) — les 3 premiers champs vides,
+//    type = 5
 //    (CommandManual), id = DataId de la commande (CommandValveN récupéré
 //    depuis RELAYS[] à la génération de la page), valueType = 0, value = durée
 //    en secondes.
@@ -53,10 +54,10 @@ static String formatSinceActuators(uint32_t ageMs)
 
 static String timeHtmlActuators(const LastDataForWeb& d)
 {
-    if (d.UTC_available && d.UTC_reliable) {
+    if (d.VClock_available && d.VClock_reliable) {
         return formatUtcActuators(d.timestamp);
     }
-    if (d.UTC_available && !d.UTC_reliable) {
+    if (d.VClock_available && !d.VClock_reliable) {
         return formatUtcActuators(d.timestamp) + " <em>(Imprécis)</em>";
     }
     uint32_t ageMs = millis() - static_cast<uint32_t>(d.timestamp);
@@ -312,8 +313,8 @@ function selectDuration(btn) {
 }
 
 // Envoi d'une commande via POST /command. Body = CSV 7 champs identique
-// au format MQTT serre/cmd. Les 3 premiers champs (timestamp, UTC_available,
-// UTC_reliable) sont laissés vides : la carte les remplit à réception.
+// au format MQTT serre/cmd. Les 3 premiers champs (timestamp, VClock_available,
+// VClock_reliable) sont laissés vides : la carte les remplit à réception.
 // type=5 = CommandManual, valueType=0 = float (durée en secondes).
 function sendCommand(btn) {
   var id    = btn.dataset.id;       // DataId de la vanne (pour l'UI seulement)
@@ -329,7 +330,7 @@ function sendCommand(btn) {
   status.textContent = 'Envoi de la commande...';
   status.classList.add('visible');
 
-  // Ordre des champs : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+  // Ordre des champs : timestamp,VClock_available,VClock_reliable,type,id,valueType,value
   var body = ',,,5,' + cmdId + ',0,' + sec;
 
   fetch('/command', {

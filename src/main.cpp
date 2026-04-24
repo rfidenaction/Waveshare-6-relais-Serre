@@ -11,7 +11,7 @@
 #include "Config/TimingConfig.h"
 
 #include "Connectivity/WiFiManager.h"
-#include "Connectivity/ManagerUTC.h"
+#include "Connectivity/NTPManager.h"
 #include "Connectivity/BridgeManager.h"     // *** AJOUT BRIDGE ***
 #include "Connectivity/MqttManager.h"
 #include "Connectivity/SmsManager.h"        // *** AJOUT SMS ***
@@ -147,17 +147,10 @@ static void loopInit()
     RTCManager::init();
 
     // --- Horloge virtuelle machine ---
+    // VClock démarre en attente (_available=false) : les premiers horodatages
+    // sont en millis() jusqu'à ce que NTP réussisse ou que VClock::handle()
+    // bascule à T+4min via RTC (ou ancre 12h30 arbitraire si RTC KO).
     VirtualClock::init();
-
-    {
-        time_t rtcTime;
-        if (RTCManager::read(rtcTime)) {
-            VirtualClock::sync(rtcTime);
-            Console::info("[VClock] VirtualClock mise à jour sur RTC");
-        } else {
-            Console::warn("[VClock] RTC indisponible — démarrage à 12h30 arbitraire");
-        }
-    }
 
     // --- Serveur Web ---
     WebServer::init();
@@ -187,11 +180,11 @@ static void loopInit()
     // *** FIN AJOUT BRIDGE ***
 
     // *** MQTT *** — Initialisation MQTT + callbacks
-    // MqttManager::handle() draine DataLogger::egress à chaque tick
+    // MqttManager::handle() draine DataLogger::logBufferOut à chaque tick
     // (plus de callback setOnPush nécessaire depuis le refactor route unifiée).
     MqttManager::init();
     MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
-    Console::info("[MQTT] MqttManager initialisé (flux DataLogger::egress → MQTT → Bridge)");
+    Console::info("[MQTT] MqttManager initialisé (flux DataLogger::logBufferOut → MQTT → Bridge)");
     // *** FIN MQTT ***
 
     // *** SMS *** — Initialisation SmsManager (logique métier SMS)
@@ -213,10 +206,16 @@ static void loopInit()
     );
 
     // NTP
-    ManagerUTC::init();
+    NTPManager::init();
     TaskManager::addTask(
-        []() { ManagerUTC::handle(); },
-        UTC_HANDLE_PERIOD_MS
+        []() { NTPManager::handle(); },
+        NTP_HANDLE_PERIOD_MS
+    );
+
+    // VirtualClock — bascule T+4min, resync RTC 3h, bascule _reliable à 24h
+    TaskManager::addTask(
+        []() { VirtualClock::handle(); },
+        VCLOCK_HANDLE_PERIOD_MS
     );
 
     // *** AJOUT BRIDGE *** — Tâche BridgeManager (UDP vers LilyGo)
@@ -243,7 +242,7 @@ static void loopInit()
     // par tour. Non-bloquant. Voir MqttManager.h pour la doc complète.
     TaskManager::addTask(
         []() { MqttManager::handle(); },
-        1000
+        200
     );
     // *** FIN MQTT ***
 
@@ -284,7 +283,7 @@ static void loopInit()
     // millis() < VALVE_START_DELAY_MS, puis démarrage paresseux automatique.
     TaskManager::addTask(
         []() { ValveManager::handle(); },
-        1000
+        100
     );
 
     // SafeReboot (reboot préventif mensuel)

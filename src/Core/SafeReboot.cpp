@@ -4,16 +4,16 @@
 // Séquence :
 //  1. Au boot → init() : _rebootDeadline = 0
 //  2. Premier handle() (~5 min après boot) :
-//     - Lit readUTC()
-//     - UTC disponible → calcule le délai jusqu'au prochain 1er à 12h25 locale
-//     - UTC indisponible → fallback 45 jours - 5 min
+//     - Lit VirtualClock::read()
+//     - VClock_available → calcule le délai jusqu'au prochain 1er à 12h25 locale
+//     - Sinon (théorique, ne devrait pas arriver après T+4min) → fallback 45j
 //     - Stocke la deadline en µs (esp_timer)
 //  3. Handles suivants (toutes les 5 min) :
 //     - Compare esp_timer_get_time() à la deadline
 //     - Si atteinte → flush PENDING, log, reboot
 
 #include "Core/SafeReboot.h"
-#include "Connectivity/ManagerUTC.h"
+#include "Core/VirtualClock.h"
 #include "Storage/DataLogger.h"
 #include "Config/Config.h"
 #include "Config/TimingConfig.h"
@@ -118,9 +118,9 @@ void SafeReboot::handle()
 {
     // ─── Premier appel : calcul de la deadline ───────────────────────
     if (_rebootDeadline == 0) {
-        TimeUTC t = ManagerUTC::readUTC();
+        TimeVClock t = VirtualClock::read();
 
-        if (t.UTC_available) {
+        if (t.VClock_available) {
             int64_t delaySec = calcDelaySeconds(t.timestamp);
             _rebootDeadline = esp_timer_get_time() + delaySec * 1000000LL;
 
@@ -129,9 +129,10 @@ void SafeReboot::handle()
             Console::info(TAG, "Cible : " + formatTargetDate(targetUtc)
                 + " (dans " + formatDelay(delaySec) + ")");
         } else {
-            // Fallback : 45 jours - 5 minutes
+            // Filet passif : ne devrait plus se déclencher après T+4min
+            // (VClock bascule toujours available à T+4min par construction).
             _rebootDeadline = esp_timer_get_time() + SAFE_REBOOT_FALLBACK_US;
-            Console::warn(TAG, "UTC indisponible — fallback 45j - 5min");
+            Console::warn(TAG, "VClock indisponible — fallback 45j - 5min");
         }
         return;
     }

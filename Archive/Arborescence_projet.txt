@@ -18,8 +18,8 @@ projet/
 │   ├── Connectivity/
 │   │   ├── BridgeManager.cpp
 │   │   ├── BridgeManager.h
-│   │   ├── ManagerUTC.h
-│   │   ├── ManagerUTC.cpp            // Synchronisation NTP
+│   │   ├── NTPManager.h
+│   │   ├── NTPManager.cpp            // Synchronisation NTP
 │   │   ├── MqttManager.h
 │   │   ├── MqttManager.cpp           // Gestion de MQTT
 │   │   ├── SmsManager.h

@@ -17,7 +17,7 @@
 //  - GET  /actuators        → page web de pilotage des vannes (PageActuators)
 //  - POST /command          → commande unifiée (même format que MQTT serre/cmd)
 //    Body = CSV 7 champs en text/plain : les 3 premiers (timestamp,
-//    UTC_available, UTC_reliable) doivent être vides ou "0" (l'émetteur
+//    VClock_available, VClock_reliable) doivent être vides ou "0" (l'émetteur
 //    n'horodate pas). Le body arrive par chunks (handleCommandBody),
 //    est accumulé dans request->_tempObject puis traité à la fin
 //    (handleCommandFinal) en trois étapes disjointes :
@@ -158,7 +158,7 @@ void WebServer::handleActuators(AsyncWebServerRequest *request)
 // POST /command — entrée commande unifiée (même circuit que MQTT serre/cmd)
 //
 // Body : CSV 7 champs en text/plain
-//   "timestamp,UTC_available,UTC_reliable,type,id,valueType,value"
+//   "timestamp,VClock_available,VClock_reliable,type,id,valueType,value"
 // Les 3 premiers champs doivent être vides ou "0" (l'émetteur n'horodate
 // pas, la carte le fait à réception).
 //
@@ -299,7 +299,7 @@ static void buildBundleHeader(String& p)
     p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
 
     // Description des colonnes CSV
-    p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
+    p += "  \"csvColumns\": [\"timestamp\", \"VClock_available\", \"VClock_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
     // ── Table DataType — énumère TOUS les types possibles (META + records) ──

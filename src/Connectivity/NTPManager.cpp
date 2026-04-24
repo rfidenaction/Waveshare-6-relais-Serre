@@ -1,9 +1,9 @@
-// Connectivity/ManagerUTC.cpp
-// Maître du temps + Agent NTP
-// readUTC() : point d'accès unique au temps (cascade RTC → VClock → millis)
-// handle()  : agent NTP (synchro périodique)
+// Connectivity/NTPManager.cpp
+// Agent NTP pur — alimente VirtualClock et RTCManager à chaque succès.
+// Aucune logique de fourniture du temps : VirtualClock::read() est la
+// source unique consultée par le reste du firmware.
 
-#include "Connectivity/ManagerUTC.h"
+#include "Connectivity/NTPManager.h"
 #include "Core/RTCManager.h"
 #include "Core/VirtualClock.h"
 #include <WiFi.h>
@@ -20,7 +20,7 @@ static const char* TAG = "NTP";
 // ─────────────────────────────────────────────
 
 static constexpr uint32_t NETWORK_STABLE_DELAY_MS   = 120UL * 1000UL;               // 1 min
-static constexpr uint32_t BOOT_RETRY_INTERVAL_MS    = 30UL * 1000UL;               // 30 s
+static constexpr uint32_t BOOT_RETRY_INTERVAL_MS    = 30UL * 1000UL;                // 30 s
 static constexpr uint8_t  BOOT_MAX_ATTEMPTS         = 10;
 
 static constexpr time_t   UTC_MIN_VALID_TIMESTAMP   = 1700000000; // ~2023
@@ -48,21 +48,21 @@ static String formatLocalTime(time_t utc)
 // État interne
 // ─────────────────────────────────────────────
 
-bool     ManagerUTC::_everSynced       = false;
-uint32_t ManagerUTC::_networkUpSinceMs = 0;
-uint32_t ManagerUTC::_lastAttemptMs    = 0;
-uint32_t ManagerUTC::_lastTourMs       = 0;
-uint8_t  ManagerUTC::_bootAttempts     = 0;
-uint8_t  ManagerUTC::_tourCount        = 0;
+bool     NTPManager::_everSynced       = false;
+uint32_t NTPManager::_networkUpSinceMs = 0;
+uint32_t NTPManager::_lastAttemptMs    = 0;
+uint32_t NTPManager::_lastTourMs       = 0;
+uint8_t  NTPManager::_bootAttempts     = 0;
+uint8_t  NTPManager::_tourCount        = 0;
 
-ManagerUTC::NtpState ManagerUTC::_ntpState    = NtpState::IDLE;
-uint32_t             ManagerUTC::_ntpStartMs  = 0;
+NTPManager::NtpState NTPManager::_ntpState    = NtpState::IDLE;
+uint32_t             NTPManager::_ntpStartMs  = 0;
 
 // ─────────────────────────────────────────────
 // Initialisation
 // ─────────────────────────────────────────────
 
-void ManagerUTC::init()
+void NTPManager::init()
 {
     _everSynced       = false;
     _networkUpSinceMs = 0;
@@ -79,49 +79,10 @@ void ManagerUTC::init()
 }
 
 // ─────────────────────────────────────────────
-// readUTC — Point d'accès unique au temps
-//
-// Cascade :
-//   1. RTC OK (ping + lecture)   → UTC fiable
-//   2. VClock synced             → UTC approximatif
-//   3. Rien                      → millis()
-//
-// Ne retourne JAMAIS 0 dans timestamp.
-// ─────────────────────────────────────────────
-
-TimeUTC ManagerUTC::readUTC()
-{
-    TimeUTC t;
-
-    // Cas 1 : RTC matériel (OSF clair + lecture OK + timestamp valide)
-    time_t rtcTime;
-    if (RTCManager::read(rtcTime)) {
-        t.timestamp     = rtcTime;
-        t.UTC_available = true;
-        t.UTC_reliable  = true;
-        return t;
-    }
-
-    // Cas 2 : VirtualClock recalée (UTC approximatif, dérive sur millis)
-    if (VirtualClock::isVClockSynced()) {
-        t.timestamp     = VirtualClock::nowVirtual();
-        t.UTC_available = true;
-        t.UTC_reliable  = false;
-        return t;
-    }
-
-    // Cas 3 : aucun UTC — millis() comme filet de sécurité
-    t.timestamp     = static_cast<time_t>(millis());
-    t.UTC_available = false;
-    t.UTC_reliable  = false;
-    return t;
-}
-
-// ─────────────────────────────────────────────
 // Boucle autonome
 // ─────────────────────────────────────────────
 
-void ManagerUTC::handle()
+void NTPManager::handle()
 {
     const uint32_t nowMs = millis();
 
@@ -168,11 +129,11 @@ void ManagerUTC::handle()
     }
     _lastTourMs = nowMs;
 
-    if (!VirtualClock::isVClockSynced()) {
-        // VClock pas synced → essai à chaque tour
+    // VClock pas encore available → essai à chaque tour.
+    // VClock available → espacer à un essai tous les NTP_ROUTINE_TOUR_COUNT tours.
+    if (!VirtualClock::read().VClock_available) {
         startNtp();
     } else {
-        // VClock synced → essai tous les NTP_ROUTINE_TOUR_COUNT tours
         _tourCount++;
         if (_tourCount >= NTP_ROUTINE_TOUR_COUNT) {
             _tourCount = 0;
@@ -185,7 +146,7 @@ void ManagerUTC::handle()
 // startNtp — Lance une tentative NTP (non-bloquant)
 // ─────────────────────────────────────────────
 
-void ManagerUTC::startNtp()
+void NTPManager::startNtp()
 {
     if (WiFi.status() != WL_CONNECTED) {
         return;
@@ -202,11 +163,11 @@ void ManagerUTC::startNtp()
 
 // ─────────────────────────────────────────────
 // checkNtp — Vérifie si le NTP a répondu (appelé par handle)
-// Succès → écriture RTC + recalage VirtualClock
+// Succès → écriture RTC (si chip vivant) + recalage VirtualClock
 // Timeout → abandon, retour en IDLE
 // ─────────────────────────────────────────────
 
-void ManagerUTC::checkNtp()
+void NTPManager::checkNtp()
 {
     time_t utcNow = 0;
     time(&utcNow);
@@ -221,6 +182,8 @@ void ManagerUTC::checkNtp()
             + ", " + String((millis() - _networkUpSinceMs) / 1000)
             + "s après WiFi)");
 
+        // L'heure NTP domine quand elle est correcte : on met à jour
+        // VirtualClock (toujours) et RTCManager (si la carte répond).
         RTCManager::write(utcNow);
         VirtualClock::sync(utcNow);
 

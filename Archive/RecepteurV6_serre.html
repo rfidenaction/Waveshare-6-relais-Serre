@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serre de Marie-Pierre</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #1976d2;
+  color: white;
+  text-align: center;
+  margin: 0;
+  padding: 20px;
+}
+
+h1 {
+  background: #0d47a1;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 0 0 20px 0;
+}
+
+/* ── Bandeau connexion ── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-size: 0.95em;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #999;
+  transition: background 0.4s;
+}
+
+.status-dot.connected { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-dot.offline   { background: #f44336; }
+.status-dot.connecting { background: #ff9800; }
+
+/* ── État carte (Waveshare online/offline) ── */
+.device-status {
+  margin-bottom: 20px;
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+/* ── Groupes par DataType ── */
+.group-title {
+  font-size: 1.1em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  margin: 25px auto 10px auto;
+  max-width: 600px;
+  text-align: left;
+  padding-left: 5px;
+}
+
+/* ── Cartes ── */
+.card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.card-label {
+  font-size: 0.95em;
+  opacity: 0.85;
+  margin-bottom: 8px;
+}
+
+.card .value {
+  font-size: 1.8em;
+  font-weight: bold;
+}
+
+.card .timestamp {
+  font-size: 0.8em;
+  margin-top: 10px;
+  opacity: 0.7;
+}
+
+.card .timestamp em {
+  font-style: italic;
+}
+
+/* ── Cartes vanne (interactives) ── */
+.valve-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.valve-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.valve-label {
+  font-size: 1.1em;
+  font-weight: bold;
+}
+
+.valve-state {
+  font-size: 1em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+
+.valve-state.opened {
+  background: #4caf50;
+  color: white;
+  font-weight: bold;
+}
+
+.valve-timestamp {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-bottom: 12px;
+}
+
+.duration-choices {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.duration-btn {
+  flex: 1;
+  padding: 10px 4px;
+  font-size: 1em;
+  border: 2px solid rgba(255,255,255,0.4);
+  background: transparent;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.duration-btn:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.duration-btn.selected {
+  background: #0d47a1;
+  border-color: #0d47a1;
+  font-weight: bold;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.2em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.action-btn:hover {
+  background: #43a047;
+}
+
+.action-btn:active {
+  background: #388e3c;
+}
+
+.action-btn:disabled {
+  background: #9e9e9e;
+  cursor: not-allowed;
+}
+
+/* ── Message d'attente ── */
+.waiting {
+  margin: 40px auto;
+  max-width: 600px;
+  font-size: 1.2em;
+  opacity: 0.7;
+}
+
+.waiting .spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Flash sur mise à jour ── */
+@keyframes flash {
+  0%   { background: rgba(255,255,255,0.45); }
+  100% { background: rgba(255,255,255,0.2); }
+}
+.card.flash, .valve-card.flash {
+  animation: flash 0.6s ease-out;
+}
+</style>
+</head>
+<body>
+
+<h1>Serre de Marie-Pierre</h1>
+
+<!-- Bandeau connexion MQTT -->
+<div class="status-bar">
+  <span class="status-dot connecting" id="mqttDot"></span>
+  <span id="mqttStatus">Connexion au broker…</span>
+</div>
+
+<!-- État carte Waveshare (LWT) -->
+<div class="device-status" id="deviceStatus"></div>
+
+<!-- Conteneur des cartes (généré dynamiquement) -->
+<div id="cards">
+  <div class="waiting" id="waitingMsg">
+    <span class="spinner"></span>
+    En attente du schéma…
+  </div>
+</div>
+
+<!-- mqtt.js CDN -->
+<script src="https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js"></script>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// Configuration
+// ══════════════════════════════════════════════════════════════
+const MQTT_URL  = 'wss://3db6155980d4483e8b8c3036fd0afd6f.s1.eu.hivemq.cloud:8884/mqtt';
+const MQTT_USER = 'Graindesable';
+const MQTT_PASS = 'Chaperonrouge64';
+
+const TOPIC_SCHEMA = 'serre/schema';
+const TOPIC_DATA   = 'serre/data/#';
+const TOPIC_STATUS = 'serre/status/waveshare';
+
+// Durées d'arrosage proposées (secondes)
+const DURATION_CHOICES = [3, 5, 10, 30];
+const DURATION_DEFAULT = 3;
+
+// ══════════════════════════════════════════════════════════════
+// État local + restauration depuis localStorage
+// ══════════════════════════════════════════════════════════════
+let schema = null;
+let lastValues = {};
+let cardsBuilt = false;
+
+// Durée sélectionnée par vanne : { dataId: seconds }
+let selectedDurations = {};
+
+// Clés localStorage
+var LS_SCHEMA = 'serre_schema';
+var LS_VALUES = 'serre_values';
+
+// Restaurer le cache
+try {
+  var cachedSchema = localStorage.getItem(LS_SCHEMA);
+  if (cachedSchema) schema = JSON.parse(cachedSchema);
+
+  var cachedValues = localStorage.getItem(LS_VALUES);
+  if (cachedValues) lastValues = JSON.parse(cachedValues);
+} catch (e) {
+  console.warn('localStorage: erreur lecture cache', e);
+}
+
+// Sauvegarder le schéma
+function saveSchema() {
+  try { localStorage.setItem(LS_SCHEMA, JSON.stringify(schema)); }
+  catch (e) { console.warn('localStorage: erreur écriture schéma', e); }
+}
+
+// Sauvegarder les dernières valeurs
+function saveValues() {
+  try { localStorage.setItem(LS_VALUES, JSON.stringify(lastValues)); }
+  catch (e) { console.warn('localStorage: erreur écriture valeurs', e); }
+}
+
+// Noms des groupes DataType
+const TYPE_LABELS = {
+  0: 'Alimentation',
+  1: 'Capteurs',
+  2: 'Actionneurs',
+  3: 'Système'
+};
+
+// ══════════════════════════════════════════════════════════════
+// DOM
+// ══════════════════════════════════════════════════════════════
+const mqttDot      = document.getElementById('mqttDot');
+const mqttStatusEl = document.getElementById('mqttStatus');
+const deviceStatus = document.getElementById('deviceStatus');
+const cardsDiv     = document.getElementById('cards');
+const waitingMsg   = document.getElementById('waitingMsg');
+
+// ══════════════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════════════
+
+function setMqttStatus(state, text) {
+  mqttDot.className = 'status-dot ' + state;
+  mqttStatusEl.textContent = text;
+}
+
+// Formater un timestamp UTC en heure locale
+function formatUtcLocal(ts) {
+  var d = new Date(ts * 1000);
+  var dd = String(d.getDate()).padStart(2, '0');
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var yy = String(d.getFullYear()).slice(2);
+  var hh = String(d.getHours()).padStart(2, '0');
+  var mi = String(d.getMinutes()).padStart(2, '0');
+  var ss = String(d.getSeconds()).padStart(2, '0');
+  return dd + '/' + mm + '/' + yy + ' ' + hh + ':' + mi + ':' + ss;
+}
+
+// Formater un âge en ms en texte "Depuis Xh Ym Zs"
+function formatAge(ageMs) {
+  var s = Math.floor(ageMs / 1000);
+  var m = Math.floor(s / 60); s %= 60;
+  var h = Math.floor(m / 60); m %= 60;
+  var text = 'Depuis ';
+  if (h) text += h + 'h ';
+  if (m) text += m + 'm ';
+  text += s + 's';
+  return text;
+}
+
+// Construire le HTML de l'horodatage
+function timeHtml(entry) {
+  if (entry.vclockAvailable && entry.vclockReliable) {
+    return formatUtcLocal(entry.timestamp);
+  }
+  if (entry.vclockAvailable && !entry.vclockReliable) {
+    return formatUtcLocal(entry.timestamp) + ' <em>(Imprécis)</em>';
+  }
+  var ageMs = Date.now() - entry.receivedAt;
+  return '<span class="age" data-received="' + entry.receivedAt + '">' +
+         formatAge(ageMs) + '</span>';
+}
+
+// Parser une ligne CSV 7 champs
+function parseCsvPayload(csv) {
+  csv = csv.trim();
+
+  var commas = [];
+  for (var i = 0; i < csv.length && commas.length < 6; i++) {
+    if (csv[i] === ',') commas.push(i);
+  }
+  if (commas.length < 6) return null;
+
+  var timestamp       = parseInt(csv.substring(0, commas[0]));
+  var vclockAvailable = parseInt(csv.substring(commas[0] + 1, commas[1])) !== 0;
+  var vclockReliable  = parseInt(csv.substring(commas[1] + 1, commas[2])) !== 0;
+  var type            = parseInt(csv.substring(commas[2] + 1, commas[3]));
+  var id              = parseInt(csv.substring(commas[3] + 1, commas[4]));
+  var valueType       = parseInt(csv.substring(commas[4] + 1, commas[5]));
+  var rawValue        = csv.substring(commas[5] + 1);
+
+  var value;
+  if (valueType === 0) {
+    value = parseFloat(rawValue);
+  } else {
+    if (rawValue.length >= 2 && rawValue[0] === '"' && rawValue[rawValue.length - 1] === '"') {
+      value = rawValue.substring(1, rawValue.length - 1).replace(/""/g, '"');
+    } else {
+      value = rawValue;
+    }
+  }
+
+  return {
+    timestamp: timestamp,
+    vclockAvailable: vclockAvailable,
+    vclockReliable: vclockReliable,
+    type: type,
+    id: id,
+    valueType: valueType,
+    value: value,
+    receivedAt: Date.now()
+  };
+}
+
+function escapeHtml(text) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(text));
+  return div.innerHTML;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Détection "vanne" : Actionneur (type=2) de nature "etat"
+// Basé sur META, aucune info en dur
+// ══════════════════════════════════════════════════════════════
+function isValve(di) {
+  return di.type === 2 && di.nature === 'etat';
+}
+
+// ══════════════════════════════════════════════════════════════
+// Construction des cartes depuis le schéma
+// ══════════════════════════════════════════════════════════════
+
+function buildCards() {
+  if (!schema || !schema.dataIds) return;
+
+  cardsDiv.innerHTML = '';
+  cardsBuilt = true;
+
+  // Regrouper par DataType
+  var groups = {};
+  schema.dataIds.forEach(function(di) {
+    var t = di.type;
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(di);
+  });
+
+  // Ordre des groupes
+  [0, 1, 2, 3].forEach(function(typeId) {
+    var items = groups[typeId];
+    if (!items || items.length === 0) return;
+
+    // Titre du groupe
+    var label = TYPE_LABELS[typeId] || ('Type ' + typeId);
+    if (schema.dataTypes) {
+      schema.dataTypes.forEach(function(dt) {
+        if (dt.id === typeId && dt.label) label = dt.label;
+      });
+    }
+
+    var title = document.createElement('div');
+    title.className = 'group-title';
+    title.textContent = label;
+    cardsDiv.appendChild(title);
+
+    items.forEach(function(di) {
+      if (isValve(di)) {
+        cardsDiv.appendChild(buildValveCard(di));
+      } else {
+        cardsDiv.appendChild(buildDataCard(di));
+      }
+    });
+  });
+}
+
+// Carte de données (affichage simple, comportement existant)
+function buildDataCard(di) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'card-' + di.id;
+
+  card.innerHTML =
+    '<div class="card-label">' + escapeHtml(di.label) + '</div>' +
+    '<div class="value" id="value-' + di.id + '">—</div>' +
+    '<div class="timestamp" id="time-' + di.id + '"></div>';
+
+  return card;
+}
+
+// Carte vanne (interactive)
+function buildValveCard(di) {
+  if (!(di.id in selectedDurations)) {
+    selectedDurations[di.id] = DURATION_DEFAULT;
+  }
+
+  var card = document.createElement('div');
+  card.className = 'valve-card';
+  card.id = 'card-' + di.id;
+
+  // Header : label + état
+  var header = document.createElement('div');
+  header.className = 'valve-header';
+  header.innerHTML =
+    '<div class="valve-label">' + escapeHtml(di.label) + '</div>' +
+    '<div class="valve-state" id="state-' + di.id + '">—</div>';
+  card.appendChild(header);
+
+  // Timestamp
+  var ts = document.createElement('div');
+  ts.className = 'valve-timestamp';
+  ts.id = 'time-' + di.id;
+  card.appendChild(ts);
+
+  // Boutons de durée
+  var choices = document.createElement('div');
+  choices.className = 'duration-choices';
+  DURATION_CHOICES.forEach(function(sec) {
+    var btn = document.createElement('button');
+    btn.className = 'duration-btn';
+    btn.textContent = sec + ' s';
+    btn.dataset.id = di.id;
+    btn.dataset.sec = sec;
+    if (selectedDurations[di.id] === sec) {
+      btn.classList.add('selected');
+    }
+    btn.addEventListener('click', function() {
+      selectDuration(di.id, sec);
+    });
+    choices.appendChild(btn);
+  });
+  card.appendChild(choices);
+
+  // Bouton d'action
+  var action = document.createElement('button');
+  action.className = 'action-btn';
+  action.textContent = 'Arroser';
+  action.addEventListener('click', function() {
+    sendValveCommand(di.id);
+  });
+  card.appendChild(action);
+
+  return card;
+}
+
+// Sélection d'une durée pour une vanne
+function selectDuration(dataId, sec) {
+  selectedDurations[dataId] = sec;
+
+  // Mettre à jour visuellement les boutons de cette vanne
+  var card = document.getElementById('card-' + dataId);
+  if (!card) return;
+  var btns = card.querySelectorAll('.duration-btn');
+  btns.forEach(function(b) {
+    if (parseInt(b.dataset.sec) === sec) {
+      b.classList.add('selected');
+    } else {
+      b.classList.remove('selected');
+    }
+  });
+}
+
+// Correspondance Vanne → Commande (figée selon META + RELAYS[] côté carte).
+// Si on remplace un relais d'arrosage par un autre actionneur (lumière,
+// ventilation...), il faudra ajuster cette table ET refaire l'UI en
+// conséquence. C'est la seule duplication de RELAYS[] dans le code client.
+var VALVE_TO_CMD = {
+  4:  17,   // Valve1 → CommandValve1
+  12: 18,   // Valve2 → CommandValve2
+  13: 19,   // Valve3 → CommandValve3
+  14: 20,   // Valve4 → CommandValve4
+  15: 21,   // Valve5 → CommandValve5
+  16: 22    // Valve6 → CommandValve6
+};
+
+// Type d'origine d'une commande émise depuis l'UI manuelle (cf. DataType
+// dans DataLogger.h : 5 = CommandManual, 6 = CommandAuto).
+var CMD_TYPE_MANUAL = 5;
+
+// Publier une commande d'ouverture via MQTT.
+// Payload : CSV 7 champs non horodaté. Les 3 premiers champs sont vides :
+// la carte horodatera à réception via VirtualClock::read().
+function sendValveCommand(valveId) {
+  var cmdId = VALVE_TO_CMD[valveId];
+  if (cmdId === undefined) {
+    console.warn('Vanne sans commande associée : id=' + valveId);
+    return;
+  }
+
+  var sec = selectedDurations[valveId] || DURATION_DEFAULT;
+  var topic = 'serre/cmd';
+  var payload = ',,,' + CMD_TYPE_MANUAL + ',' + cmdId + ',0,' + sec;
+
+  if (!client || !client.connected) {
+    console.warn('MQTT non connecté, commande ignorée');
+    return;
+  }
+
+  client.publish(topic, payload, { qos: 1 }, function(err) {
+    if (err) {
+      console.error('Erreur publication commande :', err);
+    } else {
+      console.log('Commande envoyée :', topic, '=', payload);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Mise à jour d'une carte
+// ══════════════════════════════════════════════════════════════
+
+function updateCard(entry) {
+  if (!schema || !cardsBuilt) return;
+
+  var di = null;
+  schema.dataIds.forEach(function(d) {
+    if (d.id === entry.id) di = d;
+  });
+  if (!di) return;
+
+  var cardEl = document.getElementById('card-' + di.id);
+  var timeEl = document.getElementById('time-' + di.id);
+
+  if (isValve(di)) {
+    // Carte vanne : mettre à jour l'état Fermée/Ouverte
+    var stateEl = document.getElementById('state-' + di.id);
+    if (stateEl) {
+      var intVal = Math.round(entry.value);
+      var display = String(entry.value);
+      if (di.states) {
+        di.states.forEach(function(s) {
+          if (s.value === intVal) display = s.label;
+        });
+      }
+      stateEl.textContent = display;
+      if (intVal === 1) {
+        stateEl.classList.add('opened');
+      } else {
+        stateEl.classList.remove('opened');
+      }
+    }
+    if (timeEl) timeEl.innerHTML = timeHtml(entry);
+  } else {
+    // Carte de données classique
+    var valueEl = document.getElementById('value-' + di.id);
+    if (!valueEl) return;
+
+    var display;
+    if (di.nature === 'metrique') {
+      display = entry.value.toFixed(1);
+      if (di.unit) display += ' ' + di.unit;
+    } else if (di.nature === 'etat') {
+      display = String(entry.value);
+      if (di.states) {
+        var intVal = Math.round(entry.value);
+        di.states.forEach(function(s) {
+          if (s.value === intVal) display = s.label;
+        });
+      }
+    } else {
+      display = String(entry.value);
+    }
+
+    valueEl.textContent = display;
+    if (timeEl) timeEl.innerHTML = timeHtml(entry);
+  }
+
+  // Flash visuel
+  if (cardEl) {
+    cardEl.classList.remove('flash');
+    void cardEl.offsetWidth;
+    cardEl.classList.add('flash');
+  }
+
+  lastValues[entry.id] = entry;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Mise à jour périodique des âges relatifs
+// ══════════════════════════════════════════════════════════════
+
+setInterval(function() {
+  document.querySelectorAll('.age').forEach(function(el) {
+    var received = parseInt(el.dataset.received);
+    if (isNaN(received)) return;
+    var ageMs = Date.now() - received;
+    el.textContent = formatAge(ageMs);
+  });
+}, 1000);
+
+// ══════════════════════════════════════════════════════════════
+// Restauration du cache au chargement
+// ══════════════════════════════════════════════════════════════
+
+if (schema) {
+  waitingMsg.style.display = 'none';
+  buildCards();
+  Object.keys(lastValues).forEach(function(id) {
+    updateCard(lastValues[id]);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Connexion MQTT
+// ══════════════════════════════════════════════════════════════
+
+var clientId = 'serre-pwa-' + Math.random().toString(16).substr(2, 8);
+
+var client = mqtt.connect(MQTT_URL, {
+  username: MQTT_USER,
+  password: MQTT_PASS,
+  clientId: clientId,
+  protocolVersion: 5,
+  reconnectPeriod: 3000,
+  clean: true
+});
+
+client.on('connect', function() {
+  setMqttStatus('connected', 'Connecté au broker');
+  client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS], { qos: 1 });
+});
+
+client.on('reconnect', function() {
+  setMqttStatus('connecting', 'Reconnexion…');
+});
+
+client.on('offline', function() {
+  setMqttStatus('offline', 'Hors ligne');
+});
+
+client.on('error', function(err) {
+  console.error('MQTT error:', err);
+  setMqttStatus('offline', 'Erreur connexion');
+});
+
+client.on('message', function(topic, message) {
+  var payload = message.toString().trim();
+
+  // ── Schéma ──
+  if (topic === TOPIC_SCHEMA) {
+    try {
+      schema = JSON.parse(payload);
+      console.log('Schéma reçu:', schema);
+      saveSchema();
+      waitingMsg.style.display = 'none';
+      buildCards();
+
+      Object.keys(lastValues).forEach(function(id) {
+        updateCard(lastValues[id]);
+      });
+    } catch (e) {
+      console.error('Erreur parsing schéma:', e);
+    }
+    return;
+  }
+
+  // ── Statut Waveshare (LWT) ──
+  if (topic === TOPIC_STATUS) {
+    if (payload === 'online') {
+      deviceStatus.textContent = '🟢 Carte Waveshare en ligne';
+    } else {
+      deviceStatus.textContent = '🔴 Carte Waveshare hors ligne';
+    }
+    return;
+  }
+
+  // ── Données capteurs ──
+  if (topic.startsWith('serre/data/')) {
+    var entry = parseCsvPayload(payload);
+    if (!entry) {
+      console.warn('CSV invalide:', payload);
+      return;
+    }
+
+    lastValues[entry.id] = entry;
+    saveValues();
+
+    if (cardsBuilt) {
+      updateCard(entry);
+    }
+    return;
+  }
+});
+</script>
+</body>
+</html>

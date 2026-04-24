@@ -14,6 +14,10 @@ static const char* TAG = "RTC";
 // Instance RTClib (statique fichier)
 static RTC_DS3231 rtc;
 
+// Flag "chip mort" en RAM, levé uniquement quand write() laisse OSF à 1
+// après coup. Non persistant : un reboot remet le compteur à zéro.
+bool RTCManager::_chipDead = false;
+
 // -----------------------------------------------------------------------------
 // Helper : formater un time_t en heure locale France (via SYSTEM_TIMEZONE)
 // -----------------------------------------------------------------------------
@@ -68,6 +72,10 @@ void RTCManager::init()
 
 bool RTCManager::read(time_t& rtcOut)
 {
+    if (_chipDead) {
+        return false;
+    }
+
     // OSF — l'oscillateur s'est-il arrêté ?
     // Si le bus I2C est en panne, lostPower() retourne true (mode sûr)
     if (rtc.lostPower()) {
@@ -89,6 +97,10 @@ bool RTCManager::read(time_t& rtcOut)
 
 bool RTCManager::write(time_t utc)
 {
+    if (_chipDead) {
+        return false;
+    }
+
     // Ping I2C — vérification que le DS3231 est présent
     Wire.beginTransmission(0x68);
     if (Wire.endTransmission() != 0) {
@@ -99,9 +111,12 @@ bool RTCManager::write(time_t utc)
     DateTime dt(utc);
     rtc.adjust(dt);
 
-    // Vérification OSF après écriture
+    // Vérification OSF après écriture : s'il reste à 1, c'est un vrai
+    // problème matériel. On lève _chipDead pour que plus aucun appel
+    // n'aille toucher le bus I2C jusqu'au prochain reboot.
     if (rtc.lostPower()) {
-        Console::error(TAG, "OSF toujours actif après écriture — problème matériel");
+        Console::error(TAG, "OSF toujours actif après écriture — chip déclaré mort");
+        _chipDead = true;
         return false;
     }
 

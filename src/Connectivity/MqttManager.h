@@ -9,13 +9,13 @@
 // « in-flight » (pour retry sur échec d'enqueue) et un watchdog zombie pour
 // la robustesse face aux coupures et aux brokers muets (pas de PUBACK).
 //
-// Le tampon FIFO amont historique a migré dans DataLogger::egress (queue
+// Le tampon FIFO amont historique a migré dans DataLogger::logBufferOut (queue
 // FreeRTOS) : c'est lui qui absorbe les bursts métier et les coupures WiFi.
 //
 // Intégration :
 //  - init() appelé dans loopInit() après WiFiManager
 //  - handle() en tâche TaskManager période 1 s
-//  - handle() pop 1 record/s de DataLogger::egress, format + enqueue esp_mqtt
+//  - handle() pop 1 record/s de DataLogger::logBufferOut, format + enqueue esp_mqtt
 //  - setOnPublishSuccess(cb) : callback externe sur PUBACK (BridgeManager)
 
 class MqttManager {
@@ -24,7 +24,7 @@ public:
     //
     // Mécanisme global
     // ────────────────
-    // - handle() pop 1 record/s de DataLogger::egress dès que mqttConnected
+    // - handle() pop 1 record/s de DataLogger::logBufferOut dès que mqttConnected
     //   == true, le formate en CSV et l'enqueue dans esp_mqtt. Chaque
     //   enqueue incrémente messagesEnqueued.
     // - Si l'enqueue échoue (esp_mqtt saturée / déconnectée), le record
@@ -84,7 +84,7 @@ private:
     // succès d'enqueue esp_mqtt. Si l'enqueue courant échoue, on retente
     // le même payload au tour suivant — aucun record n'est perdu sur
     // erreur transitoire. La backpressure globale (bursts, coupures WiFi)
-    // est portée par DataLogger::egress en amont.
+    // est portée par DataLogger::logBufferOut en amont.
     static char    inFlightPayload[200];
     static uint8_t inFlightId;
     static bool    inFlightBusy;

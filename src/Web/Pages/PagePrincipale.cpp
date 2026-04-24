@@ -19,7 +19,7 @@
 //  - Le bundle complet (schéma + CSV) est téléchargé en une seule requête
 //  - Le parsing et le filtrage sont faits côté client (même principe que
 //    le client MQTT distant RecepteurV4_serre.html)
-//  - Le CSV est au format 7 champs : timestamp,UTC_available,UTC_reliable,
+//  - Le CSV est au format 7 champs : timestamp,VClock_available,VClock_reliable,
 //    type,id,valueType,value
 //  - Filtrage sur id=0 (SupplyVoltage) et valueType=0 (float)
 //  - Sous-échantillonnage à 100 points (inchangé)
@@ -96,17 +96,17 @@ static String formatSince(uint32_t ageMs)
 
 static String timeHtml(const LastDataForWeb& d)
 {
-    if (d.UTC_available && d.UTC_reliable) {
-        // RTC — heure précise
+    if (d.VClock_available && d.VClock_reliable) {
+        // Source synchronisée récente — heure précise
         return formatUtc(d.timestamp);
     }
 
-    if (d.UTC_available && !d.UTC_reliable) {
-        // VClock — heure approximative
+    if (d.VClock_available && !d.VClock_reliable) {
+        // VClock dérivée ou ancre arbitraire — heure approximative
         return formatUtc(d.timestamp) + " <em>(Imprécis)</em>";
     }
 
-    // Pas d'UTC — timestamp contient millis(), affichage relatif
+    // VClock pas encore available — timestamp contient millis(), affichage relatif
     uint32_t ageMs = millis() - static_cast<uint32_t>(d.timestamp);
     return "<span class=\"age\" data-age-ms=\"" +
            String(ageMs) + "\">" +
@@ -253,7 +253,7 @@ function extractCsvFromBundle(bundle) {
 
 // Parse une ligne CSV 7 champs et retourne {ts, val} si c'est SupplyVoltage (id=0)
 // float (valueType=0), sinon null.
-// Format : timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+// Format : timestamp,VClock_available,VClock_reliable,type,id,valueType,value
 function parseSupplyLine(line) {
   // On a besoin des 6 virgules séparant les 7 champs
   const commas = [];

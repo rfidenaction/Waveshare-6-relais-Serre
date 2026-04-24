@@ -37,6 +37,13 @@ bool    MqttManager::inFlightBusy         = false;
 
 volatile uint32_t MqttManager::messagesEnqueued  = 0;
 volatile uint32_t MqttManager::messagesPublished = 0;
+// Sémantique révisée : watchdogSeconds porte désormais l'horodatage millis()
+// du dernier PUBACK reçu (ou du dernier reset post-disconnect). Le nom est
+// conservé pour limiter le périmètre du patch ; la fenêtre de 65 min est
+// évaluée par comparaison (millis() - watchdogSeconds) >= WATCHDOG_SECONDS*1000,
+// ce qui la rend insensible à la période du tick handle().
+// Valeur initiale = WATCHDOG_SECONDS : la première alerte possible reste à
+// ~65 min d'uptime, strictement comme le comportement d'origine.
 volatile uint32_t MqttManager::watchdogSeconds   = MqttManager::WATCHDOG_SECONDS;
 uint32_t          MqttManager::forcedDisconnectCount = 0;
 
@@ -99,7 +106,7 @@ void MqttManager::init()
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
     Console::info(TAG, "Broker: " + String(MQTT_BROKER_URI));
     Console::info(TAG, "Client ID: " + String(MQTT_CLIENT_ID));
-    Console::info(TAG, "Slot in-flight : 1 record (backpressure via DataLogger::egress)");
+    Console::info(TAG, "Slot in-flight : 1 record (backpressure via DataLogger::logBufferOut)");
     Console::info(TAG, "Watchdog zombie : seuil gap=" + String(WATCHDOG_GAP_THRESHOLD)
                       + ", fenêtre=" + String(WATCHDOG_SECONDS / 60) + " min");
 }
@@ -172,7 +179,7 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         // PUBACK reçu (QoS 1). Reset du watchdog zombie + notification externe.
         messagesEnqueued  = 0;
         messagesPublished = 0;
-        watchdogSeconds   = WATCHDOG_SECONDS;
+        watchdogSeconds   = millis();   // horodatage du dernier PUBACK (ms)
 
         if (_onPublishSuccess) _onPublishSuccess();
         break;
@@ -196,8 +203,8 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 
 // =============================================================================
 // Dispatcher des commandes entrantes sur serre/cmd. Payload = CSV 7 champs
-// "timestamp,UTC_available,UTC_reliable,type,id,valueType,value" dont les 3
-// premiers doivent être vides ou "0" (l'émetteur n'horodate pas).
+// "timestamp,VClock_available,VClock_reliable,type,id,valueType,value" dont
+// les 3 premiers doivent être vides ou "0" (l'émetteur n'horodate pas).
 //
 // Ce module ne connaît aucun actionneur par son nom ; il vérifie le topic puis
 // orchestre trois étapes aux responsabilités disjointes :
@@ -306,7 +313,7 @@ String MqttManager::buildSchemaJson()
     }
     p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
 
-    p += "  \"csvColumns\": [\"timestamp\", \"UTC_available\", \"UTC_reliable\", "
+    p += "  \"csvColumns\": [\"timestamp\", \"VClock_available\", \"VClock_reliable\", "
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
     // Table DataType — énumère TOUS les types possibles (META + records),
@@ -370,12 +377,12 @@ String MqttManager::buildSchemaJson()
 }
 
 // =============================================================================
-// Drain 1 entrée/s de DataLogger::egress vers esp-mqtt + watchdog zombie.
+// Drain 1 entrée/s de DataLogger::logBufferOut vers esp-mqtt + watchdog zombie.
 // Tâche TaskManager période 1 s. Non-bloquant (latence max 2 s via
 // network_timeout_ms). En cas d'échec enqueue, le payload reste dans le slot
 // in-flight et sera retenté au prochain tour — aucun record perdu sur
 // erreur transitoire. La backpressure globale (bursts + coupures WiFi) est
-// absorbée par DataLogger::egress en amont (capacité 20, éviction FIFO).
+// absorbée par DataLogger::logBufferOut en amont (capacité 20, éviction FIFO).
 // =============================================================================
 void MqttManager::handle()
 {
@@ -407,13 +414,9 @@ void MqttManager::handle()
 
     if (!mqttConnected) return;
 
-    if (watchdogSeconds > 0) {
-        watchdogSeconds--;
-    }
-
     // ─── Slot in-flight : recharge si libre ──────────────────────────────
-    // Pop un record de DataLogger::egress, format et stocke dans le slot
-    // in-flight. Si l'egress est vide, rien à faire. Si le payload formaté
+    // Pop un record de DataLogger::logBufferOut, format et stocke dans le slot
+    // in-flight. Si le LogBufferOut est vide, rien à faire. Si le payload formaté
     // dépasse la taille du slot, warning et skip (record perdu — cas
     // pathologique uniquement si META ajoute un texte > 199 caractères).
     if (!inFlightBusy) {
@@ -456,8 +459,12 @@ void MqttManager::handle()
     }
 
     // Cast int32_t : tolère une race PUBACK vs enqueue sans fausse alerte.
+    // Watchdog millis-based : la fenêtre de 65 min est évaluée par comparaison
+    // de millis() avec l'horodatage du dernier PUBACK (watchdogSeconds).
+    // Indépendant de la période d'appel de handle().
     int32_t gap = (int32_t)(messagesEnqueued - messagesPublished);
-    if (gap >= (int32_t)WATCHDOG_GAP_THRESHOLD && watchdogSeconds == 0) {
+    if (gap >= (int32_t)WATCHDOG_GAP_THRESHOLD &&
+        (millis() - watchdogSeconds) >= (WATCHDOG_SECONDS * 1000UL)) {
         forcedDisconnectCount++;
         Console::warn(TAG,
             "Zombie MQTT détecté (gap=" + String(gap) +
@@ -469,13 +476,13 @@ void MqttManager::handle()
 
         messagesEnqueued  = 0;
         messagesPublished = 0;
-        watchdogSeconds   = WATCHDOG_SECONDS;
+        watchdogSeconds   = millis();   // horodatage du reset post-disconnect
     }
 }
 
 // =============================================================================
 // Formatage CSV 7 champs :
-// timestamp,UTC_available,UTC_reliable,type,id,valueType,value
+// timestamp,VClock_available,VClock_reliable,type,id,valueType,value
 // =============================================================================
 String MqttManager::formatCsvPayload(const DataRecord& record)
 {
@@ -484,9 +491,9 @@ String MqttManager::formatCsvPayload(const DataRecord& record)
 
     csv += String(record.timestamp);
     csv += ',';
-    csv += String((int)record.UTC_available);
+    csv += String((int)record.VClock_available);
     csv += ',';
-    csv += String((int)record.UTC_reliable);
+    csv += String((int)record.VClock_reliable);
     csv += ',';
     csv += String((uint8_t)record.type);
     csv += ',';

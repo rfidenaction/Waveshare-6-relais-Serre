@@ -98,36 +98,30 @@
 // ValveManager — Démarrage différé du pilote des électrovannes
 // =============================================================================
 /*
- * Délai avant que ValveManager accepte les commandes d'ouverture (3 min 30 s).
+ * Délai avant que ValveManager accepte les commandes d'ouverture (4 min 30 s).
  *
  * Les GPIO relais sont forcés à "fermé" dès setup() par initPinsSafe()
  * (protection matérielle immédiate, indépendante de toute initialisation
  * logicielle). Mais le pilote lui-même n'accepte les commandes openFor()
  * qu'après ce délai.
  *
- * Objectif :
- *  - laisser WiFi, MQTT, WebServer, NTP se stabiliser sans interférence
- *  - éviter que les premiers cycles d'arrosage ne perturbent les inits
- *    (allocations, handshakes TLS, resynchronisations)
- *
- * Positionné juste avant BRIDGE_START_DELAY_MS (4 minutes) pour garantir
- * que les vannes peuvent fonctionner avant que le trafic UDP vers LilyGo
- * ne commence.
+ * Calé juste après VCLOCK_START_DELAY_MS (4 min) pour garantir que VClock
+ * a basculé available avant que les premières commandes ne soient horodatées.
  *
  * IMPORTANT : ce délai ne dépend d'aucune condition réseau. L'arrosage
  * fonctionne même si le WiFi n'a jamais été établi.
  */
-#define VALVE_START_DELAY_MS           210000UL    // 3 min 30 s
+#define VALVE_START_DELAY_MS           270000UL    // 4 min 30 s
 
 // =============================================================================
 // BridgeManager — Communication Waveshare ↔ LilyGo
 // =============================================================================
 /*
  * Délai avant démarrage de BridgeManager (ouverture socket UDP).
- * Laisse le temps au WiFi STA, MQTT et NTP de se stabiliser
+ * Laisse le temps au WiFi STA, MQTT, NTP et à VClock de se stabiliser
  * avant d'introduire du trafic UDP sur la radio partagée.
  */
-#define BRIDGE_START_DELAY_MS           240000UL    // 4 minutes
+#define BRIDGE_START_DELAY_MS           300000UL    // 5 minutes
 
 /*
  * Période d'appel de BridgeManager::handle() par TaskManager.
@@ -144,12 +138,45 @@
 #define BRIDGE_SMS_ACK_TIMEOUT_MS       180000UL    // 3 minutes
 
 // =============================================================================
-// UTC / NTP
+// VirtualClock — horloge système unifiée
 // =============================================================================
 /*
- * Période d'appel de ManagerUTC::handle() (machine d'état autonome).
+ * Période d'appel de VirtualClock::handle() par TaskManager.
+ * handle() gère la bascule initiale (T+4min si NTP a échoué), la resync
+ * RTC périodique et la bascule de _reliable après 24h sans sync.
  */
-#define UTC_HANDLE_PERIOD_MS           2000
+#define VCLOCK_HANDLE_PERIOD_MS        10000
+
+/*
+ * Délai avant que VirtualClock tente RTC comme dernier recours.
+ * Pendant ces 4 minutes, NTP est la seule source autorisée à déclencher
+ * la bascule `_available`. Passé ce délai, handle() tente une lecture
+ * RTC ; si elle échoue, ancrage sur 12h30 arbitraire avec `_reliable=false`.
+ */
+#define VCLOCK_START_DELAY_MS          240000UL    // 4 min
+
+/*
+ * Cadence de resynchronisation RTC en régime permanent (cadence absolue).
+ * À chaque déclenchement, handle() tente une lecture RTC validée par OSF ;
+ * si succès, l'ancre et `_lastSyncMillis` sont recalés.
+ */
+#define VCLOCK_RTC_RESYNC_PERIOD_MS    10800000UL  // 3 h
+
+/*
+ * Délai sans sync au-delà duquel `_reliable` bascule à false.
+ * `_reliable` repasse à true dès qu'une sync (NTP ou RTC) réussit.
+ * Ce booléen n'a aucune influence en runtime — il est uniquement lu à
+ * l'analyse différée des logs.
+ */
+#define VCLOCK_RELIABLE_TIMEOUT_MS     86400000UL  // 24 h
+
+// =============================================================================
+// NTP
+// =============================================================================
+/*
+ * Période d'appel de NTPManager::handle() (machine d'état autonome).
+ */
+#define NTP_HANDLE_PERIOD_MS           2000
 
 /*
  * Période entre deux tours de la routine NTP post-boot (50 min).
@@ -167,11 +194,11 @@
 // DataLogger
 // =============================================================================
 /*
- * Période d'appel de DataLogger::handle() (drain intake + réparation UTC +
- * alimentation egress + décision flush SPIFFS).
+ * Période d'appel de DataLogger::handle() (drain LogBufferIn + réparation UTC +
+ * alimentation LogBufferOut + décision flush SPIFFS).
  *
  * Calée sur 1 s depuis le refactor route unifiée :
- *  - aligne la cadence de drain intake sur celle de MqttManager::handle,
+ *  - aligne la cadence de drain LogBufferIn sur celle de MqttManager::handle,
  *    ce qui rend symétriques les délais de publication des mesures, des
  *    états et des commandes (plus d'asymétrie ON/OFF sur les vannes
  *    courtes : ON et OFF tombent sur deux ticks DataLogger distincts et
@@ -187,16 +214,11 @@
 
 /*
  * Délai minimum entre deux flush horaires (55 min).
- * Empêche de re-flusher plusieurs fois dans la fenêtre de 5 min
- * autour de l'heure pleine.
+ * handle() déclenche un flush si (pendingCount > 0) et que ce délai est
+ * écoulé depuis le dernier flush. Garantit un flush par heure pour MQTT,
+ * indépendamment de l'état VClock.
  */
 #define FLUSH_HOURLY_MIN_INTERVAL_MS   3300000UL   // 55 min
-
-/*
- * Fenêtre de calage sur l'heure pleine (5 min = 300s).
- * Le flush horaire se déclenche quand UTC % 3600 < cette valeur.
- */
-#define FLUSH_HOURLY_WINDOW_SEC        300
 
 // =============================================================================
 // SafeReboot — Reboot préventif automatique
