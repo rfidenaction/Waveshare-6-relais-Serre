@@ -1,6 +1,6 @@
 // Sensors/FakeVoltage.h
 // Simulateur de tension d'alimentation (sinusoïde 20-30V)
-// Usage : test du pipeline DataLogger → SPIFFS → Web
+// Usage : test du pipeline DataLogger → LittleFS → Web
 // À SUPPRIMER en production
 #pragma once
 

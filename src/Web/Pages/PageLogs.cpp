@@ -22,8 +22,8 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
         // Arrondi entier mathématique cohérent avec l'affichage console.
         int appPct = (int)((stats.appUsedBytes * 100ULL + stats.appPartitionBytes / 2)
                            / stats.appPartitionBytes);
-        int spPct  = (int)((stats.spiffsUsedBytes * 100ULL + stats.spiffsPartitionBytes / 2)
-                           / stats.spiffsPartitionBytes);
+        int spPct  = (int)((stats.littlefsUsedBytes * 100ULL + stats.littlefsPartitionBytes / 2)
+                           / stats.littlefsPartitionBytes);
 
         String titleLine =
             "📊 État de la flash (" + String(stats.flashTotalBytes / MB, 2) + " MB)";
@@ -34,12 +34,12 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
             " MB partition (" + String(appPct) + "% partition)";
 
         String dataLine =
-            "Données : " + String(stats.spiffsUsedBytes / MB, 2) +
-            " MB / " + String(stats.spiffsPartitionBytes / MB, 2) +
+            "Données : " + String(stats.littlefsUsedBytes / MB, 2) +
+            " MB / " + String(stats.littlefsPartitionBytes / MB, 2) +
             " MB partition (" + String(spPct) + "% partition)";
 
         // "Fichier existant" déduit de la taille du fichier datalog (champ
-        // dédié dans FlashUsageStats, indépendant de spiffsUsedBytes).
+        // dédié dans FlashUsageStats, indépendant de littlefsUsedBytes).
         bool   datalogExists = (stats.datalogFileBytes > 0);
         String existsLine    = String("Fichier existant : ") + (datalogExists ? "Oui" : "Non");
 
@@ -53,21 +53,21 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
     } else {
         constexpr float MB = 1024.0f * 1024.0f;
         String availableSpace =
-            "Espace disponible : " + String(stats.spiffsPartitionBytes / MB, 2) + " MB";
+            "Espace disponible : " + String(stats.littlefsPartitionBytes / MB, 2) + " MB";
 
         statsInfo =
             "<div class=\"card\">"
             "<p style=\"font-size: 1.3em;\">📊 État de la flash</p>"
-            "<p class=\"subtext\">⚠️ SPIFFS non disponible</p>"
+            "<p class=\"subtext\">⚠️ LittleFS non disponible</p>"
             "<p style=\"font-size: 0.9em;\">Fichier existant : Non</p>"
             "<p style=\"font-size: 0.9em;\">" + availableSpace + "</p>"
             "</div>";
     }
 
     // Taille brute du fichier datalog transmise au JS pour la barre de
-    // progression du téléchargement. Champ dédié distinct de spiffsUsedBytes :
+    // progression du téléchargement. Champ dédié distinct de littlefsUsedBytes :
     // la barre doit refléter la taille du fichier servi par /logs/download
-    // (datalog.csv), pas l'occupation totale SPIFFS.
+    // (datalog.csv), pas l'occupation totale LittleFS.
     String rawSizeJs = String(stats.datalogFileBytes);
 
     String html = R"HTML(

@@ -12,7 +12,7 @@
 #include "Core/VirtualClock.h"
 #include "Config/TimingConfig.h"
 #include "Utils/Console.h"
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <time.h>
 #include <esp_partition.h>
 #include <esp_ota_ops.h>
@@ -140,7 +140,7 @@ static String unescapeCSV(const String& text)
 // -----------------------------------------------------------------------------
 void DataLogger::init()
 {
-    // Trace de boot : état de la flash (programme + SPIFFS).
+    // Trace de boot : état de la flash (programme + LittleFS).
     // Affichée systématiquement au démarrage, avant toute autre opération
     // d'initialisation. Consultable aussi à tout moment via la page web /logs.
     logFlashUsage();
@@ -178,7 +178,7 @@ void DataLogger::init()
     // et on garde la dernière valeur rencontrée pour chaque DataId.
     // Format CSV 7 champs : timestamp,VClock_available,VClock_reliable,type,id,valueType,value
 
-    File file = SPIFFS.open("/datalog.csv", FILE_READ);
+    File file = LittleFS.open("/datalog.csv", FILE_READ);
     if (!file) {
         // Fichier n'existe pas — normal au premier boot
         return;
@@ -692,7 +692,7 @@ void DataLogger::tryFlush()
 // -----------------------------------------------------------------------------
 void DataLogger::flushToFlash(size_t count)
 {
-    File f = SPIFFS.open("/datalog.csv", FILE_APPEND);
+    File f = LittleFS.open("/datalog.csv", FILE_APPEND);
     if (!f) {
         Console::error(TAG, "Cannot open /datalog.csv for writing");
         return;
@@ -739,7 +739,7 @@ void DataLogger::clearHistory()
 {
     Console::info(TAG, "Suppression de l'historique...");
 
-    if (SPIFFS.remove("/datalog.csv")) {
+    if (LittleFS.remove("/datalog.csv")) {
         Console::info(TAG, "Fichier /datalog.csv supprimé avec succès");
     } else {
         Console::warn(TAG, "Impossible de supprimer /datalog.csv (peut-être inexistant)");
@@ -771,8 +771,8 @@ bool DataLogger::hasLastDataForWeb(DataId id, LastDataForWeb& out)
 // Tailles "utilisables" lues au runtime :
 //  - Partition app : esp_ota_get_running_partition() — partition d'où tourne
 //    actuellement le firmware (vérité matérielle de l'installation courante).
-//  - SPIFFS : SPIFFS.totalBytes() — espace réellement disponible pour les
-//    fichiers, après que SPIFFS ait posé son système de fichiers (les méta-
+//  - LittleFS : LittleFS.totalBytes() — espace réellement disponible pour les
+//    fichiers, après que LittleFS ait posé son système de fichiers (les méta-
 //    données internes consomment quelques % de la partition brute).
 // -----------------------------------------------------------------------------
 FlashUsageStats DataLogger::getFlashUsageStats()
@@ -782,8 +782,8 @@ FlashUsageStats DataLogger::getFlashUsageStats()
     stats.flashTotalBytes      = ESP.getFlashChipSize();
     stats.appUsedBytes         = ESP.getSketchSize();
     stats.appPartitionBytes    = 0;
-    stats.spiffsPartitionBytes = 0;
-    stats.spiffsUsedBytes      = 0;
+    stats.littlefsPartitionBytes = 0;
+    stats.littlefsUsedBytes      = 0;
     stats.datalogFileBytes     = 0;
 
     // Taille réelle de la partition app courante (celle d'où tourne le firmware)
@@ -792,21 +792,21 @@ FlashUsageStats DataLogger::getFlashUsageStats()
         stats.appPartitionBytes = appPart->size;
     }
 
-    // Espace réellement utilisable par SPIFFS (après overhead système de fichiers)
-    size_t spiffsTotal = SPIFFS.totalBytes();
-    if (spiffsTotal == 0) {
-        // SPIFFS non montée : on retourne tel quel, mounted=false signale le cas.
+    // Espace réellement utilisable par LittleFS (après overhead système de fichiers)
+    size_t littlefsTotal = LittleFS.totalBytes();
+    if (littlefsTotal == 0) {
+        // LittleFS non montée : on retourne tel quel, mounted=false signale le cas.
         return stats;
     }
 
-    stats.mounted              = true;
-    stats.spiffsPartitionBytes = spiffsTotal;
-    stats.spiffsUsedBytes      = SPIFFS.usedBytes();
+    stats.mounted                = true;
+    stats.littlefsPartitionBytes = littlefsTotal;
+    stats.littlefsUsedBytes      = LittleFS.usedBytes();
 
     // Taille du fichier datalog seul, pour la barre de progression du
-    // téléchargement (PageLogs JS). Champ dédié, indépendant de spiffsUsedBytes
+    // téléchargement (PageLogs JS). Champ dédié, indépendant de littlefsUsedBytes
     // qui inclut tous les fichiers présents (datalog + futures règles d'arrosage).
-    File f = SPIFFS.open("/datalog.csv", FILE_READ);
+    File f = LittleFS.open("/datalog.csv", FILE_READ);
     if (f) {
         stats.datalogFileBytes = f.size();
         f.close();
@@ -817,14 +817,14 @@ FlashUsageStats DataLogger::getFlashUsageStats()
 
 // -----------------------------------------------------------------------------
 // AFFICHAGE CONSOLE — état de la flash (4 lignes encadrées)
-// Appelé une fois au boot depuis init(). Erreur explicite si SPIFFS non montée.
+// Appelé une fois au boot depuis init(). Erreur explicite si LittleFS non montée.
 // -----------------------------------------------------------------------------
 void DataLogger::logFlashUsage()
 {
     FlashUsageStats s = getFlashUsageStats();
 
     if (!s.mounted) {
-        Console::error(TAG, "⚠️ SPIFFS non disponible — état de la flash indisponible");
+        Console::error(TAG, "⚠️ LittleFS non disponible — état de la flash indisponible");
         return;
     }
 
@@ -838,9 +838,9 @@ void DataLogger::logFlashUsage()
         ? (int)((s.appUsedBytes * 100ULL + s.appPartitionBytes / 2)
                 / s.appPartitionBytes)
         : 0;
-    int spPct  = (s.spiffsPartitionBytes > 0)
-        ? (int)((s.spiffsUsedBytes * 100ULL + s.spiffsPartitionBytes / 2)
-                / s.spiffsPartitionBytes)
+    int spPct  = (s.littlefsPartitionBytes > 0)
+        ? (int)((s.littlefsUsedBytes * 100ULL + s.littlefsPartitionBytes / 2)
+                / s.littlefsPartitionBytes)
         : 0;
 
     snprintf(buf, sizeof(buf), "═══ État de la flash (%.2f MB) ═══",
@@ -854,7 +854,7 @@ void DataLogger::logFlashUsage()
 
     snprintf(buf, sizeof(buf),
              "  Données   : %.2f MB / %.2f MB partition (%d%% partition)",
-             s.spiffsUsedBytes / MB, s.spiffsPartitionBytes / MB, spPct);
+             s.littlefsUsedBytes / MB, s.littlefsPartitionBytes / MB, spPct);
     Console::info(TAG, String(buf));
 
     Console::info(TAG, "═══════════════════════════════════");
@@ -866,7 +866,7 @@ void DataLogger::logFlashUsage()
 // -----------------------------------------------------------------------------
 bool DataLogger::getLastUtcRecord(DataId id, DataRecord& out)
 {
-    File file = SPIFFS.open("/datalog.csv", FILE_READ);
+    File file = LittleFS.open("/datalog.csv", FILE_READ);
     if (!file) {
         Console::error(TAG, "Cannot open /datalog.csv for reading");
         return false;

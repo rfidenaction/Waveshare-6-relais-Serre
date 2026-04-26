@@ -33,7 +33,7 @@
 #include "Core/CommandRouter.h"
 #include "Utils/Console.h"
 
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <time.h>
 
 // Tag pour logs
@@ -389,7 +389,7 @@ struct BundleContext {
 
 void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
 {
-    if (!SPIFFS.exists("/datalog.csv")) {
+    if (!LittleFS.exists("/datalog.csv")) {
         request->send(404, "text/plain", "Aucune donnée disponible");
         Console::warn(TAG, "Bundle download demandé mais fichier inexistant");
         return;
@@ -402,7 +402,7 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
         return;
     }
 
-    ctx->file = SPIFFS.open("/datalog.csv", FILE_READ);
+    ctx->file = LittleFS.open("/datalog.csv", FILE_READ);
     if (!ctx->file) {
         delete ctx;
         request->send(500, "text/plain", "Impossible d'ouvrir le fichier");

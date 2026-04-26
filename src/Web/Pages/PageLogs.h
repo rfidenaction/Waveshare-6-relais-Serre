@@ -2,7 +2,7 @@
 // Portage Waveshare ESP32-S3-Relay-6CH
 // Changements :
 //  - Suppression paramètre gsmActive (pas de modem cellulaire sur cette carte)
-//  - LogFileStats → FlashUsageStats (stats unifiées flash : programme + SPIFFS)
+//  - LogFileStats → FlashUsageStats (stats unifiées flash : programme + LittleFS)
 #pragma once
 
 #include <Arduino.h>

@@ -6,7 +6,7 @@
 //  - Si UTC disponible : prochain 1er du mois à 12h25 locale
 //  - Si UTC indisponible : 45 jours - 5 minutes (filet de sécurité millis)
 //  - Vérifie toutes les 5 minutes si la deadline est atteinte
-//  - Avant reboot : flush PENDING SPIFFS, log, vérification vannes (TODO)
+//  - Avant reboot : flush PENDING LittleFS, log, vérification vannes (TODO)
 //
 // Le délai max est ~31 jours (calendaire) ou ~45 jours (fallback),
 // toujours sous la limite de débordement de millis() (49.7 jours).

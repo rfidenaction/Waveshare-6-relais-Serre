@@ -195,7 +195,7 @@
 // =============================================================================
 /*
  * Période d'appel de DataLogger::handle() (drain LogBufferIn + réparation UTC +
- * alimentation LogBufferOut + décision flush SPIFFS).
+ * alimentation LogBufferOut + décision flush LittleFS).
  *
  * Calée sur 1 s depuis le refactor route unifiée :
  *  - aligne la cadence de drain LogBufferIn sur celle de MqttManager::handle,
@@ -203,7 +203,7 @@
  *    états et des commandes (plus d'asymétrie ON/OFF sur les vannes
  *    courtes : ON et OFF tombent sur deux ticks DataLogger distincts et
  *    sont publiés à l'intervalle physique réel, au pas de 1 s près).
- *  - la politique de flush SPIFFS reste pilotée par FLUSH_SIZE (trigger
+ *  - la politique de flush LittleFS reste pilotée par FLUSH_SIZE (trigger
  *    à 50 records en PENDING) et par la fenêtre horaire. La période de
  *    handle n'influe pas sur la fréquence d'écriture flash, seulement
  *    sur la réactivité d'évaluation des seuils.

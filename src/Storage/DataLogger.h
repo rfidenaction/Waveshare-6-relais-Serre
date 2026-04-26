@@ -11,7 +11,7 @@
 //   - Les valeurs numériques d'id sont IMMUABLES une fois en production
 //   - Ajout d'un capteur = ajout d'UNE SEULE LIGNE dans DATA_ID_LIST
 //   - L'enum DataId et META sont générés automatiquement, jamais édités à la main
-//   - Le format CSV SPIFFS n'est PAS impacté par les modifications de META
+//   - Le format CSV LittleFS n'est PAS impacté par les modifications de META
 //
 // Référentiel temporel :
 //   Ce module ne fournit jamais d'heure locale.
@@ -93,7 +93,7 @@ inline constexpr const char* const valve6StateLabels[] = { "Fermée", "Ouverte" 
 // X(id, name, type, typeLabel, label, unit, nature, min, max, stateLabels, stateLabelCount)
 //
 // Champs :
-//   id             : identifiant numérique IMMUABLE (écrit dans le CSV SPIFFS)
+//   id             : identifiant numérique IMMUABLE (écrit dans le CSV LittleFS)
 //   name           : nom C++ pour l'enum (disparaît après compilation)
 //   type           : DataType du domaine fonctionnel
 //   typeLabel      : label français du domaine (pour l'affichage)
@@ -234,12 +234,12 @@ struct LastDataForWeb {
 // ═════════════════════════════════════════════════════════════════════════════
 
 struct FlashUsageStats {
-    bool   mounted;              // SPIFFS opérationnelle (false = SPIFFS non montée)
-    size_t flashTotalBytes;      // Taille flash physique (puce, ex. 16 MB)
-    size_t appPartitionBytes;    // Taille de la partition app
-    size_t appUsedBytes;         // Programme utilisé dans la partition app
-    size_t spiffsPartitionBytes; // Taille de la partition SPIFFS
-    size_t spiffsUsedBytes;      // Occupation totale SPIFFS (datalog + tout autre fichier)
+    bool   mounted;                  // LittleFS opérationnelle (false = LittleFS non montée)
+    size_t flashTotalBytes;          // Taille flash physique (puce, ex. 16 MB)
+    size_t appPartitionBytes;        // Taille de la partition app
+    size_t appUsedBytes;             // Programme utilisé dans la partition app
+    size_t littlefsPartitionBytes;   // Taille de la partition LittleFS
+    size_t littlefsUsedBytes;        // Occupation totale LittleFS (datalog + tout autre fichier)
     size_t datalogFileBytes;     // Taille du fichier /datalog.csv seul.
                                  // Champ dédié à la barre de progression du
                                  // téléchargement (PageLogs JS), conservé pour
@@ -358,12 +358,12 @@ public:
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
 
-    // Statistiques d'utilisation de la flash (programme + SPIFFS).
+    // Statistiques d'utilisation de la flash (programme + LittleFS).
     // Source unique pour Console, page web, et futurs canaux (MQTT, HTTP).
     static FlashUsageStats getFlashUsageStats();
 
     // Affiche l'état de la flash sur la console série (4 lignes encadrées).
-    // Appelé une fois au boot depuis init(). Si SPIFFS n'est pas montée,
+    // Appelé une fois au boot depuis init(). Si LittleFS n'est pas montée,
     // émet à la place un message d'erreur explicite.
     static void logFlashUsage();
 

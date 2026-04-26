@@ -3,7 +3,7 @@
 // Rôle : orchestration globale, aucune logique métier
 
 #include <Arduino.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <time.h>
 #include <stdlib.h>
 
@@ -74,7 +74,7 @@ void setup()
     startTime  = bootTimeMs;
 
     // Système de fichiers (pas de log, série pas prête)
-    SPIFFS.begin(true);
+    LittleFS.begin(true);
 
     // WiFi (machine d'états, démarre en différé)
     WiFiManager::init();
@@ -132,11 +132,11 @@ static void loopInit()
 
     Console::info("Boot " + String(DEVICE_NAME) + " v" + String(FW_VERSION));
 
-    // --- SPIFFS ---
-    if (SPIFFS.totalBytes() > 0) {
-        Console::info("[SPIFFS] OK");
+    // --- LittleFS ---
+    if (LittleFS.totalBytes() > 0) {
+        Console::info("[LittleFS] OK");
     } else {
-        Console::error("[SPIFFS] ÉCHEC — pas de stockage flash");
+        Console::error("[LittleFS] ÉCHEC — pas de stockage flash");
     }
 
     // --- DataLogger ---

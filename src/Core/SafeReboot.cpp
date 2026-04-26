@@ -145,8 +145,8 @@ void SafeReboot::handle()
 
         Console::info(TAG, "Deadline atteinte — lancement séquence reboot");
 
-        // Flush des données en attente vers SPIFFS
-        Console::info(TAG, "Flush PENDING → SPIFFS");
+        // Flush des données en attente vers LittleFS
+        Console::info(TAG, "Flush PENDING → LittleFS");
         DataLogger::handle();
 
         Console::info(TAG, "Reboot automatique programmé");
