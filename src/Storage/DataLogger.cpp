@@ -14,6 +14,8 @@
 #include "Utils/Console.h"
 #include <SPIFFS.h>
 #include <time.h>
+#include <esp_partition.h>
+#include <esp_ota_ops.h>
 
 // Tag pour logs Console
 static const char* TAG = "DataLogger";
@@ -138,6 +140,11 @@ static String unescapeCSV(const String& text)
 // -----------------------------------------------------------------------------
 void DataLogger::init()
 {
+    // Trace de boot : état de la flash (programme + SPIFFS).
+    // Affichée systématiquement au démarrage, avant toute autre opération
+    // d'initialisation. Consultable aussi à tout moment via la page web /logs.
+    logFlashUsage();
+
     lastFlushMs = millis();
 
     pendingHead  = 0;
@@ -757,35 +764,100 @@ bool DataLogger::hasLastDataForWeb(DataId id, LastDataForWeb& out)
 }
 
 // -----------------------------------------------------------------------------
-// STATISTIQUES FICHIER DE LOGS
+// STATISTIQUES D'UTILISATION DE LA FLASH
+// Source d'information unique pour Console, web, et futurs canaux MQTT/HTTP.
+// Tous les champs en octets bruts ; le formatage MB/% se fait à l'affichage.
+//
+// Tailles "utilisables" lues au runtime :
+//  - Partition app : esp_ota_get_running_partition() — partition d'où tourne
+//    actuellement le firmware (vérité matérielle de l'installation courante).
+//  - SPIFFS : SPIFFS.totalBytes() — espace réellement disponible pour les
+//    fichiers, après que SPIFFS ait posé son système de fichiers (les méta-
+//    données internes consomment quelques % de la partition brute).
 // -----------------------------------------------------------------------------
-LogFileStats DataLogger::getLogFileStats()
+FlashUsageStats DataLogger::getFlashUsageStats()
 {
-    LogFileStats stats;
-    stats.exists = false;
-    stats.sizeBytes = 0;
-    stats.sizeMB = 0.0f;
-    stats.percentFull = 0.0f;
-    stats.totalMB = 2.0f;
+    FlashUsageStats stats;
+    stats.mounted              = false;
+    stats.flashTotalBytes      = ESP.getFlashChipSize();
+    stats.appUsedBytes         = ESP.getSketchSize();
+    stats.appPartitionBytes    = 0;
+    stats.spiffsPartitionBytes = 0;
+    stats.spiffsUsedBytes      = 0;
+    stats.datalogFileBytes     = 0;
 
-    File file = SPIFFS.open("/datalog.csv", FILE_READ);
-    if (!file) {
+    // Taille réelle de la partition app courante (celle d'où tourne le firmware)
+    const esp_partition_t* appPart = esp_ota_get_running_partition();
+    if (appPart != NULL) {
+        stats.appPartitionBytes = appPart->size;
+    }
+
+    // Espace réellement utilisable par SPIFFS (après overhead système de fichiers)
+    size_t spiffsTotal = SPIFFS.totalBytes();
+    if (spiffsTotal == 0) {
+        // SPIFFS non montée : on retourne tel quel, mounted=false signale le cas.
         return stats;
     }
 
-    stats.exists = true;
-    stats.sizeBytes = file.size();
-    stats.sizeMB = stats.sizeBytes / (1024.0f * 1024.0f);
+    stats.mounted              = true;
+    stats.spiffsPartitionBytes = spiffsTotal;
+    stats.spiffsUsedBytes      = SPIFFS.usedBytes();
 
-    file.close();
-
-    stats.percentFull = (stats.sizeMB / stats.totalMB) * 100.0f;
-
-    Console::debug(TAG, "Stats fichier: " + String(stats.sizeMB, 2)
-                   + " MB (" + String(stats.percentFull, 1)
-                   + "% de " + String(stats.totalMB, 1) + " MB)");
+    // Taille du fichier datalog seul, pour la barre de progression du
+    // téléchargement (PageLogs JS). Champ dédié, indépendant de spiffsUsedBytes
+    // qui inclut tous les fichiers présents (datalog + futures règles d'arrosage).
+    File f = SPIFFS.open("/datalog.csv", FILE_READ);
+    if (f) {
+        stats.datalogFileBytes = f.size();
+        f.close();
+    }
 
     return stats;
+}
+
+// -----------------------------------------------------------------------------
+// AFFICHAGE CONSOLE — état de la flash (4 lignes encadrées)
+// Appelé une fois au boot depuis init(). Erreur explicite si SPIFFS non montée.
+// -----------------------------------------------------------------------------
+void DataLogger::logFlashUsage()
+{
+    FlashUsageStats s = getFlashUsageStats();
+
+    if (!s.mounted) {
+        Console::error(TAG, "⚠️ SPIFFS non disponible — état de la flash indisponible");
+        return;
+    }
+
+    constexpr float MB = 1024.0f * 1024.0f;
+    char buf[160];
+
+    // Arrondi entier mathématique : (used*100 + part/2) / part
+    // Garde anti-division par zéro si une partition est introuvable
+    // (cas exceptionnel : table de partitions corrompue).
+    int appPct = (s.appPartitionBytes > 0)
+        ? (int)((s.appUsedBytes * 100ULL + s.appPartitionBytes / 2)
+                / s.appPartitionBytes)
+        : 0;
+    int spPct  = (s.spiffsPartitionBytes > 0)
+        ? (int)((s.spiffsUsedBytes * 100ULL + s.spiffsPartitionBytes / 2)
+                / s.spiffsPartitionBytes)
+        : 0;
+
+    snprintf(buf, sizeof(buf), "═══ État de la flash (%.2f MB) ═══",
+             s.flashTotalBytes / MB);
+    Console::info(TAG, String(buf));
+
+    snprintf(buf, sizeof(buf),
+             "  Programme : %.2f MB / %.2f MB partition  (%d%% partition)",
+             s.appUsedBytes / MB, s.appPartitionBytes / MB, appPct);
+    Console::info(TAG, String(buf));
+
+    snprintf(buf, sizeof(buf),
+             "  Données   : %.2f MB / %.2f MB partition (%d%% partition)",
+             s.spiffsUsedBytes / MB, s.spiffsPartitionBytes / MB, spPct);
+    Console::info(TAG, String(buf));
+
+    Console::info(TAG, "═══════════════════════════════════");
 }
 
 // -----------------------------------------------------------------------------

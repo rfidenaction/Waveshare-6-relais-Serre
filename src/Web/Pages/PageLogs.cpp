@@ -4,40 +4,71 @@
 //  - Suppression paramètre gsmActive et tout le bloc warning GSM
 //  - Suppression variable JS gsmActive et garde GSM dans downloadLogs()
 //  - Suppression downloadDisabled (plus de blocage download)
-//  - stats.totalGB → stats.totalMB (cohérent avec LogFileStats porté)
-//  - Affichage "MB" au lieu de "Go"
+//  - Bloc d'info stats remplacé par "État de la flash" (programme + données)
+//    via FlashUsageStats. Les blocs Téléchargement et Suppression, ainsi que
+//    tout le JavaScript et le CSS, sont strictement préservés.
+//  - rawSizeJs : utilise désormais stats.datalogFileBytes (taille du seul
+//    fichier /datalog.csv) pour conserver le comportement exact de la barre
+//    de progression du téléchargement.
 #include "Web/Pages/PageLogs.h"
 
-String PageLogs::getHtml(const LogFileStats& stats)
+String PageLogs::getHtml(const FlashUsageStats& stats)
 {
     String statsInfo = "";
 
-    if (stats.exists) {
-        String statsLine =
-            "Taille : " + String(stats.sizeMB, 2) + " MB (" +
-            String(stats.percentFull, 3) + "% de " +
-            String(stats.totalMB, 1) + " MB)";
+    if (stats.mounted) {
+        constexpr float MB = 1024.0f * 1024.0f;
+
+        // Arrondi entier mathématique cohérent avec l'affichage console.
+        int appPct = (int)((stats.appUsedBytes * 100ULL + stats.appPartitionBytes / 2)
+                           / stats.appPartitionBytes);
+        int spPct  = (int)((stats.spiffsUsedBytes * 100ULL + stats.spiffsPartitionBytes / 2)
+                           / stats.spiffsPartitionBytes);
+
+        String titleLine =
+            "📊 État de la flash (" + String(stats.flashTotalBytes / MB, 2) + " MB)";
+
+        String progLine =
+            "Programme : " + String(stats.appUsedBytes / MB, 2) +
+            " MB / " + String(stats.appPartitionBytes / MB, 2) +
+            " MB partition (" + String(appPct) + "% partition)";
+
+        String dataLine =
+            "Données : " + String(stats.spiffsUsedBytes / MB, 2) +
+            " MB / " + String(stats.spiffsPartitionBytes / MB, 2) +
+            " MB partition (" + String(spPct) + "% partition)";
+
+        // "Fichier existant" déduit de la taille du fichier datalog (champ
+        // dédié dans FlashUsageStats, indépendant de spiffsUsedBytes).
+        bool   datalogExists = (stats.datalogFileBytes > 0);
+        String existsLine    = String("Fichier existant : ") + (datalogExists ? "Oui" : "Non");
 
         statsInfo =
             "<div class=\"card\">"
-            "<p style=\"font-size: 1.3em;\">📊 Informations sur les données</p>"
-            "<p class=\"subtext\">" + statsLine + "</p>"
-            "<p style=\"font-size: 0.9em;\">Fichier existant : Oui</p>"
+            "<p style=\"font-size: 1.3em;\">" + titleLine + "</p>"
+            "<p class=\"subtext\">" + progLine + "</p>"
+            "<p class=\"subtext\">" + dataLine + "</p>"
+            "<p style=\"font-size: 0.9em;\">" + existsLine + "</p>"
             "</div>";
     } else {
-        String availableSpace = "Espace disponible : " + String(stats.totalMB, 1) + " MB";
+        constexpr float MB = 1024.0f * 1024.0f;
+        String availableSpace =
+            "Espace disponible : " + String(stats.spiffsPartitionBytes / MB, 2) + " MB";
 
         statsInfo =
             "<div class=\"card\">"
-            "<p style=\"font-size: 1.3em;\">📊 Informations sur les données</p>"
-            "<p class=\"subtext\">Aucune donnée enregistrée</p>"
+            "<p style=\"font-size: 1.3em;\">📊 État de la flash</p>"
+            "<p class=\"subtext\">⚠️ SPIFFS non disponible</p>"
             "<p style=\"font-size: 0.9em;\">Fichier existant : Non</p>"
             "<p style=\"font-size: 0.9em;\">" + availableSpace + "</p>"
             "</div>";
     }
 
-    // Taille brute transmise au JS pour la barre de progression (approximative)
-    String rawSizeJs = String(stats.sizeBytes);
+    // Taille brute du fichier datalog transmise au JS pour la barre de
+    // progression du téléchargement. Champ dédié distinct de spiffsUsedBytes :
+    // la barre doit refléter la taille du fichier servi par /logs/download
+    // (datalog.csv), pas l'occupation totale SPIFFS.
+    String rawSizeJs = String(stats.datalogFileBytes);
 
     String html = R"HTML(
 <!DOCTYPE html>

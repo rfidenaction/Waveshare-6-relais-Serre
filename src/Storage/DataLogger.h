@@ -220,15 +220,30 @@ struct LastDataForWeb {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Statistiques fichier de logs
+// Statistiques d'utilisation de la flash
+//
+// Source d'information unique pour les trois canaux de présentation :
+//   - Console série (logFlashUsage() au boot)
+//   - Page web /logs (PageLogs::getHtml)
+//   - MQTT et futur serveur HTTP (publication à venir, hors périmètre actuel) :
+//     les champs en octets bruts permettent au consommateur distant de calculer
+//     ses propres seuils d'alerte sans dépendance au formatage firmware.
+//
+// Tous les champs sont en octets, sauf indication contraire. Le formatage en
+// MB et en pourcentages est fait au moment de l'affichage par chaque canal.
 // ═════════════════════════════════════════════════════════════════════════════
 
-struct LogFileStats {
-    bool   exists;
-    size_t sizeBytes;
-    float  sizeMB;
-    float  percentFull;
-    float  totalMB;     // Partition SPIFFS : 2 MB
+struct FlashUsageStats {
+    bool   mounted;              // SPIFFS opérationnelle (false = SPIFFS non montée)
+    size_t flashTotalBytes;      // Taille flash physique (puce, ex. 16 MB)
+    size_t appPartitionBytes;    // Taille de la partition app
+    size_t appUsedBytes;         // Programme utilisé dans la partition app
+    size_t spiffsPartitionBytes; // Taille de la partition SPIFFS
+    size_t spiffsUsedBytes;      // Occupation totale SPIFFS (datalog + tout autre fichier)
+    size_t datalogFileBytes;     // Taille du fichier /datalog.csv seul.
+                                 // Champ dédié à la barre de progression du
+                                 // téléchargement (PageLogs JS), conservé pour
+                                 // ne rien casser dans le flux d'export existant.
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -343,8 +358,14 @@ public:
     static bool hasLastDataForWeb(DataId id, LastDataForWeb& out);
     static bool getLastUtcRecord(DataId id, DataRecord& out);
 
-    // Statistiques du fichier de logs
-    static LogFileStats getLogFileStats();
+    // Statistiques d'utilisation de la flash (programme + SPIFFS).
+    // Source unique pour Console, page web, et futurs canaux (MQTT, HTTP).
+    static FlashUsageStats getFlashUsageStats();
+
+    // Affiche l'état de la flash sur la console série (4 lignes encadrées).
+    // Appelé une fois au boot depuis init(). Si SPIFFS n'est pas montée,
+    // émet à la place un message d'erreur explicite.
+    static void logFlashUsage();
 
     // ───────────── Accès META ─────────────
     // Recherche linéaire par DataId. O(n) avec n = META_COUNT (~10-50).

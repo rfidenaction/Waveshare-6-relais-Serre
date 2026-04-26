@@ -137,7 +137,7 @@ void WebServer::handleReset(AsyncWebServerRequest *request)
 void WebServer::handleLogs(AsyncWebServerRequest *request)
 {
     Console::info(TAG, "handleLogs appelé");
-    LogFileStats stats = DataLogger::getLogFileStats();
+    FlashUsageStats stats = DataLogger::getFlashUsageStats();
     Console::info(TAG, "Stats OK, génération HTML...");
     String html = PageLogs::getHtml(stats);
     Console::info(TAG, "HTML généré, taille=" + String(html.length()));
