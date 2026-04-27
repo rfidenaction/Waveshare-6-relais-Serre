@@ -197,14 +197,13 @@
  * Période d'appel de DataLogger::handle() (drain logQueue DataBus +
  * réparation UTC + décision flush LittleFS).
  *
- * Depuis le refactor DataBus, DataLogger n'est plus sur le chemin critique
- * de la distribution temps réel (MQTT, Web). La période passe à 30 s :
- *  - La distribution immédiate est assurée par DataBus::publish()
- *    (mqttQueue, lastDataForWeb, routage commandes).
- *  - DataLogger ne fait que persister en SPIFFS : drain logQueue → PENDING
- *    → réparation timestamps → flush. 30 s suffisent largement.
- *  - La politique de flush reste pilotée par FLUSH_SIZE (50 records) et
- *    la fenêtre horaire (55 min).
+ * DataLogger n'est pas sur le chemin critique de la distribution temps réel
+ * (MQTT, Web). La distribution immédiate est assurée par DataBus::publish()
+ * (mqttQueue, lastDataForWeb, routage commandes).
+ * DataLogger ne fait que persister en SPIFFS : drain logQueue → PENDING
+ * → réparation timestamps → flush. 30 s suffisent largement.
+ * La politique de flush reste pilotée par FLUSH_SIZE (50 records) et
+ * la fenêtre horaire (55 min).
  */
 #define DATALOGGER_HANDLE_PERIOD_MS    30000
 

@@ -2,7 +2,6 @@
 // Bus asynchrone de distribution des données.
 //
 // Point d'entrée unique de toute donnée produite dans le système.
-// Remplace tous les appels à DataLogger::push() / submit() / traceCommand().
 //
 // À chaque publication, DataBus :
 //   1. Horodate via VirtualClock::read() (une seule fois)
@@ -40,7 +39,7 @@ struct BusItem {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ParsedCommand / CommandParseResult — migrés depuis DataLogger
+// ParsedCommand / CommandParseResult — parsing des commandes CSV
 // ═════════════════════════════════════════════════════════════════════════════
 
 enum class CommandParseResult : uint8_t {
@@ -101,6 +100,6 @@ private:
     // Distribue un BusItem déjà rempli vers toutes les destinations.
     static void distribute(const BusItem& item);
 
-    // Route une commande via RELAYS[] (ex-CommandRouter::route).
+    // Route une commande via RELAYS[] vers le handler du manager propriétaire.
     static bool routeCommand(DataId cmdId, uint32_t durationMs);
 };

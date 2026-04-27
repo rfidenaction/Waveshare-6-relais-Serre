@@ -1,15 +1,11 @@
 // Actuators/ValveManager.h
 // Pilote logique des électrovannes (manager métier "vanne").
 //
-// Architecture en deux couches :
-//   RelayManager (Actuators/RelayManager) — driver matériel pur. Possède les
-//       GPIO, expose activate/deactivate par canal 1-based. Aucune notion
-//       métier.
-//   ValveManager (ce fichier) — scanne RELAYS[] (IO-Config.h) au démarrage,
-//       ramasse les canaux dont l'entity est une vanne (Valve1..Valve6) et
-//       les gère : file de commandes thread-safe, timers d'auto-fermeture,
-//       journalisation via DataLogger. Il pilote les relais uniquement via
-//       RelayManager ; il ne touche jamais aux GPIO directement.
+// Manager métier unique des électrovannes.
+//   Scanne RELAYS[] (IO-Config.h) au démarrage, ramasse les canaux dont
+//   l'entity est une vanne (Valve1..Valve6) et les gère : file de commandes
+//   thread-safe, timers d'auto-fermeture, journalisation via DataBus.
+//   Pilote les relais directement via digitalWrite sur RELAYS[].gpio.
 //
 // Principe — META comme clé unique :
 //   Chaque vanne est identifiée de bout en bout par son DataId META
@@ -34,13 +30,13 @@
 //                      comportement normal.
 //
 //   Protection matérielle au boot (mise en LOW des GPIO) : portée par
-//   RelayManager::initPinsSafe(), appelée avant tout autre init dans
-//   main.cpp::setup().
+//   initAllRelayPinsSafe() (IO-Config.h), appelée avant tout autre init
+//   dans main.cpp::setup().
 //   - openFor()     : ouvre une vanne pour une durée donnée.
 //                      Ignorée si la vanne est déjà ouverte (anti-rebond).
 //                      Durée clampée à VALVE_MAX_DURATION_MS (sécurité métier).
 //   - enqueueByEntity() : point d'entrée thread-safe unique, invoqué par
-//                         CommandRouter::route via le handler enregistré
+//                         DataBus::routeCommand via le handler enregistré
 //                         ligne par ligne dans RELAYS[]. Aucun dispatcher
 //                         (MQTT, HTTP) ne l'appelle directement.
 //                         Si la queue n'existe pas encore (avant démarrage),
@@ -48,8 +44,8 @@
 //
 // Journalisation sur changement d'état :
 //   - Console::info
-//   - DataLogger::push(DataId::ValveN, 0.0f|1.0f)
-//     → publication MQTT automatique via le callback existant
+//   - DataBus::publish(DataId::ValveN, 0.0f|1.0f)
+//     → distribution immédiate (MQTT, log SPIFFS, lastDataForWeb)
 //
 // Référentiel temporel :
 //   VALVE_START_DELAY_MS vit dans TimingConfig.h (timing système de stabilisation).
@@ -99,8 +95,8 @@ public:
     // Point d'entrée thread-safe unique pour le routage générique RELAYS[]
     // (cf. IO-Config.h). Signature commune à tous les managers d'actionneurs :
     // un pointeur &ValveManager::enqueueByEntity est stocké ligne par ligne
-    // dans RELAYS[] et invoqué par CommandRouter::route après parseCommand
-    // et traceCommand. Appelable depuis n'importe quel thread (MQTT, HTTP, …).
+    // dans RELAYS[] et invoqué par DataBus::routeCommand après parseCommand.
+    // Appelable depuis n'importe quel thread (MQTT, HTTP, …).
     //
     // N'effectue AUCUNE vérification supplémentaire : le routeur garantit par
     // construction du câblage (RELAYS[]) que entity est bien une vanne gérée
@@ -133,12 +129,12 @@ private:
     // qu'une projection rafraîchie une fois au démarrage par
     // buildSlotsFromRelays. Le champ command de RELAYS[] n'est pas recopié
     // ici : la traduction cmdId → entity est faite en amont par
-    // CommandRouter::route (qui parcourt RELAYS[]) avant d'appeler
-    // enqueueByEntity. Le GPIO physique est un détail porté par
-    // RelayManager, invisible ici.
+    // DataBus::routeCommand (qui parcourt RELAYS[]) avant d'appeler
+    // enqueueByEntity. Le GPIO physique est piloté directement via
+    // RELAYS[].gpio dans applyValveState.
     struct ValveSlot {
         DataId   id;        // DataId META de la vanne (clé de recherche)
-        uint8_t  relayCh;   // canal RelayManager (1-based, cf. RELAYS[].ch)
+        uint8_t  relayCh;   // canal relais (1-based, cf. RELAYS[].ch)
         uint8_t  state;     // VALVE_CLOSED ou VALVE_OPENED
         uint32_t deadline;  // millis() cible de fermeture, 0 si fermée
     };

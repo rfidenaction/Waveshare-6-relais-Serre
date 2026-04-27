@@ -83,8 +83,10 @@ void MqttManager::init()
 
     cfg.buffer_size = 1024;
 
-    // Filet de sécurité pour le thread esp_mqtt (2 s au lieu des 10 s par défaut).
-    cfg.network_timeout_ms = 2000;
+    // Timeout réseau pour le thread esp_mqtt (5 s). Valeur par défaut = 10 s.
+    // Assez tolérant pour absorber les pics de latence Cat-M (handover,
+    // congestion radio), assez court pour détecter un broker injoignable.
+    cfg.network_timeout_ms = 5000;
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
     if (!client) {
@@ -106,7 +108,7 @@ void MqttManager::init()
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
     Console::info(TAG, "Broker: " + String(MQTT_BROKER_URI));
     Console::info(TAG, "Client ID: " + String(MQTT_CLIENT_ID));
-    Console::info(TAG, "Slot in-flight : 1 record (backpressure via DataLogger::logBufferOut)");
+    Console::info(TAG, "Slot in-flight : 1 item (backpressure via DataBus::mqttQueue)");
     Console::info(TAG, "Watchdog zombie : seuil gap=" + String(WATCHDOG_GAP_THRESHOLD)
                       + ", fenêtre=" + String(WATCHDOG_SECONDS / 60) + " min");
 }
@@ -311,7 +313,7 @@ String MqttManager::buildSchemaJson()
 
     // Table DataType — énumère TOUS les types possibles (META + records),
     // y compris ceux absents de META (CommandManual, CommandAuto). Libellés
-    // fournis par DataLogger::typeLabel (source de vérité unique).
+    // fournis par typeLabel() (MetaDataModel.h, source de vérité unique).
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
     for (uint8_t t = 0; t <= (uint8_t)DataType::CommandAuto; t++) {
@@ -370,12 +372,12 @@ String MqttManager::buildSchemaJson()
 }
 
 // =============================================================================
-// Drain 1 entrée/s de DataLogger::logBufferOut vers esp-mqtt + watchdog zombie.
-// Tâche TaskManager période 1 s. Non-bloquant (latence max 2 s via
+// Drain de DataBus::mqttQueue vers esp-mqtt + watchdog zombie.
+// Tâche TaskManager période 200 ms. Non-bloquant (latence max 2 s via
 // network_timeout_ms). En cas d'échec enqueue, le payload reste dans le slot
-// in-flight et sera retenté au prochain tour — aucun record perdu sur
+// in-flight et sera retenté au prochain tour — aucun item perdu sur
 // erreur transitoire. La backpressure globale (bursts + coupures WiFi) est
-// absorbée par DataLogger::logBufferOut en amont (capacité 20, éviction FIFO).
+// absorbée par DataBus::mqttQueue en amont (capacité 30, éviction FIFO).
 // =============================================================================
 void MqttManager::handle()
 {
@@ -408,9 +410,9 @@ void MqttManager::handle()
     if (!mqttConnected) return;
 
     // ─── Slot in-flight : recharge si libre ──────────────────────────────
-    // Pop un record de DataLogger::logBufferOut, format et stocke dans le slot
-    // in-flight. Si le LogBufferOut est vide, rien à faire. Si le payload formaté
-    // dépasse la taille du slot, warning et skip (record perdu — cas
+    // Pop un BusItem de DataBus::mqttQueue, formate en CSV et stocke dans le
+    // slot in-flight. Si la queue est vide, rien à faire. Si le payload formaté
+    // dépasse la taille du slot, warning et skip (item perdu — cas
     // pathologique uniquement si META ajoute un texte > 199 caractères).
     if (!inFlightBusy) {
         BusItem item;

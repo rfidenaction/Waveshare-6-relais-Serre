@@ -1,18 +1,9 @@
 // Storage/DataLogger.h
 // Logger pur — persistance SPIFFS et statistiques flash/RAM.
 //
-// Depuis le refactor DataBus, ce module ne contient plus :
-//   - Les définitions de types/enums/META (migrés dans Config/MetaDataModel.h)
-//   - Les buffers LogBufferIn/LogBufferOut (remplacés par les queues DataBus)
-//   - Le ring buffer LIVE (supprimé)
-//   - Les fonctions submit/push/traceCommand (remplacées par DataBus::publish)
-//   - parseCommand/ParsedCommand/CommandParseResult (migrés dans DataBus)
-//   - lastDataForWeb (migré dans WebServer)
-//   - tryPopForPublish (remplacé par DataBus::tryPopMqtt)
-//   - getLastUtcRecord (supprimée, inutilisée)
-//
-// DataLogger reçoit désormais ses données via DataBus::logQueue (FreeRTOS)
-// et ne fait plus que : drain → PENDING → réparation timestamps → flush SPIFFS.
+// Reçoit ses données via DataBus::logQueue (FreeRTOS).
+// Rôle unique : drain → PENDING → réparation timestamps → flush SPIFFS.
+// Types et enums centralisés dans Config/MetaDataModel.h.
 #pragma once
 
 #include <Arduino.h>

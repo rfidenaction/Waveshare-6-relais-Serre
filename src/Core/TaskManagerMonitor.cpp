@@ -109,7 +109,7 @@ void TaskManagerMonitor::evaluateDelta(uint32_t nowMs)
         + String(delta) + " ms au lieu de "
         + String(TASKMON_CHECK_PERIOD_MS) + " ms");
 
-    // DataLogger / MQTT — canal métrique : valeur exploitable machine
+    // DataBus → MQTT + log — canal métrique : valeur exploitable machine
     // (filtrage côté serveur, règles externes, graphes, corrélations)
     DataBus::publish(
         DataId::TaskMonPeriod,

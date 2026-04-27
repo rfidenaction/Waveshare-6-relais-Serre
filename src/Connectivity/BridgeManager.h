@@ -134,5 +134,5 @@ private:
     static void sendSmsPacket(const SmsSlot& sms);          // Envoie SMS|number|text en UDP
     static void sendHeartbeat();                            // Envoie HB en UDP
     static void removeFrontSms();                           // Supprime le premier SMS de la queue
-    static void logSmsEvent(const String& message);         // Console + DataLogger::push(Error)
+    static void logSmsEvent(const String& message);         // Console + DataBus::publish(SmsEvent)
 };

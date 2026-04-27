@@ -1,11 +1,9 @@
 // Storage/DataLogger.cpp
 // Logger SPIFFS pur — voir DataLogger.h
 //
-// Depuis le refactor DataBus :
-//   - handle() draine DataBus::logQueue via tryPopLog()
-//   - Les records arrivent déjà horodatés et typés par DataBus::publish()
-//   - Plus de LogBufferIn/LogBufferOut, plus de LIVE, plus de lastDataForWeb
-//   - Réparation UTC et flush SPIFFS inchangés
+// handle() draine DataBus::logQueue via tryPopLog().
+// Les records arrivent déjà horodatés et typés par DataBus::publish().
+// Réparation UTC et flush SPIFFS.
 #include "Storage/DataLogger.h"
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"

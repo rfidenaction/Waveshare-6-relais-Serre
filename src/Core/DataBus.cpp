@@ -146,7 +146,7 @@ void DataBus::publishCommand(const ParsedCommand& cmd)
 }
 
 // ─── parseCommand() ──────────────────────────────────────────────────────────
-// Fonction PURE migrée depuis DataLogger::parseCommand(). Aucun effet de bord.
+// Fonction PURE. Parse un CSV 7 champs et remplit ParsedCommand. Aucun effet de bord.
 CommandParseResult DataBus::parseCommand(
     const char* csv, size_t len, ParsedCommand& out)
 {
@@ -222,7 +222,7 @@ CommandParseResult DataBus::parseCommand(
 }
 
 // ─── routeCommand() ──────────────────────────────────────────────────────────
-// Ex-CommandRouter::route(). Parcourt RELAYS[] et invoque le handler.
+// Parcourt RELAYS[] et invoque le handler du manager propriétaire.
 bool DataBus::routeCommand(DataId cmdId, uint32_t durationMs)
 {
     for (size_t i = 0; i < RELAYS_COUNT; i++) {

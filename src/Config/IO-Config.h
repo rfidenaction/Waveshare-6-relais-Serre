@@ -58,21 +58,20 @@
 //   ligne concernée. Aucun cas « pas de commande » n'est prévu.
 //
 // Dispatch des commandes (zéro code ailleurs) :
-//   CommandRouter::route (Core/CommandRouter) parcourt RELAYS[] à la
-//   recherche d'une ligne où command == cmdId reçue. Trouvée → il appelle
-//   ligne.enqueue(ligne.entity, durationMs). Les dispatchers (MqttManager,
-//   WebServer) enchaînent DataLogger::parseCommand → DataLogger::traceCommand
-//   → CommandRouter::route, sans jamais connaître les managers d'actionneurs.
+//   DataBus::routeCommand parcourt RELAYS[] à la recherche d'une ligne où
+//   command == cmdId reçue. Trouvée → il appelle ligne.enqueue(ligne.entity,
+//   durationMs). Les dispatchers (MqttManager, WebServer) enchaînent
+//   DataBus::parseCommand → DataBus::publishCommand (qui appelle routeCommand),
+//   sans jamais connaître les managers d'actionneurs.
 //   Ajouter LightManager = créer son enqueueByEntity + changer quelques
 //   lignes de RELAYS[], sans toucher au reste du code.
 //
 // Lecture par les managers métier :
-//   RelayManager     : lit gpio/ch, sans regarder entity/command/enqueue.
-//                      Couche matérielle pure.
 //   ValveManager     : scanne la table, ramasse les lignes dont entity est
 //                      une vanne (Valve1..Valve6) et construit ses slots
-//                      (entity + ch). Ne regarde ni command ni enqueue :
-//                      ces champs servent le dispatch, pas l'exécution.
+//                      (entity + ch + gpio). Ne regarde ni command ni
+//                      enqueue : ces champs servent le dispatch, pas
+//                      l'exécution. Pilote les GPIO directement.
 //   Futurs managers  : même principe (LightManager ramasserait ses Light*).
 // =============================================================================
 
@@ -134,7 +133,7 @@ inline constexpr size_t RELAYS_COUNT = sizeof(RELAYS) / sizeof(RELAYS[0]);
 
 // =============================================================================
 // Protection matérielle au boot — force tous les GPIO relais en OUTPUT LOW.
-// Remplace RelayManager::initPinsSafe(). À appeler très tôt dans setup().
+// À appeler très tôt dans setup().
 // =============================================================================
 
 inline void initAllRelayPinsSafe()

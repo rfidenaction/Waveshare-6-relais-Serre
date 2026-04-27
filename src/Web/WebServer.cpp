@@ -1,12 +1,9 @@
 // Web/WebServer.cpp
 // Portage Waveshare ESP32-S3-Relay-6CH
 //
-// Refactor DataBus :
-//   - lastDataForWeb[] hébergé ici, protégé par portMUX
-//   - buildBundleHeader() / buildSchemaJson() utilisent les fonctions
-//     libres de MetaDataModel.h (typeLabel, jsonEscape)
-//   - handleCommandFinal() utilise DataBus::parseCommand/publishCommand
-//   - Plus de dépendance à CommandRouter
+// lastDataForWeb[] hébergé ici, protégé par portMUX.
+// buildBundleHeader() utilise typeLabel/jsonEscape (MetaDataModel.h).
+// handleCommandFinal() utilise DataBus::parseCommand/publishCommand.
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"

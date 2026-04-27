@@ -11,7 +11,7 @@
 // Ce fichier ne contient AUCUNE logique d'exécution, AUCUNE queue,
 // AUCUN buffer. Il décrit le système, il ne le fait pas tourner.
 //
-// Historique : extrait de Storage/DataLogger.h lors du refactor DataBus.
+// Inclus par DataBus, DataLogger, WebServer, IO-Config et les pages web.
 #pragma once
 
 #include <Arduino.h>

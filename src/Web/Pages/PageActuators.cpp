@@ -5,8 +5,8 @@
 //  - Liste construite dynamiquement depuis META (type == Actuator, nature == etat).
 //    Aucune vanne en dur : si on ajoute un actionneur dans DATA_ID_LIST,
 //    la page le reflète automatiquement.
-//  - État actuel lu via DataLogger::hasLastDataForWeb (vue RAM alimentée
-//    par DataLogger::push côté ValveManager).
+//  - État actuel lu via WebServer::hasLastData (vue RAM alimentée
+//    par DataBus::publish côté ValveManager).
 //  - Commande envoyée en POST text/plain vers /command, payload = CSV 7 champs
 //    identique au format MQTT serre/cmd (timestamp,VClock_available,
 //    VClock_reliable,type,id,valueType,value) — les 3 premiers champs vides,

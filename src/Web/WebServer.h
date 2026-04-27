@@ -1,11 +1,10 @@
 // Web/WebServer.h
 // Portage Waveshare ESP32-S3-Relay-6CH
 //
-// Depuis le refactor DataBus :
-//   - lastDataForWeb[] hébergé ici (protégé par portMUX)
-//   - updateLastData() appelé par DataBus::distribute()
-//   - hasLastData() appelé par les pages web
-//   - handleCommandFinal() utilise DataBus::parseCommand/publishCommand
+// lastDataForWeb[] hébergé ici (protégé par portMUX).
+// updateLastData() appelé par DataBus::distribute().
+// hasLastData() appelé par les pages web.
+// handleCommandFinal() utilise DataBus::parseCommand/publishCommand.
 #pragma once
 
 #include <Arduino.h>

@@ -6,20 +6,19 @@
 //   scanne RELAYS[] (IO-Config.h) et ramasse les canaux dont l'entity est
 //   une vanne (Valve1..Valve6). Il ne voit pas les autres affectations
 //   (futures lumières, ventilations...), qui seront gérées par d'autres
-//   managers métier sur le même RelayManager.
+//   managers métier utilisant le même tableau RELAYS[].
 //
 // Pilotage matériel :
-//   Toute action physique passe par RelayManager::activate/deactivate(ch).
-//   Ce module ne contient plus aucun digitalWrite/pinMode. La protection
-//   immédiate au boot (GPIO forcés LOW) est portée par
-//   RelayManager::initPinsSafe(), appelée dans main.cpp::setup().
+//   Toute action physique passe par digitalWrite sur RELAYS[].gpio.
+//   La protection immédiate au boot (GPIO forcés LOW) est portée par
+//   initAllRelayPinsSafe() (IO-Config.h), appelée dans main.cpp::setup().
 //
 // Thread-safety :
 //   - Commandes MQTT dans le thread esp_mqtt, HTTP dans AsyncWebServer.
-//   - Chaque dispatcher parse et valide via DataLogger::parseCommand, trace
-//     via DataLogger::traceCommand, puis route via CommandRouter::route.
-//     Ce dernier consulte RELAYS[] et invoque le handler qui y est stocké —
-//     pour ce module, enqueueByEntity() — qui fait xQueueSend.
+//   - Chaque dispatcher parse et valide via DataBus::parseCommand, puis
+//     publie via DataBus::publishCommand. DataBus::routeCommand consulte
+//     RELAYS[] et invoque le handler qui y est stocké — pour ce module,
+//     enqueueByEntity() — qui fait xQueueSend.
 //   - handle() consomme via xQueueReceive dans le thread TaskManager.
 //   - Aucune variable d'état n'est accédée concurremment.
 
@@ -184,9 +183,9 @@ void ValveManager::openFor(DataId id, uint32_t durationMs)
 }
 
 // -----------------------------------------------------------------------------
-// Point d'entrée thread-safe — invoqué par CommandRouter::route via le
+// Point d'entrée thread-safe — invoqué par DataBus::routeCommand via le
 // handler `enqueue` stocké dans RELAYS[] (Config/IO-Config.h). Appelé depuis
-// le thread du dispatcher (esp_mqtt, AsyncTCP…) après parseCommand+traceCommand.
+// le thread du dispatcher (esp_mqtt, AsyncTCP…) après parseCommand.
 // -----------------------------------------------------------------------------
 bool ValveManager::enqueueByEntity(DataId entity, uint32_t durationMs)
 {
@@ -210,13 +209,13 @@ bool ValveManager::isReady()
 
 // -----------------------------------------------------------------------------
 // Application physique d'un nouvel état + journalisation
-// Délègue l'action matérielle au RelayManager, via le canal relais du slot.
+// Pilote le GPIO directement via RELAYS[].gpio.
 // -----------------------------------------------------------------------------
 void ValveManager::applyValveState(ValveSlot& slot, uint8_t newState)
 {
     slot.state = newState;
 
-    // GPIO direct via RELAYS[] — plus besoin de RelayManager
+    // GPIO direct via RELAYS[]
     for (size_t i = 0; i < RELAYS_COUNT; i++) {
         if (RELAYS[i].ch == slot.relayCh) {
             digitalWrite(RELAYS[i].gpio,
