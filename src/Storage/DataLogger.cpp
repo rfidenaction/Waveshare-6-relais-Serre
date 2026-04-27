@@ -786,6 +786,7 @@ FlashUsageStats DataLogger::getFlashUsageStats()
     stats.littlefsUsedBytes      = 0;
     stats.datalogFileBytes     = 0;
     stats.ramPeakPercent       = 0;
+    stats.ramCurrentPercent    = 0;
 
     // Taille réelle de la partition app courante (celle d'où tourne le firmware)
     const esp_partition_t* appPart = esp_ota_get_running_partition();
@@ -821,6 +822,13 @@ FlashUsageStats DataLogger::getFlashUsageStats()
     size_t minFreeHeap = ESP.getMinFreeHeap();
     if (heapSize > 0) {
         stats.ramPeakPercent = (uint8_t)(((heapSize - minFreeHeap) * 100ULL) / heapSize);
+    }
+
+    // Utilisation RAM instantanée au moment de l'appel.
+    // getFreeHeap() = RAM libre actuelle (vs minFreeHeap = minimum historique).
+    size_t freeHeap = ESP.getFreeHeap();
+    if (heapSize > 0) {
+        stats.ramCurrentPercent = (uint8_t)(((heapSize - freeHeap) * 100ULL) / heapSize);
     }
 
     return stats;

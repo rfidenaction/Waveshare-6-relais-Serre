@@ -64,11 +64,14 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
             "</div>";
     }
 
-    // Card RAM : pic d'utilisation depuis le boot (un seul pourcentage).
+    // Card RAM : pic depuis le boot + utilisation instantanée.
     String ramInfo =
         "<div class=\"card\">"
-        "<p style=\"font-size: 1.3em;\">🧠 RAM — Pic d'utilisation : " +
+        "<p style=\"font-size: 1.3em;\">🧠 RAM</p>"
+        "<p class=\"subtext\">Pic depuis le boot : " +
         String(stats.ramPeakPercent) + "%</p>"
+        "<p class=\"subtext\">Utilisation actuelle : " +
+        String(stats.ramCurrentPercent) + "%</p>"
         "</div>";
 
     // Taille brute du fichier datalog transmise au JS pour la barre de

@@ -248,6 +248,8 @@ struct FlashUsageStats {
                                  // Calcul : (heapSize - minFreeHeap) * 100 / heapSize.
                                  // Utile pour savoir si on peut augmenter les buffers
                                  // ou si on est proche de la saturation.
+    uint8_t ramCurrentPercent;   // Utilisation RAM instantanée au moment de l'appel, en %.
+                                 // Calcul : (heapSize - freeHeap) * 100 / heapSize.
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
