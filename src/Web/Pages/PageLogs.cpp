@@ -64,6 +64,13 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
             "</div>";
     }
 
+    // Card RAM : pic d'utilisation depuis le boot (un seul pourcentage).
+    String ramInfo =
+        "<div class=\"card\">"
+        "<p style=\"font-size: 1.3em;\">🧠 RAM — Pic d'utilisation : " +
+        String(stats.ramPeakPercent) + "%</p>"
+        "</div>";
+
     // Taille brute du fichier datalog transmise au JS pour la barre de
     // progression du téléchargement. Champ dédié distinct de littlefsUsedBytes :
     // la barre doit refléter la taille du fichier servi par /logs/download
@@ -222,7 +229,7 @@ function clearLogs() {
 
 <h1>🗂️ Gestion des Logs</h1>
 
-)HTML" + statsInfo + R"HTML(
+)HTML" + statsInfo + ramInfo + R"HTML(
 
 <div class="card">
   <p style="font-size: 1.3em;">Téléchargement des données</p>

@@ -244,6 +244,10 @@ struct FlashUsageStats {
                                  // Champ dédié à la barre de progression du
                                  // téléchargement (PageLogs JS), conservé pour
                                  // ne rien casser dans le flux d'export existant.
+    uint8_t ramPeakPercent;      // Pic d'utilisation RAM (heap) depuis le boot, en %.
+                                 // Calcul : (heapSize - minFreeHeap) * 100 / heapSize.
+                                 // Utile pour savoir si on peut augmenter les buffers
+                                 // ou si on est proche de la saturation.
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
