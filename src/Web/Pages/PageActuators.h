@@ -6,9 +6,8 @@
 //
 // Les commandes sont envoyées via POST /command en text/plain, payload CSV
 // 7 champs identique au format MQTT serre/cmd. Le serveur enchaîne
-// DataLogger::parseCommand (validation) → DataLogger::traceCommand
-// (journalisation) → CommandRouter::route (dispatch vers le manager
-// propriétaire via RELAYS[]). Même circuit que les commandes MQTT.
+// DataBus::parseCommand (validation) → DataBus::publishCommand
+// (horodatage + distribution + routage via RELAYS[]).
 //
 // La liste des vannes est construite dynamiquement depuis META : tous les
 // DataIds dont type == Actuator et nature == etat sont affichés.
@@ -20,7 +19,7 @@ class PageActuators {
 public:
     /**
      * Retourne le code HTML complet de la page de pilotage des actionneurs.
-     * Lit l'état actuel de chaque vanne via DataLogger::hasLastDataForWeb.
+     * Lit l'état actuel de chaque vanne via WebServer::hasLastData.
      */
     static String getHtml();
 };

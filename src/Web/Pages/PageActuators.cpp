@@ -17,7 +17,8 @@
 //  - Style aligné sur PagePrincipale (fond bleu, cartes transparentes).
 #include "Web/Pages/PageActuators.h"
 
-#include "Storage/DataLogger.h"
+#include "Web/WebServer.h"
+#include "Config/MetaDataModel.h"
 #include "Config/IO-Config.h"
 #include "Utils/Console.h"
 
@@ -109,7 +110,7 @@ static String buildValveCard(const DataMeta& m)
     int    intVal        = 0;
 
     LastDataForWeb d;
-    if (DataLogger::hasLastDataForWeb(m.id, d)) {
+    if (WebServer::hasLastData(m.id, d)) {
         if (std::holds_alternative<float>(d.value)) {
             intVal = (int)(std::get<float>(d.value) + 0.5f);
         }

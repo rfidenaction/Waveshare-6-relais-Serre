@@ -26,7 +26,8 @@
 //  - Affichage : courbe seule, sans points (pointRadius=0)
 #include "Web/Pages/PagePrincipale.h"
 
-#include "Storage/DataLogger.h"
+#include "Web/WebServer.h"
+#include "Config/MetaDataModel.h"
 #include "Config/NetworkConfig.h"
 #include "Utils/Console.h"
 
@@ -126,13 +127,13 @@ String PagePrincipale::getHtml()
     bool staConnected = false;
     String staTime;
 
-    if (DataLogger::hasLastDataForWeb(DataId::WifiStaConnected, d)) {
+    if (WebServer::hasLastData(DataId::WifiStaConnected, d)) {
         staConnected = getFloat(d) > 0.5f;
         staTime = timeHtml(d);
     }
 
     int wifiRssi = 0;
-    bool hasRssi = DataLogger::hasLastDataForWeb(DataId::WifiRssi, d);
+    bool hasRssi = WebServer::hasLastData(DataId::WifiRssi, d);
     if (hasRssi) wifiRssi = (int)getFloat(d);
 
     String staStatus =
@@ -147,7 +148,7 @@ String PagePrincipale::getHtml()
     bool apEnabled = false;
     String apTime;
 
-    if (DataLogger::hasLastDataForWeb(DataId::WifiApEnabled, d)) {
+    if (WebServer::hasLastData(DataId::WifiApEnabled, d)) {
         apEnabled = getFloat(d) > 0.5f;
         apTime = timeHtml(d);
     }
@@ -161,7 +162,7 @@ String PagePrincipale::getHtml()
     String supplyTime;
     float supplyVoltage = 0.0f;
 
-    if (DataLogger::hasLastDataForWeb(DataId::SupplyVoltage, d)) {
+    if (WebServer::hasLastData(DataId::SupplyVoltage, d)) {
         supplyVoltage = getFloat(d);
         supplyTime = timeHtml(d);
     }

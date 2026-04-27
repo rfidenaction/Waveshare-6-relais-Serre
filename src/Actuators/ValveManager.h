@@ -60,7 +60,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "Config/TimingConfig.h"
-#include "Storage/DataLogger.h"
+#include "Config/MetaDataModel.h"
 
 class ValveManager {
 public:

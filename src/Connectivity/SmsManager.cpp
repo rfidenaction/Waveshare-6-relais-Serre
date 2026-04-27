@@ -10,7 +10,7 @@
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
 #include "Config/Config.h"
-#include "Storage/DataLogger.h"
+#include "Core/DataBus.h"
 #include "Utils/Console.h"
 
 // Tag pour logs
@@ -103,7 +103,7 @@ void SmsManager::send(const char* number, const String& message)
     Console::info(TAG,
         "Demande envoi SMS dest:" + String(number) + " msg:" + message);
 
-    DataLogger::push(
+    DataBus::publish(
         DataId::SmsEvent,
         "Demande envoi vers " + String(number)
     );

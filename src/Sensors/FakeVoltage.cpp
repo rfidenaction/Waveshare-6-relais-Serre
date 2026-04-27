@@ -3,7 +3,7 @@
 // À SUPPRIMER en production
 
 #include "Sensors/FakeVoltage.h"
-#include "Storage/DataLogger.h"
+#include "Core/DataBus.h"
 #include "Utils/Console.h"
 #include <math.h>
 
@@ -22,7 +22,7 @@ void FakeVoltage::handle()
     float radians = counter * M_PI / 180.0f;
     float voltage = (sin(radians) + 5.0f) * 5.0f;   // 20V — 30V
 
-    DataLogger::push(DataId::SupplyVoltage, voltage);
+    DataBus::publish(DataId::SupplyVoltage, voltage);
 
     Console::debug(TAG, "Tension simulée: " + String(voltage, 2) + "V (angle=" + String(counter) + "°)");
 

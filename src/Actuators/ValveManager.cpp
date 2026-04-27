@@ -24,7 +24,7 @@
 //   - Aucune variable d'état n'est accédée concurremment.
 
 #include "Actuators/ValveManager.h"
-#include "Actuators/RelayManager.h"
+#include "Core/DataBus.h"
 #include "Config/IO-Config.h"
 #include "Utils/Console.h"
 
@@ -123,7 +123,7 @@ void ValveManager::handle()
 
         // Publie l'état initial "Fermée" des vannes effectivement affectées
         for (uint8_t i = 0; i < slotCount; i++) {
-            DataLogger::push(slots[i].id, 0.0f);
+            DataBus::publish(slots[i].id, 0.0f);
         }
     }
 
@@ -215,12 +215,16 @@ bool ValveManager::isReady()
 void ValveManager::applyValveState(ValveSlot& slot, uint8_t newState)
 {
     slot.state = newState;
-    if (newState == VALVE_OPENED) {
-        RelayManager::activate(slot.relayCh);
-    } else {
-        RelayManager::deactivate(slot.relayCh);
+
+    // GPIO direct via RELAYS[] — plus besoin de RelayManager
+    for (size_t i = 0; i < RELAYS_COUNT; i++) {
+        if (RELAYS[i].ch == slot.relayCh) {
+            digitalWrite(RELAYS[i].gpio,
+                         (newState == VALVE_OPENED) ? HIGH : LOW);
+            break;
+        }
     }
 
-    DataLogger::push(slot.id,
+    DataBus::publish(slot.id,
                      (newState == VALVE_OPENED) ? 1.0f : 0.0f);
 }

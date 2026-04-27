@@ -30,7 +30,7 @@
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
 #include "Config/TimingConfig.h"
-#include "Storage/DataLogger.h"
+#include "Core/DataBus.h"
 #include "Utils/Console.h"
 
 // Tag pour logs Console
@@ -328,7 +328,7 @@ void BridgeManager::removeFrontSms()
 void BridgeManager::logSmsEvent(const String& message)
 {
     Console::info(TAG, message);
-    DataLogger::push(DataId::SmsEvent, message);
+    DataBus::publish(DataId::SmsEvent, message);
 }
 
 // =============================================================================

@@ -12,8 +12,8 @@
 #include "Connectivity/BridgeManager.h"
 #include "Connectivity/WiFiManager.h"
 #include "Config/NetworkConfig.h"
-#include "Storage/DataLogger.h"
-#include "Core/CommandRouter.h"
+#include "Core/DataBus.h"
+#include "Config/MetaDataModel.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -208,9 +208,8 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 //
 // Ce module ne connaît aucun actionneur par son nom ; il vérifie le topic puis
 // orchestre trois étapes aux responsabilités disjointes :
-//   1. DataLogger::parseCommand    : décode et valide (fonction pure).
-//   2. DataLogger::traceCommand    : journalise dans PENDING (best-effort).
-//   3. CommandRouter::route        : exécute via RELAYS[].
+//   1. DataBus::parseCommand       : décode et valide (fonction pure).
+//   2. DataBus::publishCommand     : horodate + distribue + route via RELAYS[].
 // Aucun return de MQTT vers l'émetteur : le protocole est fire-and-forget.
 // Les rejets sont simplement loggés.
 // =============================================================================
@@ -234,23 +233,17 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    DataLogger::ParsedCommand cmd;
-    auto res = DataLogger::parseCommand(
+    ParsedCommand cmd;
+    auto res = DataBus::parseCommand(
         event->data, (size_t)event->data_len, cmd);
-    if (res != DataLogger::CommandParseResult::OK) {
+    if (res != CommandParseResult::OK) {
         Console::warn(TAG, "Commande MQTT rejetée au parse (code=" +
                       String((int)res) + ")");
         return;
     }
 
-    DataLogger::traceCommand(cmd);
-
-    if (!CommandRouter::route(cmd.cmdId, cmd.durationMs)) {
-        Console::warn(TAG, "Commande MQTT non routée : cmdId=" +
-                      String((uint8_t)cmd.cmdId) +
-                      " (absente de RELAYS[] ou manager non prêt)");
-        return;
-    }
+    // DataBus::publishCommand() horodate + distribue + route
+    DataBus::publishCommand(cmd);
 
     Console::info(TAG, "Commande MQTT acceptée : cmdId=" +
                   String((uint8_t)cmd.cmdId) +
@@ -326,7 +319,7 @@ String MqttManager::buildSchemaJson()
         firstType = false;
         p += "    {\"id\": "; p += t;
         p += ", \"label\": \"";
-        p += DataLogger::jsonEscape(DataLogger::typeLabel((DataType)t));
+        p += jsonEscape(typeLabel((DataType)t));
         p += "\"}";
     }
     p += "\n  ],\n";
@@ -337,8 +330,8 @@ String MqttManager::buildSchemaJson()
         const DataMeta& m = META[i];
 
         p += "    {\"id\": "; p += (uint8_t)m.id;
-        p += ", \"label\": \""; p += DataLogger::jsonEscape(m.label); p += "\"";
-        p += ", \"unit\": \"";  p += DataLogger::jsonEscape(m.unit);  p += "\"";
+        p += ", \"label\": \""; p += jsonEscape(m.label); p += "\"";
+        p += ", \"unit\": \"";  p += jsonEscape(m.unit);  p += "\"";
 
         const char* natureStr =
             (m.nature == DataNature::metrique) ? "metrique" :
@@ -359,7 +352,7 @@ String MqttManager::buildSchemaJson()
                 p += "{\"value\": "; p += s;
                 p += ", \"label\": \"";
                 if (m.stateLabels[s] != nullptr) {
-                    p += DataLogger::jsonEscape(m.stateLabels[s]);
+                    p += jsonEscape(m.stateLabels[s]);
                 }
                 p += "\"}";
             }
@@ -420,17 +413,17 @@ void MqttManager::handle()
     // dépasse la taille du slot, warning et skip (record perdu — cas
     // pathologique uniquement si META ajoute un texte > 199 caractères).
     if (!inFlightBusy) {
-        DataRecord rec;
-        if (DataLogger::tryPopForPublish(rec)) {
-            String csv = formatCsvPayload(rec);
+        BusItem item;
+        if (DataBus::tryPopMqtt(item)) {
+            String csv = formatCsvPayload(item);
             if (csv.length() >= sizeof(inFlightPayload)) {
                 Console::warn(TAG, "Payload trop longue (" + String(csv.length())
-                                  + " octets) pour id=" + String((uint8_t)rec.id)
+                                  + " octets) pour id=" + String((uint8_t)item.id)
                                   + " — message non publié sur MQTT");
             } else {
                 strncpy(inFlightPayload, csv.c_str(), sizeof(inFlightPayload) - 1);
                 inFlightPayload[sizeof(inFlightPayload) - 1] = '\0';
-                inFlightId   = (uint8_t)rec.id;
+                inFlightId   = (uint8_t)item.id;
                 inFlightBusy = true;
             }
         }
@@ -484,29 +477,27 @@ void MqttManager::handle()
 // Formatage CSV 7 champs :
 // timestamp,VClock_available,VClock_reliable,type,id,valueType,value
 // =============================================================================
-String MqttManager::formatCsvPayload(const DataRecord& record)
+String MqttManager::formatCsvPayload(const BusItem& item)
 {
     String csv;
     csv.reserve(80);
 
-    csv += String(record.timestamp);
+    csv += String(item.timestamp);
     csv += ',';
-    csv += String((int)record.VClock_available);
+    csv += String((int)item.VClock_available);
     csv += ',';
-    csv += String((int)record.VClock_reliable);
+    csv += String((int)item.VClock_reliable);
     csv += ',';
-    csv += String((uint8_t)record.type);
+    csv += String((uint8_t)item.type);
     csv += ',';
-    csv += String((uint8_t)record.id);
+    csv += String((uint8_t)item.id);
 
-    if (std::holds_alternative<float>(record.value)) {
-        float val = std::get<float>(record.value);
+    if (item.valueKind == 0) {
         csv += ",0,";
-        csv += String(val, 3);
+        csv += String(item.valueFloat, 3);
     } else {
-        String txt = std::get<String>(record.value);
         csv += ",1,";
-        csv += DataLogger::escapeCSV(txt);
+        csv += escapeCSV(String(item.valueText));
     }
 
     return csv;

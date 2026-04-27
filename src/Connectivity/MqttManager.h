@@ -2,7 +2,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include "Storage/DataLogger.h"
+#include "Config/MetaDataModel.h"
+
+struct BusItem;  // forward declaration (défini dans Core/DataBus.h)
 
 // Client MQTT non-bloquant (esp_mqtt natif ESP-IDF 4.4.4).
 // esp-mqtt gère sa propre tâche FreeRTOS ; MqttManager se limite à un slot
@@ -71,12 +73,12 @@ private:
     static bool schemaPublished;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
-    // serre/cmd (CSV 7 champs) : parseCommand → submitCommand → CommandRouter::route
+    // serre/cmd (CSV 7 champs) : DataBus::parseCommand → DataBus::publishCommand
     static void dispatchCommand(void* eventData);
     static void publishOnline();
     static void publishSchema();
     static String buildSchemaJson();
-    static String formatCsvPayload(const DataRecord& record);
+    static String formatCsvPayload(const BusItem& item);
 
     static void (*_onPublishSuccess)();
 

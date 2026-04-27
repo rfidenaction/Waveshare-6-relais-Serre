@@ -9,12 +9,13 @@
 
 #include "Config/Config.h"
 #include "Config/TimingConfig.h"
+#include "Config/IO-Config.h"
 
 #include "Connectivity/WiFiManager.h"
 #include "Connectivity/NTPManager.h"
-#include "Connectivity/BridgeManager.h"     // *** AJOUT BRIDGE ***
+#include "Connectivity/BridgeManager.h"
 #include "Connectivity/MqttManager.h"
-#include "Connectivity/SmsManager.h"        // *** AJOUT SMS ***
+#include "Connectivity/SmsManager.h"
 
 #include "Core/TaskManager.h"
 #include "Core/TaskManagerMonitor.h"
@@ -22,11 +23,11 @@
 #include "Core/RTCManager.h"
 #include "Core/VirtualClock.h"
 #include "Core/SafeReboot.h"
+#include "Core/DataBus.h"
 
 #include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
 
-#include "Actuators/RelayManager.h"
 #include "Actuators/ValveManager.h"
 
 #include "Storage/DataLogger.h"
@@ -40,7 +41,7 @@
 
 static unsigned long bootTimeMs = 0;
 
-// ⚠️ Symbole global unique (utilisé par PagePrincipale)
+// Symbole global unique (utilisé par PagePrincipale)
 unsigned long startTime = 0;
 
 // Prototypes des boucles internes
@@ -51,7 +52,7 @@ static void loopRun();
 static void (*currentLoop)() = loopInit;
 
 // -----------------------------------------------------------------------------
-// SETUP — minimal, la console série n'est pas encore prête
+// SETUP
 // -----------------------------------------------------------------------------
 
 void setup()
@@ -60,26 +61,17 @@ void setup()
 
     Console::begin(Console::Level::INFO);
 
-    // *** PROTECTION MATÉRIELLE IMMÉDIATE ***
-    // Force les 6 GPIO relais en OUTPUT LOW (= relais désactivé) dès le début
-    // de setup(), avant toute autre init logicielle. Empêche tout état
-    // flottant au boot qui pourrait coller un relais brièvement.
-    // Portée par RelayManager (driver matériel pur) : aucune allocation,
-    // aucune queue, aucune notion métier. Les managers métier (ValveManager
-    // aujourd'hui) démarrent plus tard, paresseusement.
-    RelayManager::initPinsSafe();
-    // *** FIN PROTECTION MATÉRIELLE ***
+    // Protection matérielle immédiate — force les 6 GPIO relais en OUTPUT LOW
+    // dès le début de setup(), avant toute autre init logicielle.
+    initAllRelayPinsSafe();
 
     bootTimeMs = millis();
     startTime  = bootTimeMs;
 
-    // Système de fichiers (pas de log, série pas prête)
     LittleFS.begin(true);
 
-    // WiFi (machine d'états, démarre en différé)
     WiFiManager::init();
 
-    // Capteurs matériels
     DataAcquisition::init();
 }
 
@@ -98,24 +90,16 @@ void loop()
 
 static void loopInit()
 {
-    // Attente de stabilisation système
     if (millis() - bootTimeMs < SYSTEM_INIT_DELAY_MS) {
         return;
     }
 
-    // -------------------------------------------------------------------------
-    // Transition INIT → RUN (une seule fois)
-    // -------------------------------------------------------------------------
-
     Console::info("Entrée en régime permanent");
 
-    // ─── Configuration timezone (une seule fois, pour tout le firmware) ───
     setenv("TZ", SYSTEM_TIMEZONE, 1);
     tzset();
 
-    // -------------------------------------------------------------------------
     // Boot AP (séquence bloquante, une seule fois au boot)
-    // -------------------------------------------------------------------------
     while (!WiFiManager::isAPEnabled()) {
         WiFiManager::handle();
         delay(100);
@@ -126,71 +110,55 @@ static void loopInit()
         delay(100);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // À partir d'ici la console série est prête, on peut loguer
-    // ─────────────────────────────────────────────────────────────────────────
-
     Console::info("Boot " + String(DEVICE_NAME) + " v" + String(FW_VERSION));
 
-    // --- LittleFS ---
     if (LittleFS.totalBytes() > 0) {
         Console::info("[LittleFS] OK");
     } else {
         Console::error("[LittleFS] ÉCHEC — pas de stockage flash");
     }
 
-    // --- DataLogger ---
+    // DataBus — créé AVANT DataLogger pour que logQueue existe
+    DataBus::init();
+    Console::info("[DataBus] OK");
+
+    // DataLogger — logger SPIFFS pur
     DataLogger::init();
     Console::info("[DataLogger] OK");
 
-    // --- RTC DS3231 ---
+    // Reconstruction lastDataForWeb depuis /datalog.csv
+    WebServer::rebuildLastDataFromFlash();
+
     RTCManager::init();
 
-    // --- Horloge virtuelle machine ---
-    // VClock démarre en attente (_available=false) : les premiers horodatages
-    // sont en millis() jusqu'à ce que NTP réussisse ou que VClock::handle()
-    // bascule à T+4min via RTC (ou ancre 12h30 arbitraire si RTC KO).
     VirtualClock::init();
 
-    // --- Serveur Web ---
     WebServer::init();
 
-    // --- EventManager ---
     EventManager::init();
     EventManager::prime();
 
-    // --- TaskManagerMonitor ---
     TaskManagerMonitor::init();
 
-    // --- FakeVoltage (TEST) ---
     FakeVoltage::init();
 
     // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
-    // à LOW dès setup() par RelayManager::initPinsSafe(). La construction
+    // à LOW dès setup() par initAllRelayPinsSafe(). La construction
     // des slots depuis RELAYS[], la création de la queue FreeRTOS et la
     // publication de l'état initial sont différées et gérées paresseusement
     // par ValveManager::handle() au premier passage après VALVE_START_DELAY_MS.
 
-    // --- SafeReboot ---
     SafeReboot::init();
 
-    // *** AJOUT BRIDGE *** — Initialisation BridgeManager (UDP vers LilyGo)
     BridgeManager::init();
     Console::info("[Bridge] BridgeManager initialisé");
-    // *** FIN AJOUT BRIDGE ***
 
-    // *** MQTT *** — Initialisation MQTT + callbacks
-    // MqttManager::handle() draine DataLogger::logBufferOut à chaque tick
-    // (plus de callback setOnPush nécessaire depuis le refactor route unifiée).
     MqttManager::init();
     MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
-    Console::info("[MQTT] MqttManager initialisé (flux DataLogger::logBufferOut → MQTT → Bridge)");
-    // *** FIN MQTT ***
+    Console::info("[MQTT] MqttManager initialisé (flux DataBus::mqttQueue → MQTT → Bridge)");
 
-    // *** SMS *** — Initialisation SmsManager (logique métier SMS)
     SmsManager::init();
     Console::info("[SMS] SmsManager initialisé");
-    // *** FIN SMS ***
 
     // --- TaskManager ---
     TaskManager::init();
@@ -199,107 +167,89 @@ static void loopInit()
     // Enregistrement des tâches périodiques
     // ─────────────────────────────────────────────────────────────────────────
 
-    // WiFi
     TaskManager::addTask(
         []() { WiFiManager::handle(); },
         WIFI_HANDLE_PERIOD_MS
     );
 
-    // NTP
     NTPManager::init();
     TaskManager::addTask(
         []() { NTPManager::handle(); },
         NTP_HANDLE_PERIOD_MS
     );
 
-    // VirtualClock — bascule T+4min, resync RTC 3h, bascule _reliable à 24h
     TaskManager::addTask(
         []() { VirtualClock::handle(); },
         VCLOCK_HANDLE_PERIOD_MS
     );
 
-    // *** AJOUT BRIDGE *** — Tâche BridgeManager (UDP vers LilyGo)
     TaskManager::addTask(
         []() { BridgeManager::handle(); },
         BRIDGE_HANDLE_PERIOD_MS
     );
-    // *** FIN AJOUT BRIDGE ***
 
-    // EventManager
     TaskManager::addTask(
         []() { EventManager::handle(); },
         EVENT_MANAGER_PERIOD_MS
     );
 
-    // DataLogger
+    // DataLogger — période 30 s (plus sur le chemin critique)
     TaskManager::addTask(
         []() { DataLogger::handle(); },
         DATALOGGER_HANDLE_PERIOD_MS
     );
 
-    // *** MQTT *** — Drain du tampon FIFO amont (Variante 1)
-    // Démarre paresseusement le client esp_mqtt et publie UNE entrée du tampon
-    // par tour. Non-bloquant. Voir MqttManager.h pour la doc complète.
+    // MQTT — drain de la mqttQueue DataBus
     TaskManager::addTask(
         []() { MqttManager::handle(); },
         200
     );
-    // *** FIN MQTT ***
 
-    // WiFi status → DataLogger
+    // WiFi status → DataBus
     TaskManager::addTask(
         []() {
-            DataLogger::push(
+            DataBus::publish(
                 DataId::WifiStaConnected,
                 WiFiManager::isSTAConnected() ? 1.0f : 0.0f
             );
-            DataLogger::push(
+            DataBus::publish(
                 DataId::WifiApEnabled,
                 WiFiManager::isAPEnabled() ? 1.0f : 0.0f
             );
             if (WiFiManager::isSTAConnected()) {
-                DataLogger::push(DataId::WifiRssi, (float)WiFi.RSSI());
+                DataBus::publish(DataId::WifiRssi, (float)WiFi.RSSI());
             } else {
-                DataLogger::push(DataId::WifiRssi, -100.0f);
+                DataBus::publish(DataId::WifiRssi, -100.0f);
             }
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS
     );
 
-    // *** AJOUT SMS *** — Tâche SmsManager (logique métier SMS)
     TaskManager::addTask(
         []() { SmsManager::handle(); },
         2000
     );
-    // *** FIN AJOUT SMS ***
 
-    // FakeVoltage (TEST)
     TaskManager::addTask(
         []() { FakeVoltage::handle(); },
         30000
     );
 
-    // ValveManager — unique tâche côté vannes. Dormante (if/return) tant que
-    // millis() < VALVE_START_DELAY_MS, puis démarrage paresseux automatique.
     TaskManager::addTask(
         []() { ValveManager::handle(); },
         100
     );
 
-    // SafeReboot (reboot préventif mensuel)
     TaskManager::addTask(
         []() { SafeReboot::handle(); },
         SAFE_REBOOT_PERIOD_MS
     );
 
-    // TaskManagerMonitor — supervision de la régularité du scheduler
-    // Placée en dernière position : sentinelle, observe l'ensemble du système.
     TaskManager::addTask(
         []() { TaskManagerMonitor::checkSchedulerRegularity(); },
         TASKMON_CHECK_PERIOD_MS
     );
 
-    // Bascule définitive vers la loop de production
     currentLoop = loopRun;
 }
 

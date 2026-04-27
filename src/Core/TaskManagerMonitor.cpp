@@ -2,7 +2,7 @@
 
 #include "Core/TaskManagerMonitor.h"
 #include "Config/TimingConfig.h"
-#include "Storage/DataLogger.h"
+#include "Core/DataBus.h"
 #include "Connectivity/SmsManager.h"
 #include "Utils/Console.h"
 
@@ -111,7 +111,7 @@ void TaskManagerMonitor::evaluateDelta(uint32_t nowMs)
 
     // DataLogger / MQTT — canal métrique : valeur exploitable machine
     // (filtrage côté serveur, règles externes, graphes, corrélations)
-    DataLogger::push(
+    DataBus::publish(
         DataId::TaskMonPeriod,
         static_cast<float>(delta)
     );

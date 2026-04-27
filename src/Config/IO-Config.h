@@ -2,7 +2,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include "Storage/DataLogger.h"       // DataId utilisé dans RELAYS[]
+#include "Config/MetaDataModel.h"     // DataId utilisé dans RELAYS[]
 #include "Actuators/ValveManager.h"   // handler enqueueByEntity référencé dans RELAYS[]
 
 /*
@@ -131,3 +131,16 @@ inline constexpr size_t RELAYS_COUNT = sizeof(RELAYS) / sizeof(RELAYS[0]);
 // =============================================================================
 
 #define BOOT_BUTTON_PIN    0
+
+// =============================================================================
+// Protection matérielle au boot — force tous les GPIO relais en OUTPUT LOW.
+// Remplace RelayManager::initPinsSafe(). À appeler très tôt dans setup().
+// =============================================================================
+
+inline void initAllRelayPinsSafe()
+{
+    for (size_t i = 0; i < RELAYS_COUNT; i++) {
+        pinMode(RELAYS[i].gpio, OUTPUT);
+        digitalWrite(RELAYS[i].gpio, LOW);
+    }
+}
