@@ -195,25 +195,31 @@
 // =============================================================================
 /*
  * Période d'appel de DataLogger::handle() (drain logQueue DataBus +
- * réparation UTC + décision flush LittleFS).
+ * réparation UTC + transfert d'un record vers buffer CSV).
  *
- * DataLogger n'est pas sur le chemin critique de la distribution temps réel
- * (MQTT, Web). La distribution immédiate est assurée par DataBus::publish()
- * (mqttQueue, lastDataForWeb, routage commandes).
- * DataLogger ne fait que persister en SPIFFS : drain logQueue → PENDING
- * → réparation timestamps → flush. 30 s suffisent largement.
- * La politique de flush reste pilotée par FLUSH_SIZE (50 records) et
- * la fenêtre horaire (55 min).
+ * handle() déplace UN SEUL record réparé par appel vers le buffer CSV actif.
+ * À 3 secondes, le flux est lissé : pas de burst de sérialisation.
+ * La plupart des appels sont quasi instantanés (logQueue et PENDING vides).
+ *
+ * Limite de débit : 1 record toutes les 3 secondes = 20 records/minute.
+ * Tout débit soutenable pour la flash est largement soutenable pour PENDING.
  */
-#define DATALOGGER_HANDLE_PERIOD_MS    30000
+#define DATALOGGER_HANDLE_PERIOD_MS    3000
 
 /*
- * Délai minimum entre deux flush horaires (55 min).
- * handle() déclenche un flush si (pendingCount > 0) et que ce délai est
- * écoulé depuis le dernier flush. Garantit un flush par heure pour MQTT,
- * indépendamment de l'état VClock.
+ * Heure de rotation quotidienne du fichier log (heure locale).
+ * À cette heure, le fichier courant est fermé et un nouveau fichier
+ * est ouvert avec la date du jour (log_YYYY-MM-DD.csv).
  */
-#define FLUSH_HOURLY_MIN_INTERVAL_MS   3300000UL   // 55 min
+#define DATALOGGER_ROTATION_HOUR       16
+#define DATALOGGER_ROTATION_MINUTE     15
+
+/*
+ * Durée de rétention des fichiers log, en jours (~14 mois).
+ * Les fichiers plus anciens sont supprimés automatiquement à chaque rotation.
+ * À ~5 Ko/jour en production, 425 jours ≈ 2,1 Mo sur une partition de 8 Mo.
+ */
+#define DATALOGGER_RETENTION_DAYS      425
 
 // =============================================================================
 // SafeReboot — Reboot préventif automatique

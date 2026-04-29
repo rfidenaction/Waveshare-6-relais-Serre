@@ -68,13 +68,85 @@ bool WebServer::hasLastData(DataId id, LastDataForWeb& out)
     return has;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilitaire : collecte et tri des fichiers log_*.csv
+//
+// Retourne un tableau alloué dynamiquement de chemins triés par nom
+// (ordre chronologique, les noms sont en YYYY-MM-DD).
+// L'appelant doit libérer avec delete[].
+// ─────────────────────────────────────────────────────────────────────────────
+static String* collectSortedLogFiles(size_t& outCount)
+{
+    outCount = 0;
+
+    // Premier passage : compter les fichiers
+    size_t count = 0;
+    File root = LittleFS.open("/");
+    if (!root) return nullptr;
+
+    File f = root.openNextFile();
+    while (f) {
+        String name = String(f.name());
+        f.close();
+        const char* p = name.c_str();
+        if (p[0] == '/') p++;
+        if (strncmp(p, "log_", 4) == 0 && strstr(p, ".csv") != nullptr) {
+            count++;
+        }
+        f = root.openNextFile();
+    }
+    root.close();
+
+    if (count == 0) return nullptr;
+
+    // Allocation et remplissage
+    String* paths = new (std::nothrow) String[count];
+    if (!paths) return nullptr;
+
+    size_t idx = 0;
+    root = LittleFS.open("/");
+    if (!root) { delete[] paths; return nullptr; }
+
+    f = root.openNextFile();
+    while (f && idx < count) {
+        String name = String(f.name());
+        f.close();
+        const char* p = name.c_str();
+        if (p[0] == '/') p++;
+        if (strncmp(p, "log_", 4) == 0 && strstr(p, ".csv") != nullptr) {
+            paths[idx++] = name.startsWith("/") ? name : ("/" + name);
+        }
+        f = root.openNextFile();
+    }
+    root.close();
+    count = idx;
+
+    // Tri par insertion (correct pour <500 fichiers, noms YYYY-MM-DD = tri chrono)
+    for (size_t i = 1; i < count; i++) {
+        String key = paths[i];
+        int j = (int)i - 1;
+        while (j >= 0 && paths[j] > key) {
+            paths[j + 1] = paths[j];
+            j--;
+        }
+        paths[j + 1] = key;
+    }
+
+    outCount = count;
+    return paths;
+}
+
 // ─── rebuildLastDataFromFlash() — reconstruction au boot ─────────────────────
-// Parse le CSV complet /datalog.csv et garde la dernière valeur par DataId.
-// Appelée une fois au boot depuis main.cpp.
+// Parse tous les fichiers log_*.csv dans l'ordre chronologique et garde la
+// dernière valeur par DataId. Appelée une fois au boot depuis main.cpp.
 void WebServer::rebuildLastDataFromFlash()
 {
-    File file = LittleFS.open("/datalog.csv", FILE_READ);
-    if (!file) return;
+    size_t fileCount = 0;
+    String* files = collectSortedLogFiles(fileCount);
+    if (!files || fileCount == 0) {
+        delete[] files;
+        return;
+    }
 
     struct LastSeen {
         bool found = false;
@@ -85,64 +157,73 @@ void WebServer::rebuildLastDataFromFlash()
     };
     LastSeen lastSeen[META_COUNT];
 
-    while (file.available()) {
-        String line = file.readStringUntil('\n');
-        if (line.length() == 0) continue;
+    // Lecture de tous les fichiers, du plus ancien au plus récent.
+    // La dernière valeur vue pour chaque DataId l'emporte.
+    for (size_t fi = 0; fi < fileCount; fi++) {
+        File file = LittleFS.open(files[fi], FILE_READ);
+        if (!file) continue;
 
-        int c1 = line.indexOf(',');
-        int c2 = line.indexOf(',', c1 + 1);
-        int c3 = line.indexOf(',', c2 + 1);
-        int c4 = line.indexOf(',', c3 + 1);
-        int c5 = line.indexOf(',', c4 + 1);
-        int c6 = line.indexOf(',', c5 + 1);
+        while (file.available()) {
+            String line = file.readStringUntil('\n');
+            if (line.length() == 0) continue;
 
-        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
-            continue;
-        }
+            int c1 = line.indexOf(',');
+            int c2 = line.indexOf(',', c1 + 1);
+            int c3 = line.indexOf(',', c2 + 1);
+            int c4 = line.indexOf(',', c3 + 1);
+            int c5 = line.indexOf(',', c4 + 1);
+            int c6 = line.indexOf(',', c5 + 1);
 
-        unsigned long ts     = line.substring(0, c1).toInt();
-        uint8_t avail        = line.substring(c1 + 1, c2).toInt();
-        uint8_t reliable     = line.substring(c2 + 1, c3).toInt();
-        uint8_t idByte       = line.substring(c4 + 1, c5).toInt();
-        uint8_t valueType    = line.substring(c5 + 1, c6).toInt();
-        String valueStr      = line.substring(c6 + 1);
+            if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1 || c5 == -1 || c6 == -1) {
+                continue;
+            }
 
-        int metaIdx = findMetaIndex(idByte);
-        if (metaIdx < 0) continue;
+            unsigned long ts     = line.substring(0, c1).toInt();
+            uint8_t avail        = line.substring(c1 + 1, c2).toInt();
+            uint8_t reliable     = line.substring(c2 + 1, c3).toInt();
+            uint8_t idByte       = line.substring(c4 + 1, c5).toInt();
+            uint8_t valueType    = line.substring(c5 + 1, c6).toInt();
+            String valueStr      = line.substring(c6 + 1);
 
-        LastSeen& ls = lastSeen[metaIdx];
-        ls.found            = true;
-        ls.timestamp        = ts;
-        ls.VClock_available = (avail != 0);
-        ls.VClock_reliable  = (reliable != 0);
+            int metaIdx = findMetaIndex(idByte);
+            if (metaIdx < 0) continue;
 
-        if (valueType == 0) {
-            ls.value = valueStr.toFloat();
-        } else {
-            valueStr.trim();
-            // Dé-échappement CSV inline
-            if (valueStr.length() >= 2 &&
-                valueStr.charAt(0) == '"' &&
-                valueStr.charAt(valueStr.length() - 1) == '"') {
-                String unescaped;
-                for (size_t i = 1; i < valueStr.length() - 1; i++) {
-                    char c = valueStr.charAt(i);
-                    if (c == '"' && i + 1 < valueStr.length() - 1 &&
-                        valueStr.charAt(i + 1) == '"') {
-                        unescaped += '"';
-                        i++;
-                    } else {
-                        unescaped += c;
-                    }
-                }
-                ls.value = unescaped;
+            LastSeen& ls = lastSeen[metaIdx];
+            ls.found            = true;
+            ls.timestamp        = ts;
+            ls.VClock_available = (avail != 0);
+            ls.VClock_reliable  = (reliable != 0);
+
+            if (valueType == 0) {
+                ls.value = valueStr.toFloat();
             } else {
-                ls.value = valueStr;
+                valueStr.trim();
+                // Dé-échappement CSV inline
+                if (valueStr.length() >= 2 &&
+                    valueStr.charAt(0) == '"' &&
+                    valueStr.charAt(valueStr.length() - 1) == '"') {
+                    String unescaped;
+                    for (size_t i = 1; i < valueStr.length() - 1; i++) {
+                        char c = valueStr.charAt(i);
+                        if (c == '"' && i + 1 < valueStr.length() - 1 &&
+                            valueStr.charAt(i + 1) == '"') {
+                            unescaped += '"';
+                            i++;
+                        } else {
+                            unescaped += c;
+                        }
+                    }
+                    ls.value = unescaped;
+                } else {
+                    ls.value = valueStr;
+                }
             }
         }
+
+        file.close();
     }
 
-    file.close();
+    delete[] files;
 
     taskENTER_CRITICAL(&lastDataMux);
     for (size_t m = 0; m < META_COUNT; m++) {
@@ -330,7 +411,7 @@ void WebServer::handleCommandFinal(AsyncWebServerRequest *request)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bundle download
+// Bundle download — multi-fichiers log_*.csv
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void buildBundleHeader(String& p)
@@ -412,15 +493,19 @@ static void buildBundleHeader(String& p)
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct BundleContext {
-    File   file;
-    String pending;
-    bool   headerDone;
-    bool   footerDone;
-    bool   deleted;
-    char   filename[44];
+    String  pending;
+    String* filePaths;        // Tableau trié des chemins log_*.csv
+    size_t  fileCount;        // Nombre total de fichiers
+    size_t  currentFileIdx;   // Index du fichier en cours de lecture
+    File    currentFile;      // Handle du fichier en cours
+    bool    headerDone;
+    bool    footerDone;
+    bool    deleted;
+    char    filename[44];
 
     BundleContext()
-        : headerDone(false), footerDone(false), deleted(false)
+        : filePaths(nullptr), fileCount(0), currentFileIdx(0),
+          headerDone(false), footerDone(false), deleted(false)
     {
         filename[0] = '\0';
         pending.reserve(4096);
@@ -431,26 +516,31 @@ struct BundleContext {
 
 void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
 {
-    if (!LittleFS.exists("/datalog.csv")) {
+    // Collecte et tri des fichiers log
+    size_t fileCount = 0;
+    String* files = collectSortedLogFiles(fileCount);
+
+    if (!files || fileCount == 0) {
+        delete[] files;
         request->send(404, "text/plain", "Aucune donnée disponible");
-        Console::warn(TAG, "Bundle download demandé mais fichier inexistant");
+        Console::warn(TAG, "Bundle download demandé mais aucun fichier log");
         return;
     }
 
-    BundleContext* ctx = new BundleContext();
+    BundleContext* ctx = new (std::nothrow) BundleContext();
     if (!ctx) {
+        delete[] files;
         request->send(500, "text/plain", "Mémoire insuffisante");
         Console::error(TAG, "Bundle download : allocation contexte échouée");
         return;
     }
 
-    ctx->file = LittleFS.open("/datalog.csv", FILE_READ);
-    if (!ctx->file) {
-        delete ctx;
-        request->send(500, "text/plain", "Impossible d'ouvrir le fichier");
-        Console::error(TAG, "Bundle download : ouverture /datalog.csv échouée");
-        return;
-    }
+    ctx->filePaths = files;
+    ctx->fileCount = fileCount;
+
+    // Ouvrir le premier fichier
+    ctx->currentFile = LittleFS.open(files[0], FILE_READ);
+    ctx->currentFileIdx = 0;
 
     strncpy(ctx->filename, "serre_bundle.txt", sizeof(ctx->filename));
     {
@@ -465,11 +555,13 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
 
     request->onDisconnect([ctx]() {
         if (!ctx->deleted) {
-            if (ctx->file) ctx->file.close();
+            if (ctx->currentFile) ctx->currentFile.close();
             Console::warn("BundleCtx", "Bundle interrompu (disconnect client)");
         } else {
             Console::debug("BundleCtx", "Libération contexte (transfert terminé)");
         }
+        delete[] ctx->filePaths;
+        ctx->filePaths = nullptr;
         delete ctx;
     });
 
@@ -479,6 +571,7 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
 
             if (ctx->deleted) return 0;
 
+            // ── Vider le pending (reste d'un envoi précédent) ──────────
             if (ctx->pending.length() > 0) {
                 size_t toSend = min(ctx->pending.length(), maxLen);
                 memcpy(buffer, ctx->pending.c_str(), toSend);
@@ -486,6 +579,7 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
+            // ── Header (une seule fois) ────────────────────────────────
             if (!ctx->headerDone) {
                 buildBundleHeader(ctx->pending);
                 ctx->headerDone = true;
@@ -496,10 +590,30 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
-            if (ctx->file.available()) {
-                return ctx->file.read(buffer, maxLen);
+            // ── Données : lecture séquentielle des fichiers ────────────
+            while (ctx->currentFileIdx < ctx->fileCount) {
+                // Ouvrir le fichier courant s'il ne l'est pas
+                if (!ctx->currentFile) {
+                    ctx->currentFile = LittleFS.open(
+                        ctx->filePaths[ctx->currentFileIdx], FILE_READ);
+                    if (!ctx->currentFile) {
+                        // Fichier inaccessible, passer au suivant
+                        ctx->currentFileIdx++;
+                        continue;
+                    }
+                }
+
+                // Lire depuis le fichier courant
+                if (ctx->currentFile.available()) {
+                    return ctx->currentFile.read(buffer, maxLen);
+                }
+
+                // Fichier terminé → fermer et passer au suivant
+                ctx->currentFile.close();
+                ctx->currentFileIdx++;
             }
 
+            // ── Footer (une seule fois, après tous les fichiers) ───────
             if (!ctx->footerDone) {
                 ctx->pending += "\n#DATA_CSV_END\n";
                 ctx->footerDone = true;
@@ -510,9 +624,10 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
                 return toSend;
             }
 
-            ctx->file.close();
+            // ── Terminé ────────────────────────────────────────────────
             Console::info("BundleCtx",
-                String("Bundle terminé → ") + ctx->filename);
+                String("Bundle terminé → ") + ctx->filename
+                + " (" + String(ctx->fileCount) + " fichiers)");
             ctx->deleted = true;
             return 0;
         }
@@ -525,7 +640,8 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
     response->addHeader("Cache-Control", "no-store");
 
     request->send(response);
-    Console::info(TAG, String("Bundle download démarré → ") + ctx->filename);
+    Console::info(TAG, String("Bundle download démarré → ") + ctx->filename
+                  + " (" + String(fileCount) + " fichiers)");
 }
 
 void WebServer::handleLogsClear(AsyncWebServerRequest *request)
