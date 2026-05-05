@@ -20,26 +20,28 @@
 #include "freertos/queue.h"
 
 // ═════════════════════════════════════════════════════════════════════════════
-// BusItem — struct POD transportée dans les queues FreeRTOS (memcpy-safe)
+// BusItem — miroir POD de DataRecord (MetaDataModel.h) pour queues FreeRTOS
 //
-// Pas de std::variant, pas de String, pas de pointeur heap.
-// valueKind discrimine float vs texte (buffer fixe, tronqué à 199 chars).
+// Mêmes champs, même ordre que DataRecord. Seule différence :
+//   DataRecord::value  = std::variant<float, String>  (non memcpy-safe)
+//   BusItem::value*    = valueKind + valueFloat + valueText[200]  (POD)
+//
+// Si DataRecord évolue, BusItem DOIT être mis à jour en conséquence.
 // ═════════════════════════════════════════════════════════════════════════════
 
 struct BusItem {
-    DataId   id;
-    DataType type;
-    uint8_t  valueKind;       // 0 = float (valueFloat), 1 = texte (valueText)
-    float    valueFloat;      // Valide si valueKind == 0
-    char     valueText[200];  // Valide si valueKind == 1, null-terminé
-
     uint32_t timestamp;
     bool     VClock_available;
     bool     VClock_reliable;
+    DataType type;
+    DataId   id;
+    uint8_t  valueKind;       // 0 = float (valueFloat), 1 = texte (valueText)
+    float    valueFloat;      // Valide si valueKind == 0
+    char     valueText[200];  // Valide si valueKind == 1, null-terminé
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ParsedCommand / CommandParseResult — parsing des commandes CSV
+// CommandParseResult — diagnostic du parsing CSV de commande
 // ═════════════════════════════════════════════════════════════════════════════
 
 enum class CommandParseResult : uint8_t {
@@ -51,12 +53,6 @@ enum class CommandParseResult : uint8_t {
     NotACommand,
     BadValueType,
     BadValue
-};
-
-struct ParsedCommand {
-    DataId   cmdId;
-    DataType origin;      // CommandManual ou CommandAuto
-    uint32_t durationMs;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -76,13 +72,14 @@ public:
     // Texte tronqué à 199 caractères dans le BusItem.
     static void publish(DataId id, const String& textValue);
 
-    // Publication d'une commande déjà parsée.
-    // Horodate + distribue + route vers le manager via RELAYS[].
-    static void publishCommand(const ParsedCommand& cmd);
+    // Publication d'une commande déjà parsée dans un BusItem.
+    // Complète l'horodatage, distribue et route vers le manager via RELAYS[].
+    static void publishCommand(BusItem& item);
 
-    // Parse un CSV 7 champs de commande. Fonction PURE, aucun effet de bord.
+    // Parse un CSV 7 champs de commande et remplit un BusItem.
+    // Fonction PURE, aucun effet de bord. Valide les bornes via META.
     static CommandParseResult parseCommand(const char* csv, size_t len,
-                                           ParsedCommand& out);
+                                           BusItem& out);
 
     // Pop un item de la queue MQTT. Non-bloquant. Pour MqttManager.
     static bool tryPopMqtt(BusItem& out);

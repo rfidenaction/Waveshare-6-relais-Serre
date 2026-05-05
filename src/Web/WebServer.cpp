@@ -369,8 +369,8 @@ void WebServer::handleCommandFinal(AsyncWebServerRequest *request)
         return;
     }
 
-    ParsedCommand cmd;
-    auto res = DataBus::parseCommand(body->c_str(), body->length(), cmd);
+    BusItem item;
+    auto res = DataBus::parseCommand(body->c_str(), body->length(), item);
 
     delete body;
     request->_tempObject = nullptr;
@@ -401,12 +401,11 @@ void WebServer::handleCommandFinal(AsyncWebServerRequest *request)
             return;
     }
 
-    // DataBus::publishCommand() horodate + distribue + route
-    DataBus::publishCommand(cmd);
+    DataBus::publishCommand(item);
 
-    Console::info(TAG, "Commande HTTP acceptée : cmdId=" +
-                  String((uint8_t)cmd.cmdId) +
-                  " durée=" + String(cmd.durationMs) + "ms");
+    Console::info(TAG, "Commande HTTP acceptée : id=" +
+                  String((uint8_t)item.id) +
+                  " durée=" + String((uint32_t)(item.valueFloat * 1000.0f)) + "ms");
     request->send(204);
 }
 

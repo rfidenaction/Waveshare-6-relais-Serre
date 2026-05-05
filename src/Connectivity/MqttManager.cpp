@@ -235,21 +235,20 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    ParsedCommand cmd;
+    BusItem item;
     auto res = DataBus::parseCommand(
-        event->data, (size_t)event->data_len, cmd);
+        event->data, (size_t)event->data_len, item);
     if (res != CommandParseResult::OK) {
         Console::warn(TAG, "Commande MQTT rejetée au parse (code=" +
                       String((int)res) + ")");
         return;
     }
 
-    // DataBus::publishCommand() horodate + distribue + route
-    DataBus::publishCommand(cmd);
+    DataBus::publishCommand(item);
 
-    Console::info(TAG, "Commande MQTT acceptée : cmdId=" +
-                  String((uint8_t)cmd.cmdId) +
-                  " durée=" + String(cmd.durationMs) + "ms");
+    Console::info(TAG, "Commande MQTT acceptée : id=" +
+                  String((uint8_t)item.id) +
+                  " durée=" + String((uint32_t)(item.valueFloat * 1000.0f)) + "ms");
 }
 
 // =============================================================================

@@ -211,8 +211,8 @@
  * À cette heure, le fichier courant est fermé et un nouveau fichier
  * est ouvert avec la date du jour (log_YYYY-MM-DD.csv).
  */
-#define DATALOGGER_ROTATION_HOUR       16
-#define DATALOGGER_ROTATION_MINUTE     15
+#define DATALOGGER_ROTATION_HOUR       00
+#define DATALOGGER_ROTATION_MINUTE     45
 
 /*
  * Durée de rétention des fichiers log, en jours (~14 mois).

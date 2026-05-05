@@ -122,33 +122,31 @@ void DataBus::publish(DataId id, const String& textValue)
 }
 
 // ─── publishCommand() ────────────────────────────────────────────────────────
-void DataBus::publishCommand(const ParsedCommand& cmd)
+// Reçoit un BusItem partiellement rempli par parseCommand() (id, type, value*).
+// Complète l'horodatage, distribue et route la commande.
+void DataBus::publishCommand(BusItem& item)
 {
     TimeVClock t = VirtualClock::read();
-
-    BusItem item;
-    item.id               = cmd.cmdId;
-    item.type             = cmd.origin;    // CommandManual ou CommandAuto
-    item.valueKind        = 0;
-    item.valueFloat       = cmd.durationMs / 1000.0f;
-    item.valueText[0]     = '\0';
     item.timestamp        = static_cast<uint32_t>(t.timestamp);
     item.VClock_available = t.VClock_available;
     item.VClock_reliable  = t.VClock_reliable;
 
     distribute(item);
 
-    if (!routeCommand(cmd.cmdId, cmd.durationMs)) {
+    uint32_t durationMs = (uint32_t)(item.valueFloat * 1000.0f);
+    if (!routeCommand(item.id, durationMs)) {
         Console::warn(TAG, "Commande non routée : cmdId="
-                      + String((uint8_t)cmd.cmdId)
+                      + String((uint8_t)item.id)
                       + " (absente de RELAYS[] ou manager non prêt)");
     }
 }
 
 // ─── parseCommand() ──────────────────────────────────────────────────────────
-// Fonction PURE. Parse un CSV 7 champs et remplit ParsedCommand. Aucun effet de bord.
+// Fonction PURE. Parse un CSV 7 champs et remplit un BusItem. Aucun effet de bord.
+// Les bornes min/max sont validées via META (source de vérité unique).
+// Les champs timestamp/VClock ne sont PAS remplis (voir publishCommand).
 CommandParseResult DataBus::parseCommand(
-    const char* csv, size_t len, ParsedCommand& out)
+    const char* csv, size_t len, BusItem& out)
 {
     char buf[64];
     if (len == 0 || len >= sizeof(buf)) {
@@ -190,7 +188,6 @@ CommandParseResult DataBus::parseCommand(
         typeVal != (long)DataType::CommandAuto) {
         return CommandParseResult::InvalidType;
     }
-    DataType origin = (DataType)typeVal;
 
     end = nullptr;
     long idVal = strtol(f[4], &end, 10);
@@ -201,7 +198,8 @@ CommandParseResult DataBus::parseCommand(
         return CommandParseResult::UnknownId;
     }
     DataId cmdId = (DataId)idVal;
-    if (getMeta(cmdId).type != DataType::CommandGeneric) {
+    const DataMeta& meta = getMeta(cmdId);
+    if (meta.type != DataType::CommandGeneric) {
         return CommandParseResult::NotACommand;
     }
 
@@ -210,14 +208,16 @@ CommandParseResult DataBus::parseCommand(
     }
 
     end = nullptr;
-    float duration = strtof(f[6], &end);
-    if (end == f[6] || *end != '\0' || !(duration > 0.0f)) {
+    float value = strtof(f[6], &end);
+    if (end == f[6] || *end != '\0' || value < meta.min || value > meta.max) {
         return CommandParseResult::BadValue;
     }
 
-    out.cmdId      = cmdId;
-    out.origin     = origin;
-    out.durationMs = (uint32_t)(duration * 1000.0f);
+    out.id            = cmdId;
+    out.type          = (DataType)typeVal;
+    out.valueKind     = 0;
+    out.valueFloat    = value;
+    out.valueText[0]  = '\0';
     return CommandParseResult::OK;
 }
 
