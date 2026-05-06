@@ -16,7 +16,7 @@
 // Thread-safety :
 //   - Commandes MQTT dans le thread esp_mqtt, HTTP dans AsyncWebServer.
 //   - Chaque dispatcher parse et valide via DataBus::parseCommand, puis
-//     publie via DataBus::publishCommand. DataBus::routeCommand consulte
+//     publie via DataBus::publish. DataBus::routeCommand consulte
 //     RELAYS[] et invoque le handler qui y est stocké — pour ce module,
 //     enqueueByEntity() — qui fait xQueueSend.
 //   - handle() consomme via xQueueReceive dans le thread TaskManager.
@@ -120,9 +120,13 @@ void ValveManager::handle()
         Console::info(TAG, "Système vannes opérationnel — " +
                       String(slotCount) + " vanne(s) affectée(s)");
 
-        // Publie l'état initial "Fermée" des vannes effectivement affectées
         for (uint8_t i = 0; i < slotCount; i++) {
-            DataBus::publish(slots[i].id, 0.0f);
+            BusItem item = {};
+            item.type       = getMeta(slots[i].id).type;
+            item.id         = slots[i].id;
+            item.valueKind  = 0;
+            item.valueFloat = 0.0f;
+            DataBus::publish(item);
         }
     }
 
@@ -224,6 +228,10 @@ void ValveManager::applyValveState(ValveSlot& slot, uint8_t newState)
         }
     }
 
-    DataBus::publish(slot.id,
-                     (newState == VALVE_OPENED) ? 1.0f : 0.0f);
+    BusItem item = {};
+    item.type       = getMeta(slot.id).type;
+    item.id         = slot.id;
+    item.valueKind  = 0;
+    item.valueFloat = (newState == VALVE_OPENED) ? 1.0f : 0.0f;
+    DataBus::publish(item);
 }

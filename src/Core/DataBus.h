@@ -1,15 +1,23 @@
 // Core/DataBus.h
 // Bus asynchrone de distribution des données.
 //
-// Point d'entrée unique de toute donnée produite dans le système.
+// Point d'entrée UNIQUE de toute donnée produite dans le système.
+//
+// Contrat producteur :
+//   Le producteur construit un BusItem avec ses champs métier
+//   (type, id, valueKind, valueFloat/valueText) puis appelle
+//   DataBus::publish(item). UNE SEULE méthode publique.
 //
 // À chaque publication, DataBus :
-//   1. Horodate via VirtualClock::read() (une seule fois)
-//   2. Distribue simultanément et de manière non-bloquante vers :
+//   1. Valide le BusItem contre META (id, type, nature, bornes)
+//   2. Horodate via VirtualClock::read() (une seule fois)
+//   3. Distribue simultanément et de manière non-bloquante vers :
 //      - mqttQueue  (FreeRTOS, drainée par MqttManager)
 //      - logQueue   (FreeRTOS, drainée par DataLogger)
 //      - WebServer::updateLastData() (portMUX, accès direct)
 //      - Si commande : routage via RELAYS[] → handler du manager
+//
+// Si la validation échoue, le BusItem est rejeté (Console::warn, pas distribué).
 //
 // Thread-safety : publish() est appelable depuis n'importe quel thread.
 // Les queues FreeRTOS et le portMUX garantissent la cohérence.
@@ -64,17 +72,14 @@ public:
     // Création des queues FreeRTOS. Appeler une fois au boot, avant DataLogger::init().
     static void init();
 
-    // Publication d'une valeur float (mesure, état numérique).
-    // Horodate + distribue vers mqttQueue, logQueue, WebServer.
-    static void publish(DataId id, float value);
-
-    // Publication d'une valeur texte (événement, erreur, SMS).
-    // Texte tronqué à 199 caractères dans le BusItem.
-    static void publish(DataId id, const String& textValue);
-
-    // Publication d'une commande déjà parsée dans un BusItem.
-    // Complète l'horodatage, distribue et route vers le manager via RELAYS[].
-    static void publishCommand(BusItem& item);
+    // Point d'entrée UNIQUE de toute donnée dans le système.
+    //
+    // Le producteur remplit les champs métier du BusItem :
+    //   type, id, valueKind, valueFloat/valueText
+    // Les champs horloge (timestamp, VClock_available, VClock_reliable) sont
+    // remplis ICI via VirtualClock::read(), puis le BusItem est distribué
+    // vers mqttQueue, logQueue, WebServer et, si commande, routé via RELAYS[].
+    static void publish(BusItem& item);
 
     // Parse un CSV 7 champs de commande et remplit un BusItem.
     // Fonction PURE, aucun effet de bord. Valide les bornes via META.
@@ -93,6 +98,9 @@ private:
 
     static QueueHandle_t mqttQueue;
     static QueueHandle_t logQueue;
+
+    // Vérifie la cohérence du BusItem avec META. Rejet + Console::warn si invalide.
+    static bool validate(const BusItem& item);
 
     // Distribue un BusItem déjà rempli vers toutes les destinations.
     static void distribute(const BusItem& item);

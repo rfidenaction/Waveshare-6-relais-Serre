@@ -3,7 +3,7 @@
 //
 // lastDataForWeb[] hébergé ici, protégé par portMUX.
 // buildBundleHeader() utilise typeLabel/jsonEscape (MetaDataModel.h).
-// handleCommandFinal() utilise DataBus::parseCommand/publishCommand.
+// handleCommandFinal() utilise DataBus::parseCommand/publish.
 #include "Web/WebServer.h"
 
 #include "Web/Pages/PagePrincipale.h"
@@ -401,7 +401,7 @@ void WebServer::handleCommandFinal(AsyncWebServerRequest *request)
             return;
     }
 
-    DataBus::publishCommand(item);
+    DataBus::publish(item);
 
     Console::info(TAG, "Commande HTTP acceptée : id=" +
                   String((uint8_t)item.id) +

@@ -211,7 +211,7 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 // Ce module ne connaît aucun actionneur par son nom ; il vérifie le topic puis
 // orchestre trois étapes aux responsabilités disjointes :
 //   1. DataBus::parseCommand       : décode et valide (fonction pure).
-//   2. DataBus::publishCommand     : horodate + distribue + route via RELAYS[].
+//   2. DataBus::publish             : horodate + distribue + route via RELAYS[].
 // Aucun return de MQTT vers l'émetteur : le protocole est fire-and-forget.
 // Les rejets sont simplement loggés.
 // =============================================================================
@@ -244,7 +244,7 @@ void MqttManager::dispatchCommand(void* eventData)
         return;
     }
 
-    DataBus::publishCommand(item);
+    DataBus::publish(item);
 
     Console::info(TAG, "Commande MQTT acceptée : id=" +
                   String((uint8_t)item.id) +

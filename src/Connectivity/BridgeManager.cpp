@@ -328,7 +328,15 @@ void BridgeManager::removeFrontSms()
 void BridgeManager::logSmsEvent(const String& message)
 {
     Console::info(TAG, message);
-    DataBus::publish(DataId::SmsEvent, message);
+
+    BusItem item = {};
+    item.type      = getMeta(DataId::SmsEvent).type;
+    item.id        = DataId::SmsEvent;
+    item.valueKind = 1;
+    item.valueFloat = 0.0f;
+    strncpy(item.valueText, message.c_str(), sizeof(item.valueText) - 1);
+    item.valueText[sizeof(item.valueText) - 1] = '\0';
+    DataBus::publish(item);
 }
 
 // =============================================================================

@@ -109,12 +109,12 @@ void TaskManagerMonitor::evaluateDelta(uint32_t nowMs)
         + String(delta) + " ms au lieu de "
         + String(TASKMON_CHECK_PERIOD_MS) + " ms");
 
-    // DataBus → MQTT + log — canal métrique : valeur exploitable machine
-    // (filtrage côté serveur, règles externes, graphes, corrélations)
-    DataBus::publish(
-        DataId::TaskMonPeriod,
-        static_cast<float>(delta)
-    );
+    BusItem item = {};
+    item.type       = getMeta(DataId::TaskMonPeriod).type;
+    item.id         = DataId::TaskMonPeriod;
+    item.valueKind  = 0;
+    item.valueFloat = static_cast<float>(delta);
+    DataBus::publish(item);
 
     // -------------------------------------------------------------------------
     // Étape 3 : armement du SMS (différé)

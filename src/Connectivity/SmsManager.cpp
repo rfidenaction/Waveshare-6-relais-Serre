@@ -103,10 +103,15 @@ void SmsManager::send(const char* number, const String& message)
     Console::info(TAG,
         "Demande envoi SMS dest:" + String(number) + " msg:" + message);
 
-    DataBus::publish(
-        DataId::SmsEvent,
-        "Demande envoi vers " + String(number)
-    );
+    BusItem item = {};
+    item.type      = getMeta(DataId::SmsEvent).type;
+    item.id        = DataId::SmsEvent;
+    item.valueKind = 1;
+    item.valueFloat = 0.0f;
+    String text = "Demande envoi vers " + String(number);
+    strncpy(item.valueText, text.c_str(), sizeof(item.valueText) - 1);
+    item.valueText[sizeof(item.valueText) - 1] = '\0';
+    DataBus::publish(item);
 
     // ─── Délégation au transport ────────────────────────────────────────────
     bool accepted = BridgeManager::queueSms(String(number), message);

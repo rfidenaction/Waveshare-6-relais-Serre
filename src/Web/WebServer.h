@@ -4,7 +4,7 @@
 // lastDataForWeb[] hébergé ici (protégé par portMUX).
 // updateLastData() appelé par DataBus::distribute().
 // hasLastData() appelé par les pages web.
-// handleCommandFinal() utilise DataBus::parseCommand/publishCommand.
+// handleCommandFinal() utilise DataBus::parseCommand/publish.
 #pragma once
 
 #include <Arduino.h>

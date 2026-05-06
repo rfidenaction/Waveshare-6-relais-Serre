@@ -2,9 +2,8 @@
 // Bus asynchrone de distribution — voir DataBus.h
 //
 // Flux de données :
-//   publish() / publishCommand()
+//   publish()
 //     → VirtualClock::read() (horodatage unique)
-//     → BusItem POD construit
 //     → distribute() :
 //         xQueueSend(mqttQueue)      → MqttManager drain
 //         xQueueSend(logQueue)       → DataLogger drain (drop si plein)
@@ -73,59 +72,86 @@ void DataBus::distribute(const BusItem& item)
     WebServer::updateLastData(item);
 }
 
-// ─── publish(float) ──────────────────────────────────────────────────────────
-void DataBus::publish(DataId id, float value)
+// ─── validate() ──────────────────────────────────────────────────────────────
+// Vérifie la cohérence du BusItem avec META avant distribution.
+// Retourne true si valide, false + Console::warn si rejeté.
+bool DataBus::validate(const BusItem& item)
 {
-    TimeVClock t = VirtualClock::read();
-
-    BusItem item;
-    item.id               = id;
-    item.type             = getMeta(id).type;
-    item.valueKind        = 0;
-    item.valueFloat       = value;
-    item.valueText[0]     = '\0';
-    item.timestamp        = static_cast<uint32_t>(t.timestamp);
-    item.VClock_available = t.VClock_available;
-    item.VClock_reliable  = t.VClock_reliable;
-
-    distribute(item);
-}
-
-// ─── publish(String) ─────────────────────────────────────────────────────────
-void DataBus::publish(DataId id, const String& textValue)
-{
-    TimeVClock t = VirtualClock::read();
-
-    BusItem item;
-    item.id            = id;
-    item.type          = getMeta(id).type;
-    item.valueKind     = 1;
-    item.valueFloat    = 0.0f;
-
-    const size_t maxLen = sizeof(item.valueText) - 1;
-    size_t srcLen = textValue.length();
-    size_t copyLen = (srcLen > maxLen) ? maxLen : srcLen;
-    memcpy(item.valueText, textValue.c_str(), copyLen);
-    item.valueText[copyLen] = '\0';
-    if (srcLen > maxLen) {
-        Console::warn(TAG, "publish(String) : texte tronqué "
-                      + String((unsigned)srcLen) + " → "
-                      + String((unsigned)maxLen) + " caractères (id="
-                      + String((uint8_t)id) + ")");
+    if (!isValidId((uint8_t)item.id)) {
+        Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                      + " inconnu de META");
+        return false;
     }
 
-    item.timestamp        = static_cast<uint32_t>(t.timestamp);
-    item.VClock_available = t.VClock_available;
-    item.VClock_reliable  = t.VClock_reliable;
+    const DataMeta& meta = getMeta(item.id);
 
-    distribute(item);
+    bool isCommand = (item.type == DataType::CommandManual ||
+                      item.type == DataType::CommandAuto);
+
+    if (isCommand) {
+        if (meta.type != DataType::CommandGeneric) {
+            Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                          + " n'est pas une commande dans META");
+            return false;
+        }
+    } else {
+        if (item.type != meta.type) {
+            Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                          + " type=" + String((uint8_t)item.type)
+                          + " incohérent avec META (attendu "
+                          + String((uint8_t)meta.type) + ")");
+            return false;
+        }
+    }
+
+    if (meta.nature == DataNature::texte) {
+        if (item.valueKind != 1) {
+            Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                          + " nature=texte mais valueKind=0");
+            return false;
+        }
+    } else {
+        if (item.valueKind != 0) {
+            Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                          + " nature=metrique|etat mais valueKind=1");
+            return false;
+        }
+    }
+
+    if (item.valueKind == 0) {
+        if (meta.nature == DataNature::metrique) {
+            if (item.valueFloat < meta.min || item.valueFloat > meta.max) {
+                Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                              + " valeur=" + String(item.valueFloat, 3)
+                              + " hors bornes [" + String(meta.min, 1)
+                              + ", " + String(meta.max, 1) + "]");
+                return false;
+            }
+        }
+        if (meta.nature == DataNature::etat && meta.stateLabelCount > 0) {
+            int stateIdx = (int)item.valueFloat;
+            if (item.valueFloat != (float)stateIdx ||
+                stateIdx < 0 || stateIdx >= meta.stateLabelCount) {
+                Console::warn(TAG, "Rejet : id=" + String((uint8_t)item.id)
+                              + " état=" + String(item.valueFloat, 0)
+                              + " hors bornes [0, "
+                              + String(meta.stateLabelCount - 1) + "]");
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
-// ─── publishCommand() ────────────────────────────────────────────────────────
-// Reçoit un BusItem partiellement rempli par parseCommand() (id, type, value*).
-// Complète l'horodatage, distribue et route la commande.
-void DataBus::publishCommand(BusItem& item)
+// ─── publish() ───────────────────────────────────────────────────────────────
+// Point d'entrée UNIQUE. Le producteur a rempli les champs métier
+// (type, id, valueKind, valueFloat/valueText). DataBus valide contre META,
+// horodate, distribue et, si commande, route via RELAYS[].
+void DataBus::publish(BusItem& item)
 {
+    if (!validate(item)) return;
+
     TimeVClock t = VirtualClock::read();
     item.timestamp        = static_cast<uint32_t>(t.timestamp);
     item.VClock_available = t.VClock_available;
@@ -133,18 +159,21 @@ void DataBus::publishCommand(BusItem& item)
 
     distribute(item);
 
-    uint32_t durationMs = (uint32_t)(item.valueFloat * 1000.0f);
-    if (!routeCommand(item.id, durationMs)) {
-        Console::warn(TAG, "Commande non routée : cmdId="
-                      + String((uint8_t)item.id)
-                      + " (absente de RELAYS[] ou manager non prêt)");
+    if (item.type == DataType::CommandManual ||
+        item.type == DataType::CommandAuto) {
+        uint32_t durationMs = (uint32_t)(item.valueFloat * 1000.0f);
+        if (!routeCommand(item.id, durationMs)) {
+            Console::warn(TAG, "Commande non routée : cmdId="
+                          + String((uint8_t)item.id)
+                          + " (absente de RELAYS[] ou manager non prêt)");
+        }
     }
 }
 
 // ─── parseCommand() ──────────────────────────────────────────────────────────
 // Fonction PURE. Parse un CSV 7 champs et remplit un BusItem. Aucun effet de bord.
 // Les bornes min/max sont validées via META (source de vérité unique).
-// Les champs timestamp/VClock ne sont PAS remplis (voir publishCommand).
+// Les champs timestamp/VClock ne sont PAS remplis (voir publish).
 CommandParseResult DataBus::parseCommand(
     const char* csv, size_t len, BusItem& out)
 {

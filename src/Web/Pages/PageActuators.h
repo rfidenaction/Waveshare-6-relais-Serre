@@ -6,7 +6,7 @@
 //
 // Les commandes sont envoyées via POST /command en text/plain, payload CSV
 // 7 champs identique au format MQTT serre/cmd. Le serveur enchaîne
-// DataBus::parseCommand (validation) → DataBus::publishCommand
+// DataBus::parseCommand (validation) → DataBus::publish
 // (horodatage + distribution + routage via RELAYS[]).
 //
 // La liste des vannes est construite dynamiquement depuis META : tous les

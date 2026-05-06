@@ -74,7 +74,7 @@ private:
     static bool schemaPublished;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
-    // serre/cmd (CSV 7 champs) : DataBus::parseCommand → DataBus::publishCommand
+    // serre/cmd (CSV 7 champs) : DataBus::parseCommand → DataBus::publish
     static void dispatchCommand(void* eventData);
     static void publishOnline();
     static void publishSchema();

@@ -61,7 +61,7 @@
 //   DataBus::routeCommand parcourt RELAYS[] à la recherche d'une ligne où
 //   command == cmdId reçue. Trouvée → il appelle ligne.enqueue(ligne.entity,
 //   durationMs). Les dispatchers (MqttManager, WebServer) enchaînent
-//   DataBus::parseCommand → DataBus::publishCommand (qui appelle routeCommand),
+//   DataBus::parseCommand → DataBus::publish (qui appelle routeCommand si commande),
 //   sans jamais connaître les managers d'actionneurs.
 //   Ajouter LightManager = créer son enqueueByEntity + changer quelques
 //   lignes de RELAYS[], sans toucher au reste du code.

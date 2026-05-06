@@ -208,19 +208,26 @@ static void loopInit()
     // WiFi status → DataBus
     TaskManager::addTask(
         []() {
-            DataBus::publish(
-                DataId::WifiStaConnected,
-                WiFiManager::isSTAConnected() ? 1.0f : 0.0f
-            );
-            DataBus::publish(
-                DataId::WifiApEnabled,
-                WiFiManager::isAPEnabled() ? 1.0f : 0.0f
-            );
-            if (WiFiManager::isSTAConnected()) {
-                DataBus::publish(DataId::WifiRssi, (float)WiFi.RSSI());
-            } else {
-                DataBus::publish(DataId::WifiRssi, -100.0f);
-            }
+            BusItem item = {};
+
+            item.type       = getMeta(DataId::WifiStaConnected).type;
+            item.id         = DataId::WifiStaConnected;
+            item.valueKind  = 0;
+            item.valueFloat = WiFiManager::isSTAConnected() ? 1.0f : 0.0f;
+            DataBus::publish(item);
+
+            item.type       = getMeta(DataId::WifiApEnabled).type;
+            item.id         = DataId::WifiApEnabled;
+            item.valueKind  = 0;
+            item.valueFloat = WiFiManager::isAPEnabled() ? 1.0f : 0.0f;
+            DataBus::publish(item);
+
+            item.type       = getMeta(DataId::WifiRssi).type;
+            item.id         = DataId::WifiRssi;
+            item.valueKind  = 0;
+            item.valueFloat = WiFiManager::isSTAConnected()
+                            ? (float)WiFi.RSSI() : -100.0f;
+            DataBus::publish(item);
         },
         WIFI_STATUS_UPDATE_INTERVAL_MS
     );

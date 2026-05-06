@@ -44,7 +44,7 @@
 //
 // Journalisation sur changement d'état :
 //   - Console::info
-//   - DataBus::publish(DataId::ValveN, 0.0f|1.0f)
+//   - DataBus::publish(BusItem) avec id=ValveN, value=0.0f|1.0f
 //     → distribution immédiate (MQTT, log SPIFFS, lastDataForWeb)
 //
 // Référentiel temporel :

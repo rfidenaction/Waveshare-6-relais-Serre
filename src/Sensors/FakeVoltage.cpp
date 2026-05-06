@@ -22,7 +22,12 @@ void FakeVoltage::handle()
     float radians = counter * M_PI / 180.0f;
     float voltage = (sin(radians) + 5.0f) * 5.0f;   // 20V — 30V
 
-    DataBus::publish(DataId::SupplyVoltage, voltage);
+    BusItem item = {};
+    item.type       = getMeta(DataId::SupplyVoltage).type;
+    item.id         = DataId::SupplyVoltage;
+    item.valueKind  = 0;
+    item.valueFloat = voltage;
+    DataBus::publish(item);
 
     Console::debug(TAG, "Tension simulée: " + String(voltage, 2) + "V (angle=" + String(counter) + "°)");
 
