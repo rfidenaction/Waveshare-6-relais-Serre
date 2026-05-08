@@ -19,7 +19,7 @@ static const char* TAG = "NTP";
 // Paramètres temporels
 // ─────────────────────────────────────────────
 
-static constexpr uint32_t NETWORK_STABLE_DELAY_MS   = 120UL * 1000UL;               // 1 min
+static constexpr uint32_t NETWORK_STABLE_DELAY_MS   = 120UL * 1000UL;               // 2 min
 static constexpr uint32_t BOOT_RETRY_INTERVAL_MS    = 30UL * 1000UL;                // 30 s
 static constexpr uint8_t  BOOT_MAX_ATTEMPTS         = 10;
 
@@ -153,7 +153,6 @@ void NTPManager::startNtp()
     }
 
     configTzTime(SYSTEM_TIMEZONE, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
-    sntp_init();
 
     _ntpStartMs = millis();
     _ntpState   = NtpState::WAITING;

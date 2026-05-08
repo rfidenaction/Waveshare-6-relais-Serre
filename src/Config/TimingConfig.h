@@ -250,6 +250,15 @@
 #define SAFE_REBOOT_FALLBACK_US        ((int64_t)(45ULL * 86400ULL - 300ULL) * 1000000LL)
 
 // =============================================================================
+// GardenerManager — Programmateur d'arrosage automatique
+// =============================================================================
+/*
+ * Période d'appel de GardenerManager::handle() par TaskManager.
+ * 1 seconde : garantit de ne jamais rater une transition de minute.
+ */
+#define GARDENER_HANDLE_PERIOD_MS      1000
+
+// =============================================================================
 // Réservé – extensions futures
 // =============================================================================
 // Capteurs environnementaux

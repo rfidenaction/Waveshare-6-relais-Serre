@@ -67,6 +67,10 @@ public:
     static void handle();
     static void setOnPublishSuccess(void (*callback)());
 
+    // Publication de l'état Gardener (retain sur serre/gardener/ToUser).
+    // Passe-plat : reçoit le JSON prêt de GardenerManager.
+    static void publishGardenerWateringState(const char* payload, size_t len);
+
 private:
     static void* mqttClient;
     static volatile bool mqttConnected;

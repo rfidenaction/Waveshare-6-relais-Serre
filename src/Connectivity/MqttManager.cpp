@@ -14,6 +14,7 @@
 #include "Config/NetworkConfig.h"
 #include "Core/DataBus.h"
 #include "Config/MetaDataModel.h"
+#include "Gardener/GardenerManager.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -162,6 +163,15 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
             "serre/cmd", 1
         );
         Console::info(TAG, "Abonné à serre/cmd");
+
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            GardenerManager::GARDENER_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à " + String(GardenerManager::GARDENER_TOPIC_FROM_USER));
+
+        GardenerManager::publishGardenerWateringState();
+
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -195,6 +205,16 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
+        // Routage par topic : Gardener FromUser ou commande serre/cmd
+        if (event->topic && event->topic_len > 0) {
+            static const char GD_TOPIC[] = "serre/gardener/FromUser";
+            static const int  GD_LEN     = sizeof(GD_TOPIC) - 1;
+            if (event->topic_len == GD_LEN &&
+                memcmp(event->topic, GD_TOPIC, GD_LEN) == 0) {
+                GardenerManager::onGardenerMessage(event->data, event->data_len);
+                break;
+            }
+        }
         dispatchCommand(event);
         break;
 
@@ -439,7 +459,7 @@ void MqttManager::handle()
             topic.c_str(),
             inFlightPayload, strlen(inFlightPayload),
             1,           // qos=1 (requis pour MQTT_EVENT_PUBLISHED)
-            false,       // retain=false
+            true,        // retain=true
             true         // store=true (requis pour que enqueue accepte)
         );
 
@@ -502,6 +522,31 @@ String MqttManager::formatCsvPayload(const BusItem& item)
     }
 
     return csv;
+}
+
+// =============================================================================
+// Publication de l'état Gardener (retain sur serre/gardener/ToUser).
+// Passe-plat : reçoit le JSON prêt de GardenerManager.
+// =============================================================================
+void MqttManager::publishGardenerWateringState(const char* payload, size_t len)
+{
+    if (!mqttClient || !mqttConnected) return;
+
+    int msgId = esp_mqtt_client_publish(
+        (esp_mqtt_client_handle_t)mqttClient,
+        GardenerManager::GARDENER_TOPIC_TO_USER,
+        payload, len,
+        1,      // qos=1
+        true    // retain=true
+    );
+
+    if (msgId >= 0) {
+        Console::info(TAG, "Gardener state publié sur "
+                     + String(GardenerManager::GARDENER_TOPIC_TO_USER)
+                     + " (" + String(len) + " octets)");
+    } else {
+        Console::error(TAG, "Échec publication Gardener state");
+    }
 }
 
 // =============================================================================

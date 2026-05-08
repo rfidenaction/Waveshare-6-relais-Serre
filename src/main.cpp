@@ -30,6 +30,8 @@
 
 #include "Actuators/ValveManager.h"
 
+#include "Gardener/GardenerManager.h"
+
 #include "Storage/DataLogger.h"
 
 #include "Web/WebServer.h"
@@ -157,6 +159,9 @@ static void loopInit()
     MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
     Console::info("[MQTT] MqttManager initialisé (flux DataBus::mqttQueue → MQTT → Bridge)");
 
+    GardenerManager::init();
+    Console::info("[Gardener] GardenerManager initialisé");
+
     SmsManager::init();
     Console::info("[SMS] SmsManager initialisé");
 
@@ -245,6 +250,11 @@ static void loopInit()
     TaskManager::addTask(
         []() { ValveManager::handle(); },
         100
+    );
+
+    TaskManager::addTask(
+        []() { GardenerManager::handle(); },
+        GARDENER_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(
