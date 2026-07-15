@@ -474,6 +474,13 @@ setInterval(() => {
 </div>
 
 <div class="card" style="margin-top: 40px;">
+  <a href="/rs485" style="color: white; text-decoration: none; display: block;">
+    <p style="font-size: 1.2em;">🔧 Programmation RS485</p>
+    <p style="font-size: 0.9em;">Configurer l'adresse des capteurs sol</p>
+  </a>
+</div>
+
+<div class="card" style="margin-top: 40px;">
   <a href="/logs" style="color: white; text-decoration: none; display: block;">
     <p style="font-size: 1.2em;">🗂️ Gestion des Logs</p>
     <p style="font-size: 0.9em;">Télécharger ou supprimer les données</p>

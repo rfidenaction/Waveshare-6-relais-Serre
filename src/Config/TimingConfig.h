@@ -259,11 +259,29 @@
 #define GARDENER_HANDLE_PERIOD_MS      1000
 
 // =============================================================================
+// SoilSensorRS485 — Sondes de sol RS485 (Modbus RTU)
+// =============================================================================
+/*
+ * Délai avant la première interrogation des sondes de sol.
+ * Laisse le système se stabiliser (WiFi, MQTT, NTP, RTC, Gardener)
+ * avant d'introduire du trafic sur le bus RS485.
+ */
+#define SOIL_RS485_START_DELAY_MS      285000UL    // 4 min 45 s
+
+/*
+ * Période d'interrogation des sondes de sol RS485 (Modbus RTU).
+ * Chaque appel interroge UN capteur en rotation (~100 ms bloquant max).
+ * Cycle complet = période × nombre de capteurs (3).
+ * 30 s × 3 = 1 min 30 s en mode test. En production, ajuster pour
+ * un cycle d'une heure (période = 1200000 = 20 min).
+ */
+#define SOIL_RS485_HANDLE_PERIOD_MS    30000
+
+// =============================================================================
 // Réservé – extensions futures
 // =============================================================================
-// Capteurs environnementaux
+// Capteurs environnementaux air
 // #define AIR_SENSOR_UPDATE_INTERVAL_MS      ...
-// #define SOIL_SENSOR_UPDATE_INTERVAL_MS     ...
 
 // Stockage / maintenance
 // #define FILESYSTEM_MAINTENANCE_INTERVAL_MS ...

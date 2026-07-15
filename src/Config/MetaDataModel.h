@@ -127,7 +127,14 @@ inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     
     X(19, CommandValve3,    CommandGeneric, "Commande", "Commande vanne 3", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
     X(20, CommandValve4,    CommandGeneric, "Commande", "Commande vanne 4", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
     X(21, CommandValve5,    CommandGeneric, "Commande", "Commande vanne 5", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
-    X(22, CommandValve6,    CommandGeneric, "Commande", "Commande vanne 6", "s",   metrique,    1.0f, 900.0f, nullptr,                0)
+    X(22, CommandValve6,    CommandGeneric, "Commande", "Commande vanne 6", "s",   metrique,    1.0f, 900.0f, nullptr,                0) \
+    \
+    /* ── Capteurs sol RS485 ───────────────────────────────────────────────── */ \
+    X(23, SoilTemperature1, Sensor,   "Capteur",      "Température sol 1",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    X(24, SoilMoisture2,    Sensor,   "Capteur",      "Humidité sol 2",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(25, SoilTemperature2, Sensor,   "Capteur",      "Température sol 2",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    X(26, SoilMoisture3,    Sensor,   "Capteur",      "Humidité sol 3",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(27, SoilTemperature3, Sensor,   "Capteur",      "Température sol 3",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST

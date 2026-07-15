@@ -9,6 +9,8 @@
 #include "Web/Pages/PagePrincipale.h"
 #include "Web/Pages/PageLogs.h"
 #include "Web/Pages/PageActuators.h"
+#include "Web/Pages/PageRS485.h"
+#include "Sensors/SoilSensorRS485.h"
 #include "Connectivity/WiFiManager.h"
 #include "Storage/DataLogger.h"
 #include "Core/DataBus.h"
@@ -268,6 +270,10 @@ void WebServer::init()
     server.on("/logs", HTTP_GET, handleLogs);
 
     server.on("/actuators", HTTP_GET, handleActuators);
+
+    server.on("/rs485",         HTTP_GET,  handleRS485);
+    server.on("/rs485/setaddr", HTTP_POST, handleRS485SetAddr);
+    server.on("/rs485/exit",    HTTP_POST, handleRS485Exit);
 
     server.on("/command", HTTP_POST,
               handleCommandFinal,
@@ -642,6 +648,69 @@ void WebServer::handleLogsDownload(AsyncWebServerRequest *request)
     Console::info(TAG, String("Bundle download démarré → ") + ctx->filename
                   + " (" + String(fileCount) + " fichiers)");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RS485 — Page de programmation des adresses capteurs
+// ─────────────────────────────────────────────────────────────────────────────
+
+void WebServer::handleRS485(AsyncWebServerRequest *request)
+{
+    String html = PageRS485::getHtml();
+    request->send(200, "text/html", html);
+}
+
+void WebServer::handleRS485SetAddr(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("to")) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètre to requis\"}");
+        return;
+    }
+
+    uint8_t toAddr = request->getParam("to")->value().toInt();
+
+    if (toAddr < 1 || toAddr > 15) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Adresse cible hors bornes (1-15)\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    uint8_t currentAddr = SoilSensorRS485::findCurrentAddress();
+
+    if (currentAddr == 0) {
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Aucun capteur détecté sur le bus\"}");
+        return;
+    }
+
+    if (currentAddr == toAddr) {
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json",
+                      "{\"ok\":true,\"msg\":\"Le capteur est déjà à cette adresse\"}");
+        return;
+    }
+
+    bool ok = SoilSensorRS485::setAddress(currentAddr, toAddr);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (ok) {
+        request->send(200, "application/json", "{\"ok\":true}");
+    } else {
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Échec de programmation\"}");
+    }
+}
+
+void WebServer::handleRS485Exit(AsyncWebServerRequest *request)
+{
+    SoilSensorRS485::setMaintenanceMode(false);
+    request->send(204);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void WebServer::handleLogsClear(AsyncWebServerRequest *request)
 {

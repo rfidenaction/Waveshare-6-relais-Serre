@@ -25,8 +25,8 @@
 #include "Core/SafeReboot.h"
 #include "Core/DataBus.h"
 
-#include "Sensors/DataAcquisition.h"
 #include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
+#include "Sensors/SoilSensorRS485.h"   // Sondes de sol RS485 Modbus RTU
 
 #include "Actuators/ValveManager.h"
 
@@ -73,8 +73,6 @@ void setup()
     LittleFS.begin(true);
 
     WiFiManager::init();
-
-    DataAcquisition::init();
 }
 
 // -----------------------------------------------------------------------------
@@ -143,6 +141,9 @@ static void loopInit()
     TaskManagerMonitor::init();
 
     FakeVoltage::init();
+
+    SoilSensorRS485::init();
+    Console::info("[SoilRS485] SoilSensorRS485 initialisé");
 
     // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
     // à LOW dès setup() par initAllRelayPinsSafe(). La construction
@@ -245,6 +246,11 @@ static void loopInit()
     TaskManager::addTask(
         []() { FakeVoltage::handle(); },
         30000
+    );
+
+    TaskManager::addTask(
+        []() { SoilSensorRS485::handle(); },
+        SOIL_RS485_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(

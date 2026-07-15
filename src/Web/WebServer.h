@@ -50,6 +50,10 @@ private:
 
     static void handleActuators(AsyncWebServerRequest *request);
 
+    static void handleRS485(AsyncWebServerRequest *request);
+    static void handleRS485SetAddr(AsyncWebServerRequest *request);
+    static void handleRS485Exit(AsyncWebServerRequest *request);
+
     static void handleCommandBody(AsyncWebServerRequest *request,
                                   uint8_t *data, size_t len,
                                   size_t index, size_t total);
