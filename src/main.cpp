@@ -158,6 +158,7 @@ static void loopInit()
 
     MqttManager::init();
     MqttManager::setOnPublishSuccess(BridgeManager::onMqttPublish);
+    MqttManager::loadFamilyNames();
     Console::info("[MQTT] MqttManager initialisé (flux DataBus::mqttQueue → MQTT → Bridge)");
 
     GardenerManager::init();

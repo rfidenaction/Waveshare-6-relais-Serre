@@ -71,6 +71,13 @@ public:
     // Passe-plat : reçoit le JSON prêt de GardenerManager.
     static void publishGardenerWateringState(const char* payload, size_t len);
 
+    // ─── Familles (noms utilisateur pour les 6 vannes/capteurs) ──────────
+    static constexpr uint8_t FAMILY_COUNT    = 6;
+    static constexpr uint8_t FAMILY_NAME_MAX = 24;
+
+    // Charge /families.json au boot. Si absent, initialise "Famille".
+    static void loadFamilyNames();
+
 private:
     static void* mqttClient;
     static volatile bool mqttConnected;
@@ -119,4 +126,9 @@ private:
     static uint32_t mqttKoDownSinceMs;
     static uint32_t mqttKoLastSentMs;
     static uint32_t mqttKoSentCount;    // diag cumul depuis boot
+
+    // ─── Familles ────────────────────────────────────────────────────────
+    static char familyNames[FAMILY_COUNT][FAMILY_NAME_MAX + 1];
+    static bool saveFamilyNames();
+    static void handleFamilyRename(const char* data, int len);
 };

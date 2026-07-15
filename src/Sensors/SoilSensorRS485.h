@@ -2,7 +2,7 @@
 // Lecture des sondes de sol ZTS-3000-TR-WS-N01 (Liyuan Electronic)
 // via RS485 Modbus RTU sur Serial1 (UART1 isolé, direction auto hardware).
 //
-// 3 capteurs sur le bus, interrogés en rotation (un par appel de handle()).
+// 6 capteurs sur le bus, interrogés en rotation (un par appel de handle()).
 // Chaque capteur fournit humidité sol (%) et température sol (°C),
 // publiés sur DataBus après validation.
 #pragma once
@@ -46,11 +46,14 @@ private:
         DataId  temperatureId;
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 3;
+    static constexpr uint8_t SENSOR_COUNT = 6;
     static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
         { 0x01, DataId::SoilMoisture1, DataId::SoilTemperature1 },
         { 0x02, DataId::SoilMoisture2, DataId::SoilTemperature2 },
         { 0x03, DataId::SoilMoisture3, DataId::SoilTemperature3 },
+        { 0x04, DataId::SoilMoisture4, DataId::SoilTemperature4 },
+        { 0x05, DataId::SoilMoisture5, DataId::SoilTemperature5 },
+        { 0x06, DataId::SoilMoisture6, DataId::SoilTemperature6 },
     };
 
     static bool    _initialized;

@@ -18,6 +18,8 @@
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
+#include <ArduinoJson.h>
+#include <LittleFS.h>
 #include <variant>
 #include <stdlib.h>
 #include <string.h>
@@ -172,6 +174,12 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 
         GardenerManager::publishGardenerWateringState();
 
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            "serre/families/rename", 1
+        );
+        Console::info(TAG, "Abonné à serre/families/rename");
+
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -205,13 +213,21 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
-        // Routage par topic : Gardener FromUser ou commande serre/cmd
+        // Routage par topic : Gardener FromUser, Family rename, ou commande serre/cmd
         if (event->topic && event->topic_len > 0) {
             static const char GD_TOPIC[] = "serre/gardener/FromUser";
             static const int  GD_LEN     = sizeof(GD_TOPIC) - 1;
             if (event->topic_len == GD_LEN &&
                 memcmp(event->topic, GD_TOPIC, GD_LEN) == 0) {
                 GardenerManager::onGardenerMessage(event->data, event->data_len);
+                break;
+            }
+
+            static const char FAM_TOPIC[] = "serre/families/rename";
+            static const int  FAM_LEN     = sizeof(FAM_TOPIC) - 1;
+            if (event->topic_len == FAM_LEN &&
+                memcmp(event->topic, FAM_TOPIC, FAM_LEN) == 0) {
+                handleFamilyRename(event->data, event->data_len);
                 break;
             }
         }
@@ -384,7 +400,17 @@ String MqttManager::buildSchemaJson()
         if (i < META_COUNT - 1) p += ",";
         p += "\n";
     }
-    p += "  ]\n";
+    p += "  ],\n";
+
+    p += "  \"families\": [";
+    for (uint8_t i = 0; i < FAMILY_COUNT; i++) {
+        if (i > 0) p += ", ";
+        p += "\"";
+        p += jsonEscape(familyNames[i]);
+        p += "\"";
+    }
+    p += "]\n";
+
     p += "}";
 
     return p;
@@ -553,4 +579,103 @@ void MqttManager::publishGardenerWateringState(const char* payload, size_t len)
 bool MqttManager::isMqttConnected()
 {
     return mqttConnected;
+}
+
+// =============================================================================
+// Familles — noms utilisateur pour les 6 vannes/capteurs
+// =============================================================================
+
+char MqttManager::familyNames[FAMILY_COUNT][FAMILY_NAME_MAX + 1] = {};
+
+void MqttManager::loadFamilyNames()
+{
+    for (uint8_t i = 0; i < FAMILY_COUNT; i++) {
+        strncpy(familyNames[i], "Famille", FAMILY_NAME_MAX);
+        familyNames[i][FAMILY_NAME_MAX] = '\0';
+    }
+
+    File f = LittleFS.open("/families.json", "r");
+    if (!f) {
+        Console::info(TAG, "Fichier /families.json absent — noms par défaut");
+        return;
+    }
+
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+
+    if (err) {
+        Console::warn(TAG, "families.json malformé : " + String(err.c_str()));
+        return;
+    }
+
+    JsonArray arr = doc.as<JsonArray>();
+    for (uint8_t i = 0; i < FAMILY_COUNT && i < arr.size(); i++) {
+        const char* name = arr[i] | "Famille";
+        strncpy(familyNames[i], name, FAMILY_NAME_MAX);
+        familyNames[i][FAMILY_NAME_MAX] = '\0';
+    }
+
+    Console::info(TAG, "Familles chargées depuis /families.json");
+}
+
+bool MqttManager::saveFamilyNames()
+{
+    File f = LittleFS.open("/families.tmp", "w");
+    if (!f) {
+        Console::error(TAG, "Échec ouverture /families.tmp");
+        return false;
+    }
+
+    f.print("[");
+    for (uint8_t i = 0; i < FAMILY_COUNT; i++) {
+        if (i > 0) f.print(",");
+        f.print("\"");
+        f.print(familyNames[i]);
+        f.print("\"");
+    }
+    f.print("]");
+    f.close();
+
+    if (!LittleFS.rename("/families.tmp", "/families.json")) {
+        Console::error(TAG, "Échec rename /families.tmp → /families.json");
+        return false;
+    }
+
+    return true;
+}
+
+void MqttManager::handleFamilyRename(const char* data, int len)
+{
+    if (len <= 0 || len > 128) return;
+
+    char buf[129];
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+
+    StaticJsonDocument<128> doc;
+    DeserializationError err = deserializeJson(doc, buf);
+    if (err) {
+        Console::warn(TAG, "Family rename JSON malformé : " + String(err.c_str()));
+        return;
+    }
+
+    int id = doc["id"] | 0;
+    const char* name = doc["name"] | "";
+
+    if (id < 1 || id > FAMILY_COUNT) {
+        Console::warn(TAG, "Family rename — id hors bornes : " + String(id));
+        return;
+    }
+
+    strncpy(familyNames[id - 1], name, FAMILY_NAME_MAX);
+    familyNames[id - 1][FAMILY_NAME_MAX] = '\0';
+
+    if (saveFamilyNames()) {
+        Console::info(TAG, "Famille " + String(id) + " renommée : " + String(name));
+    }
+
+    schemaPublished = false;
+    publishSchema();
+    schemaPublished = true;
 }

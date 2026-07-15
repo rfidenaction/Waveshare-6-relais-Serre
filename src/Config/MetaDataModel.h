@@ -134,7 +134,13 @@ inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     
     X(24, SoilMoisture2,    Sensor,   "Capteur",      "Humidité sol 2",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
     X(25, SoilTemperature2, Sensor,   "Capteur",      "Température sol 2",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
     X(26, SoilMoisture3,    Sensor,   "Capteur",      "Humidité sol 3",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
-    X(27, SoilTemperature3, Sensor,   "Capteur",      "Température sol 3",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0)
+    X(27, SoilTemperature3, Sensor,   "Capteur",      "Température sol 3",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    X(28, SoilMoisture4,    Sensor,   "Capteur",      "Humidité sol 4",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(29, SoilTemperature4, Sensor,   "Capteur",      "Température sol 4",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    X(30, SoilMoisture5,    Sensor,   "Capteur",      "Humidité sol 5",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(31, SoilTemperature5, Sensor,   "Capteur",      "Température sol 5",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    X(32, SoilMoisture6,    Sensor,   "Capteur",      "Humidité sol 6",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(33, SoilTemperature6, Sensor,   "Capteur",      "Température sol 6",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST
