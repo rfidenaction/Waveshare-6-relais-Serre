@@ -275,6 +275,10 @@ void WebServer::init()
     server.on("/rs485/setaddr", HTTP_POST, handleRS485SetAddr);
     server.on("/rs485/exit",    HTTP_POST, handleRS485Exit);
 
+    // ── Analog Input 8CH (B) — configuration ────────────────────────
+    server.on("/rs485/read-analog",    HTTP_POST, handleRS485ReadAnalog);
+    server.on("/rs485/program-analog", HTTP_POST, handleRS485ProgramAnalog);
+
     server.on("/command", HTTP_POST,
               handleCommandFinal,
               nullptr,
@@ -718,3 +722,386 @@ void WebServer::handleLogsClear(AsyncWebServerRequest *request)
     request->send(200, "text/plain", "Historique supprimé avec succès");
     Console::info(TAG, "Logs supprimés par l'utilisateur");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Analog Input 8CH (B) — configuration via RS485
+//
+// Fonctions utilitaires et handlers pour lire la configuration actuelle
+// du module Waveshare Modbus RTU Analog Input 8CH (B) et le reprogrammer
+// (baud rate + adresse Modbus).
+//
+// Protocole : Modbus RTU standard.
+//   - Lecture adresse   : fonction 0x03, registre 0x4000
+//   - Lecture version   : fonction 0x03, registre 0x8000
+//   - Écriture baud rate: fonction 0x06, registre 0x2000
+//   - Écriture adresse  : fonction 0x06, registre 0x4000
+//   - Adresse broadcast : 0x00
+//
+// Ref : https://www.waveshare.com/wiki/Modbus_RTU_Analog_Input_8CH_(B)
+// ═════════════════════════════════════════════════════════════════════════════
+
+static const char* TAG_AI = "AnalogInput";
+
+// ── CRC16 Modbus RTU (copie autonome, n'utilise pas SoilSensorRS485) ────────
+
+static uint16_t analogInputCrc16(const uint8_t* data, size_t len)
+{
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            if (crc & 0x0001) {
+                crc = (crc >> 1) ^ 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+// ── Purge du buffer RX de Serial1 ───────────────────────────────────────────
+
+static void analogInputDrainRx()
+{
+    while (Serial1.available()) {
+        Serial1.read();
+    }
+}
+
+// ── Transaction Modbus : envoi d'une trame et réception de la réponse ───────
+//
+// Envoie request (requestLen octets, CRC déjà inclus) sur Serial1,
+// attend jusqu'à expectedLen octets pendant timeoutMs.
+// Retourne le nombre d'octets reçus dans response[].
+
+static size_t analogInputTransaction(const uint8_t* request, size_t requestLen,
+                                     uint8_t* response, size_t expectedLen,
+                                     unsigned long timeoutMs = 200)
+{
+    analogInputDrainRx();
+
+    Serial1.write(request, requestLen);
+    Serial1.flush();
+
+    size_t idx = 0;
+    unsigned long startMs = millis();
+    while (idx < expectedLen && (millis() - startMs) < timeoutMs) {
+        if (Serial1.available()) {
+            response[idx++] = Serial1.read();
+        }
+    }
+    return idx;
+}
+
+// ── Envoi d'une requête Modbus 0x03 (Read Holding Register) ─────────────────
+//
+// Lit 1 registre à regAddr sur le device à deviceAddr.
+// Retourne true si la réponse est valide, et place la valeur 16 bits
+// dans outValue.
+
+static bool analogInputReadRegister(uint8_t deviceAddr, uint16_t regAddr,
+                                    uint16_t& outValue,
+                                    unsigned long timeoutMs = 200)
+{
+    uint8_t request[8];
+    request[0] = deviceAddr;
+    request[1] = 0x03;
+    request[2] = (regAddr >> 8) & 0xFF;
+    request[3] = regAddr & 0xFF;
+    request[4] = 0x00;
+    request[5] = 0x01;
+
+    uint16_t crc = analogInputCrc16(request, 6);
+    request[6] = crc & 0xFF;
+    request[7] = (crc >> 8) & 0xFF;
+
+    uint8_t response[16];
+    size_t rxLen = analogInputTransaction(request, 8, response, 7, timeoutMs);
+
+    if (rxLen < 7) return false;
+
+    uint16_t rxCrc  = response[5] | ((uint16_t)response[6] << 8);
+    uint16_t chkCrc = analogInputCrc16(response, 5);
+    if (rxCrc != chkCrc) return false;
+
+    if (response[1] != 0x03) return false;
+    if (response[2] != 0x02) return false;
+
+    outValue = ((uint16_t)response[3] << 8) | response[4];
+    return true;
+}
+
+// ── Envoi d'une requête Modbus 0x06 (Write Single Register) ─────────────────
+//
+// Écrit value dans le registre regAddr du device à deviceAddr.
+// Le module renvoie un écho identique si l'écriture réussit.
+
+static bool analogInputWriteRegister(uint8_t deviceAddr, uint16_t regAddr,
+                                     uint16_t value)
+{
+    uint8_t request[8];
+    request[0] = deviceAddr;
+    request[1] = 0x06;
+    request[2] = (regAddr >> 8) & 0xFF;
+    request[3] = regAddr & 0xFF;
+    request[4] = (value >> 8) & 0xFF;
+    request[5] = value & 0xFF;
+
+    uint16_t crc = analogInputCrc16(request, 6);
+    request[6] = crc & 0xFF;
+    request[7] = (crc >> 8) & 0xFF;
+
+    uint8_t response[16];
+    size_t rxLen = analogInputTransaction(request, 8, response, 8);
+
+    if (rxLen < 8) return false;
+
+    return (memcmp(request, response, 8) == 0);
+}
+
+// ── Scan : recherche du module sur les adresses 1–30, à un baud rate donné ──
+//
+// Essaie de lire le registre d'adresse (0x4000) via broadcast (0x00).
+// Si le module répond, on obtient son adresse dans la réponse.
+// Si broadcast échoue, scanne individuellement les adresses 1–30.
+// Retourne l'adresse trouvée, ou 0 si aucun module ne répond.
+
+static uint8_t analogInputScan(uint32_t baudRate)
+{
+    Serial1.end();
+    Serial1.begin(baudRate, SERIAL_8N1, 18, 17);  // RX=GPIO18, TX=GPIO17
+    delay(20);
+
+    uint16_t readAddr = 0;
+
+    // Tentative broadcast d'abord (rapide, un seul module sur le bus)
+    // Timeout 50 ms : le module répond en < 15 ms, même à 4800 bauds.
+    if (analogInputReadRegister(0x00, 0x4000, readAddr, 50)) {
+        Console::info(TAG_AI, "Module trouvé via broadcast à " + String(baudRate)
+                              + " bauds — adresse " + String(readAddr));
+        return (uint8_t)readAddr;
+    }
+
+    // Scan individuel adresses 1–30
+    for (uint8_t addr = 1; addr <= 30; addr++) {
+        if (analogInputReadRegister(addr, 0x4000, readAddr, 50)) {
+            Console::info(TAG_AI, "Module trouvé à l'adresse " + String(addr)
+                                  + " (" + String(baudRate) + " bauds)");
+            return addr;
+        }
+    }
+
+    return 0;
+}
+
+// ── Correspondance code baud rate ↔ valeur numérique ────────────────────────
+
+static const uint32_t AI_BAUD_TABLE[] = {
+    4800, 9600, 19200, 38400, 57600, 115200, 128000, 256000
+};
+static const size_t AI_BAUD_TABLE_SIZE = sizeof(AI_BAUD_TABLE) / sizeof(AI_BAUD_TABLE[0]);
+
+static uint32_t analogInputBaudFromCode(uint8_t code)
+{
+    if (code < AI_BAUD_TABLE_SIZE) return AI_BAUD_TABLE[code];
+    return 0;
+}
+
+static uint8_t analogInputCodeFromBaud(uint32_t baud)
+{
+    for (uint8_t i = 0; i < AI_BAUD_TABLE_SIZE; i++) {
+        if (AI_BAUD_TABLE[i] == baud) return i;
+    }
+    return 0xFF;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/read-analog — lecture de la configuration actuelle
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485ReadAnalog(AsyncWebServerRequest *request)
+{
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    uint8_t foundAddr = 0;
+    uint32_t foundBaud = 0;
+
+    // Essai à 9600 d'abord (défaut usine), puis 4800 (valeur cible)
+    foundAddr = analogInputScan(9600);
+    if (foundAddr != 0) {
+        foundBaud = 9600;
+    } else {
+        foundAddr = analogInputScan(4800);
+        if (foundAddr != 0) {
+            foundBaud = 4800;
+        }
+    }
+
+    if (foundAddr == 0) {
+        // Restaurer Serial1 à 4800 pour les capteurs sol
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        SoilSensorRS485::setMaintenanceMode(false);
+
+        Console::warn(TAG_AI, "Aucun module Analog Input détecté (scan 1-30, 9600+4800)");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Aucun module détecté (adresses 1–30, 9600 et 4800 bauds)\"}");
+        return;
+    }
+
+    // Lire la version firmware (registre 0x8000)
+    uint16_t rawVersion = 0;
+    analogInputReadRegister(foundAddr, 0x8000, rawVersion);
+    String versionStr = "V" + String(rawVersion / 100) + "."
+                        + String((rawVersion % 100) / 10)
+                        + String(rawVersion % 10);
+
+    // Restaurer Serial1 à 4800 pour les capteurs sol
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    Console::info(TAG_AI, "Module détecté — adresse=" + String(foundAddr)
+                          + " baud=" + String(foundBaud)
+                          + " version=" + versionStr);
+
+    String json = "{\"ok\":true,\"address\":" + String(foundAddr)
+                + ",\"baudrate\":" + String(foundBaud)
+                + ",\"version\":\"" + versionStr + "\"}";
+    request->send(200, "application/json", json);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/program-analog — programmation baud rate + adresse
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485ProgramAnalog(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("to")) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètre 'to' requis\"}");
+        return;
+    }
+
+    uint8_t toAddr = request->getParam("to")->value().toInt();
+    if (toAddr < 16 || toAddr > 30) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Adresse cible hors bornes (16–30)\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    // ── Étape 1 : trouver le module ─────────────────────────────────────
+    uint8_t foundAddr = 0;
+    uint32_t foundBaud = 0;
+
+    foundAddr = analogInputScan(9600);
+    if (foundAddr != 0) {
+        foundBaud = 9600;
+    } else {
+        foundAddr = analogInputScan(4800);
+        if (foundAddr != 0) {
+            foundBaud = 4800;
+        }
+    }
+
+    if (foundAddr == 0) {
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        SoilSensorRS485::setMaintenanceMode(false);
+
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Module non détecté — programmation annulée\"}");
+        return;
+    }
+
+    bool needBaudChange = (foundBaud != 4800);
+    bool needAddrChange = (foundAddr != toAddr);
+
+    // ── Étape 2 : changer le baud rate vers 4800 si nécessaire ──────────
+    //
+    // Le module bascule immédiatement après réception de la commande.
+    // L'écho de confirmation arrive donc à la NOUVELLE vitesse (4800),
+    // illisible si Serial1 est encore à l'ancienne (9600).
+    // → On envoie la commande sans vérifier l'écho, on bascule Serial1
+    //   à 4800, puis on vérifie en lisant un registre.
+    if (needBaudChange) {
+        uint8_t cmdBaud[8];
+        cmdBaud[0] = 0x00;   // broadcast
+        cmdBaud[1] = 0x06;   // Write Single Register
+        cmdBaud[2] = 0x20;   // registre 0x2000 (UART parameter)
+        cmdBaud[3] = 0x00;
+        cmdBaud[4] = 0x00;   // pas de parité
+        cmdBaud[5] = 0x00;   // code 0 = 4800 bauds
+        uint16_t crc = analogInputCrc16(cmdBaud, 6);
+        cmdBaud[6] = crc & 0xFF;
+        cmdBaud[7] = (crc >> 8) & 0xFF;
+
+        analogInputDrainRx();
+        Serial1.write(cmdBaud, 8);
+        Serial1.flush();
+
+        // Basculer Serial1 à 4800 et vérifier que le module répond
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        delay(50);
+
+        uint16_t verifyVal = 0;
+        bool baudOk = analogInputReadRegister(foundAddr, 0x4000, verifyVal);
+        if (!baudOk) {
+            SoilSensorRS485::setMaintenanceMode(false);
+
+            Console::warn(TAG_AI, "Baud rate envoyé mais module muet à 4800");
+            request->send(200, "application/json",
+                          "{\"ok\":false,\"error\":\"Changement de baud rate envoyé mais le module ne répond pas à 4800\"}");
+            return;
+        }
+        Console::info(TAG_AI, "Baud rate changé de " + String(foundBaud) + " vers 4800 (vérifié)");
+    }
+
+    // ── Étape 3 : changer l'adresse si nécessaire ───────────────────────
+    if (needAddrChange) {
+        bool ok = analogInputWriteRegister(0x00, 0x4000, (uint16_t)toAddr);
+        if (!ok) {
+            Serial1.end();
+            Serial1.begin(4800, SERIAL_8N1, 18, 17);
+            SoilSensorRS485::setMaintenanceMode(false);
+
+            Console::warn(TAG_AI, "Échec du changement d'adresse vers " + String(toAddr));
+            request->send(200, "application/json",
+                          "{\"ok\":false,\"error\":\"Baud rate OK mais échec du changement d'adresse\"}");
+            return;
+        }
+        Console::info(TAG_AI, "Adresse changée de " + String(foundAddr) + " vers " + String(toAddr));
+    }
+
+    // ── Étape 4 : vérification — lire l'adresse à la nouvelle adresse ───
+    delay(50);
+    uint16_t verifyAddr = 0;
+    bool verified = analogInputReadRegister(toAddr, 0x4000, verifyAddr);
+
+    // Restaurer Serial1 à 4800 pour les capteurs sol
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (verified && verifyAddr == toAddr) {
+        String msg = "Module configuré — adresse " + String(toAddr) + ", 4800 bauds";
+        if (!needBaudChange && !needAddrChange) {
+            msg = "Module déjà configuré à l'adresse " + String(toAddr) + " en 4800 bauds";
+        }
+        Console::info(TAG_AI, msg);
+        request->send(200, "application/json",
+                      "{\"ok\":true,\"msg\":\"" + msg + "\"}");
+    } else {
+        Console::warn(TAG_AI, "Vérification échouée après programmation");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Commandes envoyées mais vérification échouée — relancez une lecture pour vérifier\"}");
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fin — Analog Input 8CH (B)
+// ═════════════════════════════════════════════════════════════════════════════

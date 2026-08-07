@@ -40,6 +40,7 @@ select { font-size: 1.2em; padding: 8px 16px; border-radius: 8px; border: none; 
 <h1>Programmation RS485</h1>
 
 <div class="card">
+  <h2>Capteurs sol ZTS-3000</h2>
   <p>Brancher <strong>un seul capteur</strong> sur le bus RS485, puis choisir l'adresse à lui attribuer.</p>
 
   <p>Nouvelle adresse :</p>
@@ -65,11 +66,111 @@ select { font-size: 1.2em; padding: 8px 16px; border-radius: 8px; border: none; 
   <div id="programResult"></div>
 </div>
 
+<div class="card">
+  <h2>Module Analog Input 8CH</h2>
+  <p>Brancher <strong>uniquement le module Analog Input</strong> sur le bus RS485.</p>
+
+  <button class="btn btn-primary" id="btnReadAnalog" onclick="doReadAnalog()">Lire la configuration</button>
+  <div id="analogReadResult"></div>
+
+  <div id="analogProgramSection" style="display:none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.3); padding-top: 15px;">
+    <p>Nouvelle adresse (16–30) :</p>
+    <select id="analogNewAddr">
+      <option value="16" selected>16</option>
+      <option value="17">17</option>
+      <option value="18">18</option>
+      <option value="19">19</option>
+      <option value="20">20</option>
+      <option value="21">21</option>
+      <option value="22">22</option>
+      <option value="23">23</option>
+      <option value="24">24</option>
+      <option value="25">25</option>
+      <option value="26">26</option>
+      <option value="27">27</option>
+      <option value="28">28</option>
+      <option value="29">29</option>
+      <option value="30">30</option>
+    </select>
+    <br>
+    <button class="btn btn-primary" id="btnProgramAnalog" onclick="doProgramAnalog()">Programmer</button>
+    <div id="analogProgramResult"></div>
+  </div>
+</div>
+
 <div style="margin-top: 30px;">
   <a href="/" class="btn btn-back" onclick="exitMaintenance()">&#8592; Retour</a>
 </div>
 
 <script>
+// ── Analog Input 8CH (B) — lecture config + programmation ────────────
+function doReadAnalog() {
+  var btn = document.getElementById('btnReadAnalog');
+  var resultEl = document.getElementById('analogReadResult');
+  var progSection = document.getElementById('analogProgramSection');
+
+  btn.disabled = true;
+  btn.textContent = 'Scan en cours...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Scan des adresses 1–30 (9600 puis 4800 bauds)…</div>';
+  progSection.style.display = 'none';
+
+  fetch('/rs485/read-analog', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Lire la configuration';
+      btn.disabled = false;
+      if (data.ok) {
+        resultEl.innerHTML =
+          '<div class="success">'
+          + 'Adresse actuelle : <strong>' + data.address + '</strong><br>'
+          + 'Baud rate : <strong>' + data.baudrate + '</strong><br>'
+          + 'Version firmware : <strong>' + data.version + '</strong>'
+          + '</div>';
+        progSection.style.display = 'block';
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Module non détecté') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Lire la configuration';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
+function doProgramAnalog() {
+  var newAddr = parseInt(document.getElementById('analogNewAddr').value);
+  var btn = document.getElementById('btnProgramAnalog');
+  var resultEl = document.getElementById('analogProgramResult');
+
+  btn.disabled = true;
+  btn.textContent = 'Programmation...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Envoi des commandes…</div>';
+
+  fetch('/rs485/program-analog?to=' + newAddr, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Programmer';
+      btn.disabled = false;
+      if (data.ok) {
+        resultEl.innerHTML =
+          '<div class="success">' + (data.msg || 'Module programmé avec succès') + '</div>';
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Erreur inconnue') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Programmer';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
+// ── Capteurs sol — programmation d'adresse (code existant) ───────────
 function doProgram() {
   var newAddr = parseInt(document.getElementById('newAddr').value);
   var btn = document.getElementById('btnProgram');
