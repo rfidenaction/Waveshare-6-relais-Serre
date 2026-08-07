@@ -595,6 +595,12 @@ h1 {
   <span id="deviceText"></span>
 </div>
 
+<!-- État alimentation 220V -->
+<div class="device-status" id="acPowerStatus">
+  <span class="status-dot" id="acPowerDot"></span>
+  <span id="acPowerText"></span>
+</div>
+
 <!-- Familles — vue jardinier -->
 <div id="familySection" style="display:none;">
   <div class="group-title collapsed" onclick="toggleGroup(this)">Familles</div>
@@ -711,6 +717,8 @@ const mqttDot      = document.getElementById('mqttDot');
 const mqttStatusEl = document.getElementById('mqttStatus');
 const deviceDot    = document.getElementById('deviceDot');
 const deviceText   = document.getElementById('deviceText');
+const acPowerDot   = document.getElementById('acPowerDot');
+const acPowerText  = document.getElementById('acPowerText');
 const cardsDiv     = document.getElementById('cards');
 const waitingMsg   = document.getElementById('waitingMsg');
 
@@ -721,6 +729,12 @@ const waitingMsg   = document.getElementById('waitingMsg');
 function setMqttStatus(state, text) {
   mqttDot.className = 'status-dot ' + state;
   mqttStatusEl.textContent = text;
+}
+
+function updateAcPowerStatus(entry) {
+  var connected = Math.round(entry.value) === 1;
+  acPowerDot.className = 'status-dot ' + (connected ? 'connected' : 'offline');
+  acPowerText.textContent = connected ? 'Alim 220V connectée' : 'Alim 220V coupée';
 }
 
 // Formater un timestamp UTC en heure locale
@@ -851,6 +865,8 @@ function buildCards() {
         if (dt.id === typeId && dt.label) label = dt.label;
       });
     }
+    if (label === 'Capteur')    label = 'Capteurs';
+    if (label === 'Actionneur') label = 'Actionneurs';
 
     var title = document.createElement('div');
     title.className = 'group-title collapsed';
@@ -2085,6 +2101,8 @@ if (schema) {
   });
 }
 
+if (lastValues[34]) updateAcPowerStatus(lastValues[34]);
+
 // ══════════════════════════════════════════════════════════════
 // Connexion MQTT
 // ══════════════════════════════════════════════════════════════
@@ -2101,7 +2119,7 @@ var client = mqtt.connect(MQTT_URL, {
 });
 
 client.on('connect', function() {
-  setMqttStatus('connected', 'Connecté au broker');
+  setMqttStatus('connected', 'Tel connecté au broker');
   client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS, GARDENER_TOPIC_TO_USER], { qos: 1 });
 });
 
@@ -2147,10 +2165,10 @@ client.on('message', function(topic, message) {
   if (topic === TOPIC_STATUS) {
     if (payload === 'online') {
       deviceDot.className = 'status-dot connected';
-      deviceText.textContent = 'Carte Waveshare en ligne';
+      deviceText.textContent = 'Serre autonome en ligne';
     } else {
       deviceDot.className = 'status-dot offline';
-      deviceText.textContent = 'Carte Waveshare hors ligne';
+      deviceText.textContent = 'Serre autonome hors ligne';
     }
     return;
   }
@@ -2171,6 +2189,8 @@ client.on('message', function(topic, message) {
 
     lastValues[entry.id] = entry;
     saveValues();
+
+    if (entry.id === 34) updateAcPowerStatus(entry);
 
     // Mémoriser le dernier arrosage (type 5 = Manuel, type 6 = Auto)
     if ((entry.type === 5 || entry.type === 6) && entry.id >= 17 && entry.id <= 22) {
