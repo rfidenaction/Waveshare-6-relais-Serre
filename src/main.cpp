@@ -25,7 +25,7 @@
 #include "Core/SafeReboot.h"
 #include "Core/DataBus.h"
 
-#include "Sensors/FakeVoltage.h"       // TEST — À SUPPRIMER en production
+#include "Sensors/SupplyVoltage.h"     // Tension alim via Analog Input 8CH (B) RS485
 #include "Sensors/SoilSensorRS485.h"   // Sondes de sol RS485 Modbus RTU
 
 #include "Actuators/ValveManager.h"
@@ -140,7 +140,7 @@ static void loopInit()
 
     TaskManagerMonitor::init();
 
-    FakeVoltage::init();
+    SupplyVoltage::init();
 
     SoilSensorRS485::init();
     Console::info("[SoilRS485] SoilSensorRS485 initialisé");
@@ -245,7 +245,7 @@ static void loopInit()
     );
 
     TaskManager::addTask(
-        []() { FakeVoltage::handle(); },
+        []() { SupplyVoltage::handle(); },
         30000
     );
 
