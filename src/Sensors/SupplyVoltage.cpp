@@ -6,7 +6,10 @@
 // Le canal 1 (registre 0x0000) porte la tension d'alimentation divisée
 // par 4 via un pont résistif. La valeur brute est en millivolts.
 //
-// Protocole : fonction 0x04 (Read Input Registers), 1 registre.
+// Le canal 2 (registre 0x0001) porte une tension indicatrice de la
+// présence du secteur. Les deux canaux sont lus en une seule transaction.
+//
+// Protocole : fonction 0x04 (Read Input Registers), 2 registres.
 
 #include "Sensors/SupplyVoltage.h"
 #include "Sensors/SoilSensorRS485.h"   // isMaintenanceMode()
@@ -23,8 +26,8 @@ static const char* TAG = "SupplyVoltage";
 static constexpr uint8_t  DEVICE_ADDRESS        = 16;        // 0x10
 static constexpr uint8_t  MODBUS_FN_READ_INPUT  = 0x04;      // Read Input Registers
 static constexpr uint16_t REG_CHANNEL_1         = 0x0000;
-static constexpr uint16_t REG_COUNT             = 1;
-static constexpr size_t   RESPONSE_LENGTH       = 7;          // addr+fn+byteCount+2data+2crc
+static constexpr uint16_t REG_COUNT             = 2;          // canal 1 + canal 2
+static constexpr size_t   RESPONSE_LENGTH       = 9;          // addr+fn+byteCount+4data+2crc
 static constexpr unsigned long RESPONSE_TIMEOUT_MS = 200;
 
 static constexpr float RESISTOR_DIVIDER_RATIO   = 4.0f;
@@ -90,8 +93,8 @@ void SupplyVoltage::handle()
     }
 
     // ── Validation CRC ───────────────────────────────────────────────────
-    uint16_t rxCrc   = response[5] | ((uint16_t)response[6] << 8);
-    uint16_t calcCrc = crc16(response, 5);
+    uint16_t rxCrc   = response[7] | ((uint16_t)response[8] << 8);
+    uint16_t calcCrc = crc16(response, 7);
 
     if (rxCrc != calcCrc) {
         Console::warn(TAG, "CRC invalide — reçu 0x" + String(rxCrc, HEX)
@@ -119,10 +122,10 @@ void SupplyVoltage::handle()
         return;
     }
 
-    // ── Décodage ─────────────────────────────────────────────────────────
-    uint16_t rawMV = ((uint16_t)response[3] << 8) | response[4];
+    // ── Décodage canal 1 — tension d'alimentation ─────────────────────
+    uint16_t rawMV_ch1 = ((uint16_t)response[3] << 8) | response[4];
 
-    float inputVoltage  = rawMV / 1000.0f;
+    float inputVoltage  = rawMV_ch1 / 1000.0f;
     float supplyVoltage = inputVoltage * RESISTOR_DIVIDER_RATIO;
 
     BusItem item = {};
@@ -132,9 +135,26 @@ void SupplyVoltage::handle()
     item.valueFloat = supplyVoltage;
     DataBus::publish(item);
 
-    Console::info(TAG, "Brut=" + String(rawMV) + " mV"
+    Console::info(TAG, "CH1 Brut=" + String(rawMV_ch1) + " mV"
                        + "  |  Entrée=" + String(inputVoltage, 3) + " V"
                        + "  |  Alim=" + String(supplyVoltage, 1) + " V");
+
+    // ── Décodage canal 2 — détection secteur ────────────────────────
+    uint16_t rawMV_ch2 = ((uint16_t)response[5] << 8) | response[6];
+
+    float mainsVoltage = rawMV_ch2 / 1000.0f;
+    float acPower = (mainsVoltage >= 4.0f) ? 1.0f : 0.0f;
+
+    BusItem item2 = {};
+    item2.type       = getMeta(DataId::AcPower).type;
+    item2.id         = DataId::AcPower;
+    item2.valueKind  = 0;
+    item2.valueFloat = acPower;
+    DataBus::publish(item2);
+
+    Console::info(TAG, "CH2 Brut=" + String(rawMV_ch2) + " mV"
+                       + "  |  Tension=" + String(mainsVoltage, 3) + " V"
+                       + "  |  AcPower=" + String(acPower == 1.0f ? "Présent" : "Absent"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

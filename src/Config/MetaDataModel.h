@@ -73,6 +73,7 @@ inline constexpr const char* const valve6StateLabels[] = { "Fermée", "Ouverte" 
 
 inline constexpr const char* const kLabelsWifiStaConnected[] = { "Déconnecté",  "Connecté" };
 inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     "Actif"    };
+inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      "Présent"  };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DATA_ID_LIST — SOURCE DE VÉRITÉ UNIQUE
@@ -140,7 +141,10 @@ inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     
     X(30, SoilMoisture5,    Sensor,   "Capteur",      "Humidité sol 5",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
     X(31, SoilTemperature5, Sensor,   "Capteur",      "Température sol 5",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
     X(32, SoilMoisture6,    Sensor,   "Capteur",      "Humidité sol 6",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
-    X(33, SoilTemperature6, Sensor,   "Capteur",      "Température sol 6",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0)
+    X(33, SoilTemperature6, Sensor,   "Capteur",      "Température sol 6",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    \
+    /* ── Alimentation (suite) — détection secteur via Analog Input 8CH (B) ─── */ \
+    X(34, AcPower,          Power,    "Alimentation", "Secteur 220V",       "",    etat,        0.0f,   0.0f, kLabelsAcPower,         2)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST
