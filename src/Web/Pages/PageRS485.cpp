@@ -67,6 +67,39 @@ select { font-size: 1.2em; padding: 8px 16px; border-radius: 8px; border: none; 
 </div>
 
 <div class="card">
+  <h2>Capteurs air Ebyte KTH2-R</h2>
+  <p>Brancher <strong>un seul capteur Ebyte</strong> sur le bus RS485.</p>
+
+  <button class="btn btn-primary" id="btnReadEbyte" onclick="doReadEbyte()">Lire la configuration</button>
+  <div id="ebyteReadResult"></div>
+
+  <div id="ebyteProgramSection" style="display:none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.3); padding-top: 15px;">
+    <p>Nouvelle adresse (1–16) :</p>
+    <select id="ebyteNewAddr">
+      <option value="1" selected>1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+      <option value="5">5</option>
+      <option value="6">6</option>
+      <option value="7">7</option>
+      <option value="8">8</option>
+      <option value="9">9</option>
+      <option value="10">10</option>
+      <option value="11">11</option>
+      <option value="12">12</option>
+      <option value="13">13</option>
+      <option value="14">14</option>
+      <option value="15">15</option>
+      <option value="16">16</option>
+    </select>
+    <br>
+    <button class="btn btn-primary" id="btnProgramEbyte" onclick="doProgramEbyte()">Programmer</button>
+    <div id="ebyteProgramResult"></div>
+  </div>
+</div>
+
+<div class="card">
   <h2>Module Analog Input 8CH</h2>
   <p>Brancher <strong>uniquement le module Analog Input</strong> sur le bus RS485.</p>
 
@@ -103,6 +136,72 @@ select { font-size: 1.2em; padding: 8px 16px; border-radius: 8px; border: none; 
 </div>
 
 <script>
+// ── Capteurs air Ebyte KTH2-R — lecture config + programmation ───────
+function doReadEbyte() {
+  var btn = document.getElementById('btnReadEbyte');
+  var resultEl = document.getElementById('ebyteReadResult');
+  var progSection = document.getElementById('ebyteProgramSection');
+
+  btn.disabled = true;
+  btn.textContent = 'Scan en cours...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Scan des adresses 1–16 (9600 puis 4800 bauds)…</div>';
+  progSection.style.display = 'none';
+
+  fetch('/rs485/read-ebyte', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Lire la configuration';
+      btn.disabled = false;
+      if (data.ok) {
+        resultEl.innerHTML =
+          '<div class="success">'
+          + 'Adresse actuelle : <strong>' + data.address + '</strong><br>'
+          + 'Baud rate : <strong>' + data.baudrate + '</strong>'
+          + '</div>';
+        progSection.style.display = 'block';
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Capteur non détecté') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Lire la configuration';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
+function doProgramEbyte() {
+  var newAddr = parseInt(document.getElementById('ebyteNewAddr').value);
+  var btn = document.getElementById('btnProgramEbyte');
+  var resultEl = document.getElementById('ebyteProgramResult');
+
+  btn.disabled = true;
+  btn.textContent = 'Programmation...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Envoi des commandes…</div>';
+
+  fetch('/rs485/program-ebyte?to=' + newAddr, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Programmer';
+      btn.disabled = false;
+      if (data.ok) {
+        resultEl.innerHTML =
+          '<div class="success">' + (data.msg || 'Capteur programmé avec succès') + '</div>';
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Erreur inconnue') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Programmer';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
 // ── Analog Input 8CH (B) — lecture config + programmation ────────────
 function doReadAnalog() {
   var btn = document.getElementById('btnReadAnalog');

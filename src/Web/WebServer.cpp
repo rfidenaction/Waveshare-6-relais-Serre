@@ -275,6 +275,10 @@ void WebServer::init()
     server.on("/rs485/setaddr", HTTP_POST, handleRS485SetAddr);
     server.on("/rs485/exit",    HTTP_POST, handleRS485Exit);
 
+    // ── Capteurs air Ebyte KTH2-R — configuration ─────────────────
+    server.on("/rs485/read-ebyte",    HTTP_POST, handleRS485ReadEbyte);
+    server.on("/rs485/program-ebyte", HTTP_POST, handleRS485ProgramEbyte);
+
     // ── Analog Input 8CH (B) — configuration ────────────────────────
     server.on("/rs485/read-analog",    HTTP_POST, handleRS485ReadAnalog);
     server.on("/rs485/program-analog", HTTP_POST, handleRS485ProgramAnalog);
@@ -915,6 +919,239 @@ static uint8_t analogInputCodeFromBaud(uint32_t baud)
     }
     return 0xFF;
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Capteurs air Ebyte KTH2-R — configuration via RS485
+//
+// Registres Modbus (Holding Registers, fonction 0x03/0x06) :
+//   - 0x000C : adresse esclave (1–254)
+//   - 0x000D : baud rate (0=1200, 1=2400, 2=4800, 3=9600, 4=19200)
+//   - 0x000E : parité (0=aucune, 1=impaire, 2=paire)
+//   - 0x0300 : température (lecture seule, valeur × 0.1 °C)
+//   - 0x0301 : humidité (lecture seule, valeur × 0.1 %RH)
+// Défauts usine : adresse 1, 9600 bauds, pas de parité.
+// Les modifications prennent effet immédiatement (même problème d'écho
+// que la carte Analog Input pour le changement de baud rate).
+//
+// Réutilise les fonctions Modbus RTU génériques définies plus haut
+// (analogInputCrc16, analogInputReadRegister, analogInputWriteRegister, etc.)
+// ═════════════════════════════════════════════════════════════════════════════
+
+static const char* TAG_EB = "Ebyte";
+
+// ── Scan Ebyte : adresses 1–16, à un baud rate donné ────────────────────────
+// Pas de broadcast pour la lecture (le capteur Ebyte suit le standard Modbus
+// où broadcast = écriture seule, pas de réponse).
+
+static uint8_t ebyteScan(uint32_t baudRate)
+{
+    Serial1.end();
+    Serial1.begin(baudRate, SERIAL_8N1, 18, 17);
+    delay(20);
+
+    uint16_t readAddr = 0;
+
+    for (uint8_t addr = 1; addr <= 16; addr++) {
+        if (analogInputReadRegister(addr, 0x000C, readAddr, 50)) {
+            Console::info(TAG_EB, "Capteur trouvé à l'adresse " + String(addr)
+                                  + " (" + String(baudRate) + " bauds)");
+            return addr;
+        }
+    }
+
+    return 0;
+}
+
+// ── Correspondance code baud rate Ebyte ↔ valeur numérique ──────────────────
+
+static const uint32_t EB_BAUD_TABLE[] = { 1200, 2400, 4800, 9600, 19200 };
+static const size_t EB_BAUD_TABLE_SIZE = sizeof(EB_BAUD_TABLE) / sizeof(EB_BAUD_TABLE[0]);
+
+static uint32_t ebyteBaudFromCode(uint8_t code)
+{
+    if (code < EB_BAUD_TABLE_SIZE) return EB_BAUD_TABLE[code];
+    return 0;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/read-ebyte — lecture de la configuration actuelle
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485ReadEbyte(AsyncWebServerRequest *request)
+{
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    uint8_t foundAddr = 0;
+    uint32_t foundBaud = 0;
+
+    foundAddr = ebyteScan(9600);
+    if (foundAddr != 0) {
+        foundBaud = 9600;
+    } else {
+        foundAddr = ebyteScan(4800);
+        if (foundAddr != 0) {
+            foundBaud = 4800;
+        }
+    }
+
+    if (foundAddr == 0) {
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        SoilSensorRS485::setMaintenanceMode(false);
+
+        Console::warn(TAG_EB, "Aucun capteur Ebyte détecté (scan 1-16, 9600+4800)");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Aucun capteur détecté (adresses 1–16, 9600 et 4800 bauds)\"}");
+        return;
+    }
+
+    // Lire le baud rate configuré (registre 0x000D) pour confirmation
+    uint16_t baudCode = 0;
+    analogInputReadRegister(foundAddr, 0x000D, baudCode);
+    uint32_t reportedBaud = ebyteBaudFromCode((uint8_t)baudCode);
+    if (reportedBaud == 0) reportedBaud = foundBaud;
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    Console::info(TAG_EB, "Capteur détecté — adresse=" + String(foundAddr)
+                          + " baud=" + String(reportedBaud));
+
+    String json = "{\"ok\":true,\"address\":" + String(foundAddr)
+                + ",\"baudrate\":" + String(reportedBaud) + "}";
+    request->send(200, "application/json", json);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/program-ebyte — programmation baud rate + adresse
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485ProgramEbyte(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("to")) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètre 'to' requis\"}");
+        return;
+    }
+
+    uint8_t toAddr = request->getParam("to")->value().toInt();
+    if (toAddr < 1 || toAddr > 16) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Adresse cible hors bornes (1–16)\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    // ── Étape 1 : trouver le capteur ────────────────────────────────────
+    uint8_t foundAddr = 0;
+    uint32_t foundBaud = 0;
+
+    foundAddr = ebyteScan(9600);
+    if (foundAddr != 0) {
+        foundBaud = 9600;
+    } else {
+        foundAddr = ebyteScan(4800);
+        if (foundAddr != 0) {
+            foundBaud = 4800;
+        }
+    }
+
+    if (foundAddr == 0) {
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        SoilSensorRS485::setMaintenanceMode(false);
+
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Capteur non détecté — programmation annulée\"}");
+        return;
+    }
+
+    bool needBaudChange = (foundBaud != 4800);
+    bool needAddrChange = (foundAddr != toAddr);
+
+    // ── Étape 2 : changer le baud rate vers 4800 si nécessaire ──────────
+    //
+    // Le capteur applique le changement immédiatement. L'écho arrive à
+    // la nouvelle vitesse → on envoie sans vérifier l'écho, puis on
+    // bascule Serial1 à 4800 et on vérifie par lecture.
+    if (needBaudChange) {
+        uint8_t cmdBaud[8];
+        cmdBaud[0] = foundAddr;
+        cmdBaud[1] = 0x06;
+        cmdBaud[2] = 0x00;   // registre 0x000D (baud rate)
+        cmdBaud[3] = 0x0D;
+        cmdBaud[4] = 0x00;   // code 2 = 4800 bauds
+        cmdBaud[5] = 0x02;
+        uint16_t crc = analogInputCrc16(cmdBaud, 6);
+        cmdBaud[6] = crc & 0xFF;
+        cmdBaud[7] = (crc >> 8) & 0xFF;
+
+        analogInputDrainRx();
+        Serial1.write(cmdBaud, 8);
+        Serial1.flush();
+
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        delay(50);
+
+        uint16_t verifyVal = 0;
+        bool baudOk = analogInputReadRegister(foundAddr, 0x000C, verifyVal, 200);
+        if (!baudOk) {
+            SoilSensorRS485::setMaintenanceMode(false);
+
+            Console::warn(TAG_EB, "Baud rate envoyé mais capteur muet à 4800");
+            request->send(200, "application/json",
+                          "{\"ok\":false,\"error\":\"Changement de baud rate envoyé mais le capteur ne répond pas à 4800\"}");
+            return;
+        }
+        Console::info(TAG_EB, "Baud rate changé de " + String(foundBaud) + " vers 4800 (vérifié)");
+    }
+
+    // ── Étape 3 : changer l'adresse si nécessaire ───────────────────────
+    if (needAddrChange) {
+        bool ok = analogInputWriteRegister(foundAddr, 0x000C, (uint16_t)toAddr);
+        if (!ok) {
+            Serial1.end();
+            Serial1.begin(4800, SERIAL_8N1, 18, 17);
+            SoilSensorRS485::setMaintenanceMode(false);
+
+            Console::warn(TAG_EB, "Échec du changement d'adresse vers " + String(toAddr));
+            request->send(200, "application/json",
+                          "{\"ok\":false,\"error\":\"Baud rate OK mais échec du changement d'adresse\"}");
+            return;
+        }
+        Console::info(TAG_EB, "Adresse changée de " + String(foundAddr) + " vers " + String(toAddr));
+    }
+
+    // ── Étape 4 : vérification — lire l'adresse à la nouvelle adresse ───
+    delay(50);
+    uint16_t verifyAddr = 0;
+    bool verified = analogInputReadRegister(toAddr, 0x000C, verifyAddr);
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (verified && verifyAddr == toAddr) {
+        String msg = "Capteur configuré — adresse " + String(toAddr) + ", 4800 bauds";
+        if (!needBaudChange && !needAddrChange) {
+            msg = "Capteur déjà configuré à l'adresse " + String(toAddr) + " en 4800 bauds";
+        }
+        Console::info(TAG_EB, msg);
+        request->send(200, "application/json",
+                      "{\"ok\":true,\"msg\":\"" + msg + "\"}");
+    } else {
+        Console::warn(TAG_EB, "Vérification échouée après programmation");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Commandes envoyées mais vérification échouée — relancez une lecture pour vérifier\"}");
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fin — Capteurs air Ebyte KTH2-R
+// ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Handler POST /rs485/read-analog — lecture de la configuration actuelle

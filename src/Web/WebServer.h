@@ -54,6 +54,10 @@ private:
     static void handleRS485SetAddr(AsyncWebServerRequest *request);
     static void handleRS485Exit(AsyncWebServerRequest *request);
 
+    // ── Capteurs air Ebyte KTH2-R — configuration via RS485 ────────
+    static void handleRS485ReadEbyte(AsyncWebServerRequest *request);
+    static void handleRS485ProgramEbyte(AsyncWebServerRequest *request);
+
     // ── Analog Input 8CH (B) — configuration via RS485 ──────────────
     static void handleRS485ReadAnalog(AsyncWebServerRequest *request);
     static void handleRS485ProgramAnalog(AsyncWebServerRequest *request);
