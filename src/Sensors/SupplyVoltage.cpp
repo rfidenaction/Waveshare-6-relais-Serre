@@ -15,6 +15,7 @@
 #include "Sensors/SoilSensorRS485.h"   // isMaintenanceMode()
 #include "Config/TimingConfig.h"       // SOIL_RS485_START_DELAY_MS
 #include "Core/DataBus.h"
+#include "Connectivity/SmsManager.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "SupplyVoltage";
@@ -155,6 +156,18 @@ void SupplyVoltage::handle()
     Console::info(TAG, "CH2 Brut=" + String(rawMV_ch2) + " mV"
                        + "  |  Tension=" + String(mainsVoltage, 3) + " V"
                        + "  |  AcPower=" + String(acPower == 1.0f ? "Présent" : "Absent"));
+
+    // ── Alerte SMS sur changement d'état secteur ──────────────────────
+    static float lastAcPower = 1.0f;
+
+    if (acPower != lastAcPower) {
+        if (acPower == 0.0f) {
+            SmsManager::alert("Alerte : coupure secteur 220V");
+        } else {
+            SmsManager::alert("Fin d'alerte : retour secteur 220V");
+        }
+        lastAcPower = acPower;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
