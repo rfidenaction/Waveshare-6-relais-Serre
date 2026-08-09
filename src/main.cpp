@@ -27,6 +27,7 @@
 
 #include "Sensors/SupplyVoltage.h"     // Tension alim via Analog Input 8CH (B) RS485
 #include "Sensors/SoilSensorRS485.h"   // Sondes de sol RS485 Modbus RTU
+#include "Sensors/AirSensorRS485.h"    // Capteurs air RS485 Modbus RTU (Ebyte KTH2-R)
 
 #include "Actuators/ValveManager.h"
 
@@ -145,6 +146,9 @@ static void loopInit()
     SoilSensorRS485::init();
     Console::info("[SoilRS485] SoilSensorRS485 initialisé");
 
+    AirSensorRS485::init();
+    Console::info("[AirRS485] AirSensorRS485 initialisé");
+
     // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
     // à LOW dès setup() par initAllRelayPinsSafe(). La construction
     // des slots depuis RELAYS[], la création de la queue FreeRTOS et la
@@ -252,6 +256,11 @@ static void loopInit()
     TaskManager::addTask(
         []() { SoilSensorRS485::handle(); },
         SOIL_RS485_HANDLE_PERIOD_MS
+    );
+
+    TaskManager::addTask(
+        []() { AirSensorRS485::handle(); },
+        AIR_RS485_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(

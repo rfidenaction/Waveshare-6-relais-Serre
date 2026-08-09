@@ -144,7 +144,13 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
     X(33, SoilTemperature6, Sensor,   "Capteur",      "Température sol 6",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
     \
     /* ── Alimentation (suite) — détection secteur via Analog Input 8CH (B) ─── */ \
-    X(34, AcPower,          Power,    "Alimentation", "Secteur 220V",       "",    etat,        0.0f,   0.0f, kLabelsAcPower,         2)
+    X(34, AcPower,          Power,    "Alimentation", "Secteur 220V",       "",    etat,        0.0f,   0.0f, kLabelsAcPower,         2) \
+    \
+    /* ── Capteurs air RS485 (Ebyte KTH2-R) ────────────────────────────────── */ \
+    X(35, AirTemperature2,  Sensor,   "Capteur",      "Température air 2",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
+    X(36, AirHumidity2,     Sensor,   "Capteur",      "Humidité air 2",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(37, AirTemperature3,  Sensor,   "Capteur",      "Température air 3",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
+    X(38, AirHumidity3,     Sensor,   "Capteur",      "Humidité air 3",     "%",   metrique,    0.0f, 100.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST

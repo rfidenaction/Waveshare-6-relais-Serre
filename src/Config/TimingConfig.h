@@ -278,10 +278,26 @@
 #define SOIL_RS485_HANDLE_PERIOD_MS    30000
 
 // =============================================================================
+// AirSensorRS485 — Capteurs air RS485 (Ebyte KTH2-R)
+// =============================================================================
+/*
+ * Délai avant la première interrogation des capteurs air.
+ * Identique à SOIL_RS485_START_DELAY_MS : les deux familles de capteurs
+ * partagent le même bus RS485 (Serial1), déjà ouvert par SoilSensorRS485::init().
+ */
+#define AIR_RS485_START_DELAY_MS       285000UL    // 4 min 45 s
+
+/*
+ * Période d'interrogation des capteurs air RS485 (Modbus RTU).
+ * Chaque appel interroge UN capteur en rotation (~100 ms bloquant max).
+ * Cycle complet = période × nombre de capteurs (3).
+ * Identique à SOIL_RS485_HANDLE_PERIOD_MS ; les tâches TaskManager
+ * s'exécutent de façon séquentielle, aucun risque de collision sur le bus.
+ */
+#define AIR_RS485_HANDLE_PERIOD_MS     30000
+
+// =============================================================================
 // Réservé – extensions futures
 // =============================================================================
-// Capteurs environnementaux air
-// #define AIR_SENSOR_UPDATE_INTERVAL_MS      ...
-
 // Stockage / maintenance
 // #define FILESYSTEM_MAINTENANCE_INTERVAL_MS ...

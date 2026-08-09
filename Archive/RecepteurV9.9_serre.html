@@ -836,6 +836,14 @@ function isValve(di) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Capteurs air RS485 (Ebyte KTH2-R) — affichage en tête du groupe
+// "Capteurs", dans l'ordre des adresses RS485 réelles (15, 14, 13),
+// avec le numéro d'adresse réel affiché à la place du numéro logique.
+// ══════════════════════════════════════════════════════════════
+var AIR_SENSOR_DISPLAY_ORDER = [1, 2, 35, 36, 37, 38];
+var AIR_SENSOR_REAL_ADDRESS  = { 1: 15, 2: 15, 35: 14, 36: 14, 37: 13, 38: 13 };
+
+// ══════════════════════════════════════════════════════════════
 // Construction des cartes depuis le schéma
 // ══════════════════════════════════════════════════════════════
 
@@ -868,6 +876,17 @@ function buildCards() {
     if (label === 'Capteur')    label = 'Capteurs';
     if (label === 'Actionneur') label = 'Actionneurs';
 
+    // Capteurs air en tête, dans l'ordre des adresses RS485 réelles
+    if (typeId === 1) {
+      items = items.slice().sort(function(a, b) {
+        var ia = AIR_SENSOR_DISPLAY_ORDER.indexOf(a.id);
+        var ib = AIR_SENSOR_DISPLAY_ORDER.indexOf(b.id);
+        if (ia === -1) ia = AIR_SENSOR_DISPLAY_ORDER.length + a.id;
+        if (ib === -1) ib = AIR_SENSOR_DISPLAY_ORDER.length + b.id;
+        return ia - ib;
+      });
+    }
+
     var title = document.createElement('div');
     title.className = 'group-title collapsed';
     title.textContent = label;
@@ -895,8 +914,13 @@ function buildDataCard(di) {
   card.className = 'card';
   card.id = 'card-' + di.id;
 
+  var label = di.label;
+  if (di.id in AIR_SENSOR_REAL_ADDRESS) {
+    label = label.replace(/\s\d+$/, ' ' + AIR_SENSOR_REAL_ADDRESS[di.id]);
+  }
+
   card.innerHTML =
-    '<div class="card-label">' + escapeHtml(di.label) + '</div>' +
+    '<div class="card-label">' + escapeHtml(label) + '</div>' +
     '<div class="value" id="value-' + di.id + '">—</div>' +
     '<div class="timestamp" id="time-' + di.id + '"></div>';
 
