@@ -280,8 +280,10 @@ void WebServer::init()
     server.on("/rs485/program-ebyte", HTTP_POST, handleRS485ProgramEbyte);
 
     // ── Analog Input 8CH (B) — configuration ────────────────────────
-    server.on("/rs485/read-analog",    HTTP_POST, handleRS485ReadAnalog);
-    server.on("/rs485/program-analog", HTTP_POST, handleRS485ProgramAnalog);
+    server.on("/rs485/read-analog",         HTTP_POST, handleRS485ReadAnalog);
+    server.on("/rs485/program-analog",      HTTP_POST, handleRS485ProgramAnalog);
+    server.on("/rs485/read-analog-channel",  HTTP_POST, handleRS485ReadAnalogChannel);
+    server.on("/rs485/write-analog-channel", HTTP_POST, handleRS485WriteAnalogChannel);
 
     server.on("/command", HTTP_POST,
               handleCommandFinal,
@@ -1336,6 +1338,161 @@ void WebServer::handleRS485ProgramAnalog(AsyncWebServerRequest *request)
         Console::warn(TAG_AI, "Vérification échouée après programmation");
         request->send(200, "application/json",
                       "{\"ok\":false,\"error\":\"Commandes envoyées mais vérification échouée — relancez une lecture pour vérifier\"}");
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/read-analog-channel — lecture du mode d'un canal
+//
+// Paramètres GET :
+//   ch   = numéro de canal (1–8)
+//   addr = adresse Modbus du module (trouvée lors du scan initial)
+//
+// Lit le registre 0x1000 + (ch-1) via fonction 0x03 (Read Holding Register).
+// Retourne le mode (0–4) correspondant à la plage configurée.
+//   Version B : 0=0–10V, 1=2–10V, 2=0–20mA, 3=4–20mA, 4=code brut 4096
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485ReadAnalogChannel(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("ch") || !request->hasParam("addr")) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres 'ch' et 'addr' requis\"}");
+        return;
+    }
+
+    uint8_t channel = request->getParam("ch")->value().toInt();
+    uint8_t addr    = request->getParam("addr")->value().toInt();
+
+    if (channel < 1 || channel > 8) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Canal hors bornes (1–8)\"}");
+        return;
+    }
+
+    if (addr < 1 || addr > 255) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Adresse hors bornes (1–255)\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    delay(20);
+
+    uint16_t regAddr = 0x1000 + (channel - 1);
+    uint16_t modeValue = 0;
+    bool ok = analogInputReadRegister(addr, regAddr, modeValue, 200);
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (!ok) {
+        Console::warn(TAG_AI, "Échec lecture mode canal " + String(channel)
+                              + " (adresse " + String(addr) + ")");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Le module ne répond pas — vérifiez qu'il est toujours connecté\"}");
+        return;
+    }
+
+    Console::info(TAG_AI, "Canal " + String(channel) + " — mode=" + String(modeValue));
+
+    String json = "{\"ok\":true,\"channel\":" + String(channel)
+                + ",\"mode\":" + String(modeValue) + "}";
+    request->send(200, "application/json", json);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Handler POST /rs485/write-analog-channel — écriture du mode d'un canal
+//
+// Paramètres GET :
+//   ch   = numéro de canal (1–8)
+//   addr = adresse Modbus du module
+//   mode = valeur du mode à écrire (0–4)
+//
+// Écrit dans le registre 0x1000 + (ch-1) via fonction 0x06, puis relit
+// le registre pour vérifier que l'écriture a pris effet.
+// ═════════════════════════════════════════════════════════════════════════════
+
+void WebServer::handleRS485WriteAnalogChannel(AsyncWebServerRequest *request)
+{
+    if (!request->hasParam("ch") || !request->hasParam("addr") || !request->hasParam("mode")) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres 'ch', 'addr' et 'mode' requis\"}");
+        return;
+    }
+
+    uint8_t  channel  = request->getParam("ch")->value().toInt();
+    uint8_t  addr     = request->getParam("addr")->value().toInt();
+    uint16_t newMode  = request->getParam("mode")->value().toInt();
+
+    if (channel < 1 || channel > 8) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Canal hors bornes (1–8)\"}");
+        return;
+    }
+
+    if (addr < 1 || addr > 255) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Adresse hors bornes (1–255)\"}");
+        return;
+    }
+
+    if (newMode > 4) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Mode hors bornes (0–4)\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    delay(20);
+
+    uint16_t regAddr = 0x1000 + (channel - 1);
+
+    bool writeOk = analogInputWriteRegister(addr, regAddr, newMode);
+
+    if (!writeOk) {
+        Serial1.end();
+        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        SoilSensorRS485::setMaintenanceMode(false);
+
+        Console::warn(TAG_AI, "Échec écriture mode canal " + String(channel));
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Échec de l'écriture — le module n'a pas confirmé\"}");
+        return;
+    }
+
+    delay(50);
+
+    uint16_t verifyMode = 0xFFFF;
+    bool readOk = analogInputReadRegister(addr, regAddr, verifyMode, 200);
+
+    Serial1.end();
+    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (readOk && verifyMode == newMode) {
+        Console::info(TAG_AI, "Canal " + String(channel) + " — mode corrigé à " + String(newMode));
+        String json = "{\"ok\":true,\"channel\":" + String(channel)
+                    + ",\"mode\":" + String(verifyMode) + "}";
+        request->send(200, "application/json", json);
+    } else if (readOk) {
+        Console::warn(TAG_AI, "Canal " + String(channel) + " — écriture envoyée mais relecture="
+                              + String(verifyMode) + " (attendu " + String(newMode) + ")");
+        String json = "{\"ok\":false,\"error\":\"Écriture envoyée mais relecture incohérente (lu "
+                    + String(verifyMode) + " au lieu de " + String(newMode)
+                    + ") — réessayez\",\"mode\":" + String(verifyMode) + "}";
+        request->send(200, "application/json", json);
+    } else {
+        Console::warn(TAG_AI, "Canal " + String(channel) + " — écriture OK mais relecture échouée");
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Écriture envoyée mais relecture échouée — vérifiez la connexion\"}");
     }
 }
 

@@ -129,6 +129,26 @@ select { font-size: 1.2em; padding: 8px 16px; border-radius: 8px; border: none; 
     <button class="btn btn-primary" id="btnProgramAnalog" onclick="doProgramAnalog()">Programmer</button>
     <div id="analogProgramResult"></div>
   </div>
+
+  <div id="analogChannelSection" style="display:none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.3); padding-top: 15px;">
+    <p>Lire le mode d'un canal :</p>
+    <select id="analogChannel">
+      <option value="1">Canal 1</option>
+      <option value="2">Canal 2</option>
+      <option value="3">Canal 3</option>
+      <option value="4">Canal 4</option>
+      <option value="5">Canal 5</option>
+      <option value="6">Canal 6</option>
+      <option value="7">Canal 7</option>
+      <option value="8">Canal 8</option>
+    </select>
+    <button class="btn btn-primary" id="btnReadChannel" onclick="doReadAnalogChannel()">Lire le mode</button>
+    <div id="analogChannelResult"></div>
+    <div id="analogFixSection" style="display:none; margin-top: 10px;">
+      <button class="btn btn-primary" id="btnFixChannel" onclick="doFixAnalogChannel()" style="background:#ff9800;">Corriger &rarr; 0&ndash;10V</button>
+      <div id="analogFixResult"></div>
+    </div>
+  </div>
 </div>
 
 <div style="margin-top: 30px;">
@@ -203,15 +223,20 @@ function doProgramEbyte() {
 }
 
 // ── Analog Input 8CH (B) — lecture config + programmation ────────────
+var analogDetectedAddr = 0;
+
 function doReadAnalog() {
   var btn = document.getElementById('btnReadAnalog');
   var resultEl = document.getElementById('analogReadResult');
   var progSection = document.getElementById('analogProgramSection');
+  var chSection = document.getElementById('analogChannelSection');
 
   btn.disabled = true;
   btn.textContent = 'Scan en cours...';
   resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Scan des adresses 1–30 (9600 puis 4800 bauds)…</div>';
   progSection.style.display = 'none';
+  chSection.style.display = 'none';
+  analogDetectedAddr = 0;
 
   fetch('/rs485/read-analog', { method: 'POST' })
     .then(function(r) { return r.json(); })
@@ -219,6 +244,7 @@ function doReadAnalog() {
       btn.textContent = 'Lire la configuration';
       btn.disabled = false;
       if (data.ok) {
+        analogDetectedAddr = data.address;
         resultEl.innerHTML =
           '<div class="success">'
           + 'Adresse actuelle : <strong>' + data.address + '</strong><br>'
@@ -226,6 +252,7 @@ function doReadAnalog() {
           + 'Version firmware : <strong>' + data.version + '</strong>'
           + '</div>';
         progSection.style.display = 'block';
+        chSection.style.display = 'block';
       } else {
         resultEl.innerHTML =
           '<div class="warning">' + (data.error || 'Module non détecté') + '</div>';
@@ -233,6 +260,99 @@ function doReadAnalog() {
     })
     .catch(function(err) {
       btn.textContent = 'Lire la configuration';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
+var AI_MODE_LABELS = [
+  '0–10V (tension)',
+  '2–10V (tension)',
+  '0–20mA (courant)',
+  '4–20mA (courant)',
+  'Code brut (0–4096)'
+];
+
+function doReadAnalogChannel() {
+  var ch = parseInt(document.getElementById('analogChannel').value);
+  var btn = document.getElementById('btnReadChannel');
+  var resultEl = document.getElementById('analogChannelResult');
+
+  if (analogDetectedAddr === 0) {
+    resultEl.innerHTML = '<div class="warning">Lancez d\'abord une lecture de la configuration</div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Lecture...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Lecture du canal ' + ch + '…</div>';
+
+  var fixSection = document.getElementById('analogFixSection');
+  var fixResult = document.getElementById('analogFixResult');
+  fixSection.style.display = 'none';
+  fixResult.innerHTML = '';
+
+  fetch('/rs485/read-analog-channel?ch=' + ch + '&addr=' + analogDetectedAddr, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Lire le mode';
+      btn.disabled = false;
+      if (data.ok) {
+        var label = (data.mode >= 0 && data.mode < AI_MODE_LABELS.length)
+                    ? AI_MODE_LABELS[data.mode]
+                    : 'Inconnu (code ' + data.mode + ')';
+        resultEl.innerHTML =
+          '<div class="success">Canal ' + data.channel + ' : <strong>' + label + '</strong></div>';
+        if (data.mode !== 0) {
+          fixSection.style.display = 'block';
+        }
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Erreur de lecture') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Lire le mode';
+      btn.disabled = false;
+      resultEl.innerHTML =
+        '<div class="warning">Erreur de communication : ' + err.message + '</div>';
+    });
+}
+
+function doFixAnalogChannel() {
+  var ch = parseInt(document.getElementById('analogChannel').value);
+  var btn = document.getElementById('btnFixChannel');
+  var resultEl = document.getElementById('analogFixResult');
+
+  if (analogDetectedAddr === 0) {
+    resultEl.innerHTML = '<div class="warning">Module non détecté</div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Correction...';
+  resultEl.innerHTML = '<div class="status"><span class="spinner"></span>Écriture mode 0 (0–10V) sur canal ' + ch + '…</div>';
+
+  fetch('/rs485/write-analog-channel?ch=' + ch + '&addr=' + analogDetectedAddr + '&mode=0', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.textContent = 'Corriger \u2192 0\u201310V';
+      btn.disabled = false;
+      if (data.ok) {
+        var label = AI_MODE_LABELS[data.mode] || ('code ' + data.mode);
+        resultEl.innerHTML =
+          '<div class="success">Canal ' + data.channel + ' corrigé : <strong>' + label + '</strong></div>';
+        document.getElementById('analogFixSection').style.display = 'none';
+        document.getElementById('analogChannelResult').innerHTML =
+          '<div class="success">Canal ' + data.channel + ' : <strong>' + label + '</strong></div>';
+      } else {
+        resultEl.innerHTML =
+          '<div class="warning">' + (data.error || 'Erreur d\'écriture') + '</div>';
+      }
+    })
+    .catch(function(err) {
+      btn.textContent = 'Corriger \u2192 0\u201310V';
       btn.disabled = false;
       resultEl.innerHTML =
         '<div class="warning">Erreur de communication : ' + err.message + '</div>';

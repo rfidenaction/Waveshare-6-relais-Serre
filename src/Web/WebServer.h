@@ -61,6 +61,8 @@ private:
     // ── Analog Input 8CH (B) — configuration via RS485 ──────────────
     static void handleRS485ReadAnalog(AsyncWebServerRequest *request);
     static void handleRS485ProgramAnalog(AsyncWebServerRequest *request);
+    static void handleRS485ReadAnalogChannel(AsyncWebServerRequest *request);
+    static void handleRS485WriteAnalogChannel(AsyncWebServerRequest *request);
 
     static void handleCommandBody(AsyncWebServerRequest *request,
                                   uint8_t *data, size_t len,
