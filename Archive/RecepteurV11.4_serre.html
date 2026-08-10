@@ -45,6 +45,8 @@ h1 {
 .status-dot.offline   { background: #f44336; box-shadow: 0 0 6px #f44336; }
 .status-dot.connecting { background: #ff9800; }
 
+.device-status.stale { opacity: 0.4; }
+
 /* ── Groupes repliables ── */
 .group-title {
   font-size: 1.25em;
@@ -233,12 +235,19 @@ h1 {
 }
 .fam-sensors {
   display: flex;
-  gap: 20px;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
   font-size: 1.1em;
 }
 .fam-sensor-val {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   opacity: 0.9;
+}
+.fam-sensor-icon {
+  margin-bottom: 2px;
 }
 .fam-sensor-val strong {
   font-size: 1.2em;
@@ -281,6 +290,29 @@ h1 {
   border: none;
   width: 160px;
 }
+.fam-add-row {
+  display: flex;
+  gap: 8px;
+}
+.fam-add-square {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 10px 14px;
+  font-size: 0.95em;
+  font-weight: bold;
+  border: 2px dashed rgba(255,255,255,0.4);
+  border-radius: 8px;
+  opacity: 0.8;
+  min-height: 56px;
+  cursor: pointer;
+}
+.fam-add-square:hover { background: rgba(255,255,255,0.1); opacity: 1; }
+/* Dans la fiche, le formulaire conditionnel adopte la typographie du
+   formulaire horaire, plus discrète que celle du chapitre dédié. */
+.fam-card .cw-picker-label { font-size: 1.15em; }
 
 /* ── Message d'attente ── */
 .waiting {
@@ -577,6 +609,263 @@ h1 {
   margin-top: 8px;
   line-height: 1.5;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DÉBUT DU BLOC PORTABLE — styles cw- (arrosage conditionnel)
+   Aucune collision possible avec les classes existantes.
+   ═══════════════════════════════════════════════════════════════ */
+.cw-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+  text-align: left;
+}
+.cw-title {
+  font-size: 1.1em;
+  font-weight: bold;
+  text-align: left;
+}
+.cw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.cw-count {
+  font-size: 0.9em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+.cw-rule-list { margin-bottom: 8px; }
+.cw-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: #4caf50;
+  border-radius: 8px;
+}
+.cw-rule-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cw-rule-cond { font-weight: bold; font-size: 1.05em; }
+.cw-rule-detail { opacity: 0.85; font-size: 0.9em; }
+.cw-rule-del {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 1.3em;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.cw-rule-del:hover { color: #f44336; background: rgba(244,67,54,0.2); }
+.cw-rule-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: rgba(244,67,54,0.5);
+  border-radius: 8px;
+  font-size: 1.05em;
+}
+.cw-rule-confirm-text { flex: 1; font-size: 0.95em; }
+.cw-rule-confirm-btns { display: flex; gap: 8px; }
+.cw-rule-confirm-yes {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.cw-rule-confirm-yes:active { transform: scale(0.92); opacity: 0.7; }
+.cw-rule-confirm-yes.confirmed {
+  background: #9e9e9e;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.cw-rule-confirm-no {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.cw-rule-confirm-no:active { transform: scale(0.92); opacity: 0.7; }
+.cw-empty {
+  font-size: 1em;
+  opacity: 0.5;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.cw-error {
+  background: rgba(244,67,54,0.3);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.9em;
+  margin-bottom: 8px;
+}
+.cw-toggle-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-toggle-btn:hover { background: rgba(255,255,255,0.15); }
+.cw-form {
+  display: none;
+  border-top: 1px solid rgba(255,255,255,0.2);
+  padding-top: 14px;
+  margin-top: 10px;
+}
+.cw-form.open { display: block; background: #0d47a1; border-radius: 10px; padding: 14px; }
+/* Rythme vertical du formulaire : chaque intitulé ouvre une section et
+   porte seul l'espace qui la sépare de la précédente. Les marges basses
+   des contrôles sont volontairement minimes, la fusion des marges
+   verticales donnant un écart constant entre sections. */
+.cw-picker-label {
+  font-size: 1.35em;
+  font-weight: bold;
+  text-align: center;
+  margin: 26px 0 10px 0;
+}
+.cw-form > .cw-picker-label:first-child { margin-top: 2px; }
+.cw-select {
+  width: 100%;
+  padding: 10px;
+  font-size: 1em;
+  border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.3);
+  background: #0d47a1;
+  color: white;
+}
+.cw-cmp-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.cw-cmp-btn {
+  flex: 1;
+  padding: 10px;
+  font-size: 1.1em;
+  font-weight: bold;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-cmp-btn.active { background: #4caf50; border-color: #4caf50; }
+.cw-thr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.cw-thr-row input[type="range"] { flex: 1; }
+.cw-thr-val {
+  min-width: 90px;
+  text-align: right;
+  font-size: 1.15em;
+  font-weight: bold;
+}
+.cw-drum-picker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 2px;
+  user-select: none;
+}
+.cw-drum-col {
+  position: relative;
+  width: 140px;
+  height: 120px;
+  overflow: hidden;
+}
+.cw-drum-scroll {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.cw-drum-scroll::-webkit-scrollbar { display: none; }
+.cw-drum-pad { height: 40px; flex-shrink: 0; }
+.cw-drum-item {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: rgba(255,255,255,0.3);
+  scroll-snap-align: center;
+  cursor: pointer;
+  transition: color 0.1s, font-size 0.1s;
+}
+.cw-drum-item.active {
+  color: white;
+  font-size: 26px;
+  font-weight: bold;
+}
+.cw-drum-highlight {
+  position: absolute;
+  top: 40px; left: 0; right: 0;
+  height: 40px;
+  border-top: 1.5px solid rgba(255,255,255,0.4);
+  border-bottom: 1.5px solid rgba(255,255,255,0.4);
+  pointer-events: none;
+}
+.cw-drum-sep {
+  font-size: 22px;
+  font-weight: bold;
+  color: white;
+  padding: 0 4px;
+}
+.cw-actions { display: flex; gap: 8px; margin-top: 26px; }
+.cw-confirm-btn {
+  flex: 1;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-confirm-btn:hover { background: #43a047; }
+.cw-cancel-btn {
+  padding: 12px 18px;
+  font-size: 1em;
+  background: transparent;
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-cancel-btn:hover { background: rgba(255,255,255,0.1); }
+/* ═══════════════ FIN DU BLOC PORTABLE — styles cw- ═══════════════ */
 </style>
 </head>
 <body>
@@ -621,6 +910,13 @@ h1 {
   <div class="group-content collapsed" id="gardenerCards"></div>
 </div>
 
+<!-- ═══════════ DÉBUT DU BLOC PORTABLE — HTML de la section ═══════════ -->
+<div id="conditionalSection" style="display:none;">
+  <div class="group-title collapsed" onclick="toggleGroup(this)">Arrosage conditionnel</div>
+  <div class="group-content collapsed" id="conditionalCards"></div>
+</div>
+<!-- ═══════════ FIN DU BLOC PORTABLE — HTML de la section ═══════════ -->
+
 <!-- mqtt.js CDN -->
 <script src="https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js"></script>
 
@@ -641,13 +937,16 @@ const DURATION_CHOICES = [3, 5, 10, 30];
 const DURATION_DEFAULT = 3;
 
 // Mapping famille → DataIds associés
+// airId : température de l'air affichée sur la carte. Le capteur air 15
+// (DataId 1) est provisoirement partagé par les six familles ; le choix
+// deviendra modifiable par l'utilisateur dans un second temps.
 var FAMILIES = [
-  { id: 1, valveId: 4,  cmdId: 17, moistureId: 3,  temperatureId: 23 },
-  { id: 2, valveId: 12, cmdId: 18, moistureId: 24, temperatureId: 25 },
-  { id: 3, valveId: 13, cmdId: 19, moistureId: 26, temperatureId: 27 },
-  { id: 4, valveId: 14, cmdId: 20, moistureId: 28, temperatureId: 29 },
-  { id: 5, valveId: 15, cmdId: 21, moistureId: 30, temperatureId: 31 },
-  { id: 6, valveId: 16, cmdId: 22, moistureId: 32, temperatureId: 33 }
+  { id: 1, valveId: 4,  cmdId: 17, moistureId: 3,  temperatureId: 23, airId: 1 },
+  { id: 2, valveId: 12, cmdId: 18, moistureId: 24, temperatureId: 25, airId: 1 },
+  { id: 3, valveId: 13, cmdId: 19, moistureId: 26, temperatureId: 27, airId: 1 },
+  { id: 4, valveId: 14, cmdId: 20, moistureId: 28, temperatureId: 29, airId: 1 },
+  { id: 5, valveId: 15, cmdId: 21, moistureId: 30, temperatureId: 31, airId: 1 },
+  { id: 6, valveId: 16, cmdId: 22, moistureId: 32, temperatureId: 33, airId: 1 }
 ];
 var familyNames = ['Famille', 'Famille', 'Famille', 'Famille', 'Famille', 'Famille'];
 var familyCardsBuilt = false;
@@ -717,6 +1016,7 @@ const mqttDot      = document.getElementById('mqttDot');
 const mqttStatusEl = document.getElementById('mqttStatus');
 const deviceDot    = document.getElementById('deviceDot');
 const deviceText   = document.getElementById('deviceText');
+const acPowerStatus = document.getElementById('acPowerStatus');
 const acPowerDot   = document.getElementById('acPowerDot');
 const acPowerText  = document.getElementById('acPowerText');
 const cardsDiv     = document.getElementById('cards');
@@ -731,9 +1031,18 @@ function setMqttStatus(state, text) {
   mqttStatusEl.textContent = text;
 }
 
+// Rythme d'acquisition en usage ~1h ; au-delà, ou si la serre autonome
+// est hors ligne (deviceDot), l'information Alim 220V est jugée non
+// fiable : la ligne est grisée, sans changer le texte affiché.
+var AC_POWER_STALE_MS = 65 * 60 * 1000;
+
 function updateAcPowerStatus(entry) {
+  var stale = deviceDot.classList.contains('offline') ||
+              (Date.now() - entry.receivedAt) > AC_POWER_STALE_MS;
+  acPowerStatus.classList.toggle('stale', stale);
+
   var connected = Math.round(entry.value) === 1;
-  acPowerDot.className = 'status-dot ' + (connected ? 'connected' : 'offline');
+  acPowerDot.className = stale ? 'status-dot' : 'status-dot ' + (connected ? 'connected' : 'offline');
   acPowerText.textContent = connected ? 'Alim 220V connectée' : 'Alim 220V coupée';
 }
 
@@ -1125,6 +1434,11 @@ setInterval(function() {
     var ageMs = Date.now() - received;
     el.textContent = formatAge(ageMs);
   });
+
+  // Regriser l'indicateur Alim 220V si l'info devient périmée sans qu'aucun
+  // nouveau message ne soit arrivé (carte hors ligne pendant que la page
+  // reste ouverte).
+  if (lastValues[34]) updateAcPowerStatus(lastValues[34]);
 }, 1000);
 
 // ══════════════════════════════════════════════════════════════
@@ -1160,13 +1474,21 @@ function buildFamilyCards() {
       startFamilyRename(fam.id);
     });
     header.appendChild(nameEl);
+
+    var stateEl = document.createElement('span');
+    stateEl.className = 'fam-valve-state';
+    stateEl.id = 'fam-valve-' + fam.id;
+    stateEl.textContent = 'Vanne —';
+    header.appendChild(stateEl);
+
     card.appendChild(header);
 
     var sensors = document.createElement('div');
     sensors.className = 'fam-sensors';
     sensors.innerHTML =
-      '<span class="fam-sensor-val">💧 <strong id="fam-moist-' + fam.id + '">—</strong></span>' +
-      '<span class="fam-sensor-val">🌡 <strong id="fam-temp-' + fam.id + '">—</strong></span>';
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">🌱💧</span><strong id="fam-moist-' + fam.id + '">—</strong></span>' +
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">🌱🌡</span><strong id="fam-temp-' + fam.id + '">—</strong></span>' +
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">☁️🌡</span><strong id="fam-air-' + fam.id + '">—</strong></span>';
     card.appendChild(sensors);
 
     var actions = document.createElement('div');
@@ -1196,14 +1518,6 @@ function buildFamilyCards() {
 
     card.appendChild(actions);
 
-    var stateEl = document.createElement('div');
-    stateEl.className = 'fam-valve-state';
-    stateEl.id = 'fam-valve-' + fam.id;
-    stateEl.textContent = 'Vanne —';
-    stateEl.style.textAlign = 'center';
-    stateEl.style.marginTop = '8px';
-    card.appendChild(stateEl);
-
     // ── Programmation arrosage intégrée ──
     var fgSection = document.createElement('div');
     fgSection.style.borderTop = '1px solid rgba(255,255,255,0.15)';
@@ -1223,27 +1537,52 @@ function buildFamilyCards() {
     fgSlotList.id = 'fg-slots-' + fam.cmdId;
     fgSection.appendChild(fgSlotList);
 
+    // Règles conditionnelles de la vanne, sous les créneaux horaires :
+    // la carte Famille montre ainsi toute la programmation en un endroit.
+    var fgCondList = document.createElement('div');
+    fgCondList.className = 'cw-rule-list';
+    fgCondList.id = 'fg-cond-' + fam.cmdId;
+    fgSection.appendChild(fgCondList);
+
     var fgErrorDiv = document.createElement('div');
     fgErrorDiv.className = 'gd-error';
     fgErrorDiv.id = 'fg-error-' + fam.cmdId;
     fgErrorDiv.style.display = 'none';
     fgSection.appendChild(fgErrorDiv);
 
-    var fgToggleBtn = document.createElement('button');
-    fgToggleBtn.className = 'gd-toggle-btn';
-    fgToggleBtn.id = 'fg-toggle-' + fam.cmdId;
-    fgToggleBtn.textContent = '+ Ajouter un créneau';
-    fgToggleBtn.addEventListener('click', function() {
+    var fcErrorDiv = document.createElement('div');
+    fcErrorDiv.className = 'cw-error';
+    fcErrorDiv.id = 'fc-error-' + fam.cmdId;
+    fcErrorDiv.style.display = 'none';
+    fgSection.appendChild(fcErrorDiv);
+
+    // La rangée porte l'identifiant de bascule que la V9.9 donnait au
+    // bouton « + Ajouter un créneau » : les deux formulaires la masquent
+    // à l'ouverture, ce qui interdit d'ouvrir le second dans la foulée.
+    var fgAddRow = document.createElement('div');
+    fgAddRow.className = 'fam-add-row';
+    fgAddRow.id = 'fg-toggle-' + fam.cmdId;
+
+    var fgAddHoraire = document.createElement('div');
+    fgAddHoraire.className = 'fam-add-square';
+    fgAddHoraire.textContent = '+ Ajouter arrosage horaire';
+    fgAddHoraire.addEventListener('click', function() {
       toggleFgForm(fam.cmdId);
     });
-    fgSection.appendChild(fgToggleBtn);
+    fgAddRow.appendChild(fgAddHoraire);
 
-    var fgLastWater = document.createElement('div');
-    fgLastWater.className = 'gd-last-water';
-    fgLastWater.id = 'fg-last-water-' + fam.cmdId;
-    fgLastWater.textContent = 'Aucun arrosage enregistré';
-    fgSection.appendChild(fgLastWater);
+    var fgAddConditionnel = document.createElement('div');
+    fgAddConditionnel.className = 'fam-add-square';
+    fgAddConditionnel.textContent = '+ Ajouter arrosage conditionnel';
+    fgAddConditionnel.addEventListener('click', function() {
+      cwToggleForm(fam.cmdId, 'fc', 'fg-toggle-' + fam.cmdId);
+    });
+    fgAddRow.appendChild(fgAddConditionnel);
 
+    fgSection.appendChild(fgAddRow);
+
+    // Formulaire horaire — jumeau de celui du chapitre dédié, identifiants
+    // fg- au lieu de gd-, molettes et styles partagés.
     var fgForm = document.createElement('div');
     fgForm.className = 'gd-form';
     fgForm.id = 'fg-form-' + fam.cmdId;
@@ -1303,6 +1642,17 @@ function buildFamilyCards() {
 
     fgForm.appendChild(fgActions);
     fgSection.appendChild(fgForm);
+
+    // Formulaire conditionnel — second exemplaire du bloc portable, monté
+    // sous les identifiants fc- et partageant la rangée de bascule.
+    fgSection.appendChild(cwBuildForm(fam.cmdId, 'fc', 'fg-toggle-' + fam.cmdId));
+
+    var fgLastWater = document.createElement('div');
+    fgLastWater.className = 'gd-last-water';
+    fgLastWater.id = 'fg-last-water-' + fam.cmdId;
+    fgLastWater.textContent = 'Aucun arrosage enregistré';
+    fgSection.appendChild(fgLastWater);
+
     card.appendChild(fgSection);
 
     container.appendChild(card);
@@ -1311,6 +1661,7 @@ function buildFamilyCards() {
   document.getElementById('familySection').style.display = '';
   refreshFamilyValues();
   if (gardenerSlots.length > 0) updateFgSlots();
+  updateFamConditionalRules();
   refreshAllLastWateringDisplays();
 }
 
@@ -1319,6 +1670,7 @@ function refreshFamilyValues() {
     if (lastValues[fam.moistureId]) updateFamilyMoisture(fam, lastValues[fam.moistureId]);
     if (lastValues[fam.temperatureId]) updateFamilyTemperature(fam, lastValues[fam.temperatureId]);
     if (lastValues[fam.valveId]) updateFamilyValve(fam, lastValues[fam.valveId]);
+    if (lastValues[fam.airId]) updateFamilyAir(fam, lastValues[fam.airId]);
   });
 }
 
@@ -1329,6 +1681,11 @@ function updateFamilyMoisture(fam, entry) {
 
 function updateFamilyTemperature(fam, entry) {
   var el = document.getElementById('fam-temp-' + fam.id);
+  if (el) el.textContent = entry.value.toFixed(1) + ' °C';
+}
+
+function updateFamilyAir(fam, entry) {
+  var el = document.getElementById('fam-air-' + fam.id);
   if (el) el.textContent = entry.value.toFixed(1) + ' °C';
 }
 
@@ -1352,6 +1709,9 @@ function updateFamilyFromEntry(entry) {
     if (entry.id === fam.moistureId) { updateFamilyMoisture(fam, entry); return; }
     if (entry.id === fam.temperatureId) { updateFamilyTemperature(fam, entry); return; }
     if (entry.id === fam.valveId) { updateFamilyValve(fam, entry); return; }
+    // Le capteur air est partagé par plusieurs familles : pas de sortie
+    // anticipée, toutes les cartes concernées doivent être rafraîchies.
+    if (entry.id === fam.airId) { updateFamilyAir(fam, entry); }
   }
 }
 
@@ -1483,12 +1843,8 @@ function updateFgSlots() {
       return (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute);
     });
 
-    if (valveSlots.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'gd-empty';
-      empty.textContent = 'Aucun créneau programmé';
-      slotList.appendChild(empty);
-    } else {
+    // Pas de ligne « aucun créneau » ici : la rubrique s'efface d'elle-même.
+    if (valveSlots.length > 0) {
       valveSlots.forEach(function(s) {
         var item = document.createElement('div');
         item.className = 'gd-slot';
@@ -1550,10 +1906,49 @@ function updateFgSlots() {
     }
 
     var form = document.getElementById('fg-form-' + fam.cmdId);
-    var toggle = document.getElementById('fg-toggle-' + fam.cmdId);
     if (form) form.classList.remove('open');
-    if (toggle) toggle.style.display = '';
+    refreshFamAddRow(fam.cmdId);
   });
+}
+
+// Miroir, dans les cartes Famille, des règles conditionnelles de la vanne.
+// Les lignes sont construites par le bloc portable : même présentation et
+// même confirmation de suppression que dans le chapitre dédié.
+function updateFamConditionalRules() {
+  if (!familyCardsBuilt) return;
+
+  FAMILIES.forEach(function(fam) {
+    var list = document.getElementById('fg-cond-' + fam.cmdId);
+    if (!list) return;
+    list.innerHTML = '';
+
+    var valveRules = cwRules.filter(function(r) { return r.cmdId === fam.cmdId; });
+
+    // Pas de ligne « aucune règle » ici non plus.
+    valveRules.forEach(function(rule) {
+      list.appendChild(cwBuildRuleLine(rule, list));
+    });
+
+    // L'état vient de changer : on referme le formulaire conditionnel.
+    var form = document.getElementById('fc-form-' + fam.cmdId);
+    if (form) form.classList.remove('open');
+    refreshFamAddRow(fam.cmdId);
+  });
+}
+
+// La rangée des deux carrés est masquée tant qu'un formulaire de la fiche
+// est ouvert. Un état reçu ne referme que le formulaire qui le concerne,
+// d'où la vérification des deux avant de la réafficher.
+function refreshFamAddRow(cmdId) {
+  var row = document.getElementById('fg-toggle-' + cmdId);
+  if (!row) return;
+
+  var fgForm = document.getElementById('fg-form-' + cmdId);
+  var fcForm = document.getElementById('fc-form-' + cmdId);
+  var opened = (fgForm && fgForm.classList.contains('open'))
+            || (fcForm && fcForm.classList.contains('open'));
+
+  row.style.display = opened ? 'none' : '';
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1763,7 +2158,9 @@ function updateLastWateringDisplay(cmdId) {
       ts = '?';
     }
     var dur = formatGardenerDuration(Math.round(parseFloat(entry.value)));
-    var origin = entry.type === 6 ? 'AUTO' : 'MANUEL';
+    var origin = entry.type === 6 ? 'AUTO'
+               : entry.type === 7 ? 'CONDITIONNEL'
+               : 'MANUEL';
     html = 'Dernier arrosage :<br>' + escapeHtml(ts) + ' — ' + escapeHtml(dur) + ' — ' + origin;
   }
   var el = document.getElementById('gd-last-water-' + cmdId);
@@ -2110,6 +2507,650 @@ function updateGardenerValveState(entry) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// DÉBUT DU BLOC PORTABLE — JavaScript de l'arrosage conditionnel
+//
+// Ne dépend que de la variable globale `client` (mqtt.js) et de la
+// présence des deux conteneurs #conditionalSection / #conditionalCards.
+// Tout est préfixé cw / CW : aucune collision avec l'existant.
+//
+// Le formulaire peut être monté ailleurs dans la page en exemplaires
+// supplémentaires : voir le paramètre `prefix` de cwBuildForm.
+// ══════════════════════════════════════════════════════════════
+
+var CW_TOPIC_FROM_USER = 'serre/conditional/FromUser';
+var CW_TOPIC_TO_USER   = 'serre/conditional/ToUser';
+
+var CW_MAX_RULES    = 16;   // plafond global, aligné sur le firmware
+var CW_MIN_REST     = 1;    // heures
+var CW_MAX_REST     = 24;   // heures
+var CW_MIN_DURATION = 1;    // secondes (borne META de CommandValveN)
+var CW_MAX_DURATION = 900;  // secondes
+
+var CW_CMP_LOWER            = 0;  // valeur <  seuil
+var CW_CMP_GREATER_OR_EQUAL = 1;  // valeur >= seuil
+
+// Vannes — table codée en dur, comme GARDENER_VALVES : elle permet de
+// renommer une vanne dans l'interface sans recompiler le firmware.
+var CW_VALVES = [
+  { cmdId: 17, label: 'Vanne 1' },
+  { cmdId: 18, label: 'Vanne 2' },
+  { cmdId: 19, label: 'Vanne 3' },
+  { cmdId: 20, label: 'Vanne 4' },
+  { cmdId: 21, label: 'Vanne 5' },
+  { cmdId: 22, label: 'Vanne 6' }
+];
+
+// Capteurs — recopie de DATA_ID_LIST (MetaDataModel.h) pour les entrées
+// de type Sensor. Les bornes reprennent les min/max META : le firmware
+// rejette tout seuil qui en sortirait.
+//
+// Le champ `id` est le DataId META, seul identifiant qui circule sur MQTT.
+// Le libellé, lui, porte le numéro d'adresse RS485 du capteur, qui est ce
+// que l'on lit sur le matériel : sondes de sol aux adresses 1 à 6
+// (SoilSensorRS485.h), capteurs air aux adresses 13, 14 et 15
+// (AirSensorRS485.h, où l'adresse 13 est « air 3 » de META, 14 « air 2 »
+// et 15 « air 1 »). Les capteurs air ferment la liste.
+var CW_SENSORS = [
+  { id: 3,  label: 'Humidité sol 1',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 24, label: 'Humidité sol 2',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 26, label: 'Humidité sol 3',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 28, label: 'Humidité sol 4',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 30, label: 'Humidité sol 5',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 32, label: 'Humidité sol 6',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 23, label: 'Température sol 1',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 25, label: 'Température sol 2',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 27, label: 'Température sol 3',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 29, label: 'Température sol 4',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 31, label: 'Température sol 5',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 33, label: 'Température sol 6',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 37, label: 'Température air 13', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 35, label: 'Température air 14', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 1,  label: 'Température air 15', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 38, label: 'Humidité air 13',    unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 36, label: 'Humidité air 14',    unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 2,  label: 'Humidité air 15',    unit: '%',  min: 0,   max: 100, step: 1 }
+];
+
+// Source de vérité de l'affichage : le dernier ToUser reçu (retain).
+var cwRules = [];
+var cwBuilt = false;
+
+function cwFindSensor(id) {
+  for (var i = 0; i < CW_SENSORS.length; i++) {
+    if (CW_SENSORS[i].id === id) return CW_SENSORS[i];
+  }
+  return null;
+}
+
+function cwFormatThreshold(sensor, value) {
+  var decimals = (sensor && sensor.step < 1) ? 1 : 0;
+  return parseFloat(value).toFixed(decimals);
+}
+
+function cwFormatDuration(sec) {
+  sec = Math.round(sec);
+  if (sec < 60) return sec + ' s';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return s === 0 ? m + ' min' : m + ' min ' + s + ' s';
+}
+
+// Deux règles sont identiques si tous leurs champs le sont : c'est la
+// définition d'identité retenue côté firmware (pas d'identifiant).
+function cwSameRule(a, b) {
+  return a.cmdId     === b.cmdId
+      && a.sensorId  === b.sensorId
+      && a.cmp       === b.cmp
+      && a.startHour === b.startHour
+      && a.endHour   === b.endHour
+      && a.restHours === b.restHours
+      && a.duration  === b.duration
+      && Math.abs(a.threshold - b.threshold) < 0.05;
+}
+
+// ─── Molettes (mêmes mécanique et gabarit que le bloc Gardener) ───────
+function cwBuildDrum(parentEl, id, count, offset, step) {
+  var col = document.createElement('div');
+  col.className = 'cw-drum-col';
+
+  var highlight = document.createElement('div');
+  highlight.className = 'cw-drum-highlight';
+  col.appendChild(highlight);
+
+  var scroll = document.createElement('div');
+  scroll.className = 'cw-drum-scroll';
+  scroll.id = id;
+  scroll.dataset.offset = offset;
+  scroll.dataset.step   = step;
+
+  var padTop = document.createElement('div');
+  padTop.className = 'cw-drum-pad';
+  scroll.appendChild(padTop);
+
+  for (var i = 0; i < count; i++) {
+    var item = document.createElement('div');
+    item.className = 'cw-drum-item';
+    item.textContent = String(offset + i * step).padStart(2, '0');
+    item.addEventListener('click', (function(scrollEl, idx) {
+      return function() { scrollEl.scrollTop = idx * 40; };
+    })(scroll, i));
+    scroll.appendChild(item);
+  }
+
+  var padBot = document.createElement('div');
+  padBot.className = 'cw-drum-pad';
+  scroll.appendChild(padBot);
+
+  scroll.addEventListener('scroll', function() { cwUpdateDrumActive(scroll); });
+
+  col.appendChild(scroll);
+  parentEl.appendChild(col);
+  return scroll;
+}
+
+function cwUpdateDrumActive(scrollEl) {
+  var idx = Math.round(scrollEl.scrollTop / 40);
+  var items = scrollEl.querySelectorAll('.cw-drum-item');
+  for (var i = 0; i < items.length; i++) {
+    if (i === idx) items[i].classList.add('active');
+    else           items[i].classList.remove('active');
+  }
+}
+
+function cwGetDrum(id) {
+  var el = document.getElementById(id);
+  if (!el) return 0;
+  var idx = Math.max(0, Math.round(el.scrollTop / 40));
+  return parseInt(el.dataset.offset, 10) + idx * parseInt(el.dataset.step, 10);
+}
+
+function cwSetDrum(id, value) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var offset = parseInt(el.dataset.offset, 10);
+  var step   = parseInt(el.dataset.step, 10);
+  el.scrollTop = Math.max(0, Math.round((value - offset) / step)) * 40;
+  setTimeout(function() { cwUpdateDrumActive(el); }, 30);
+}
+
+// Le formulaire peut être monté en plusieurs exemplaires (chapitre dédié,
+// fiche Famille…). Seuls les identifiants changent d'un exemplaire à
+// l'autre : `prefix` les distingue, et vaut 'cw' pour le chapitre. Les
+// classes CSS, elles, restent communes.
+function cwShowError(cmdId, msg, prefix) {
+  prefix = prefix || 'cw';
+  var el = document.getElementById(prefix + '-error-' + cmdId);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  if (el._timeout) clearTimeout(el._timeout);
+  el._timeout = setTimeout(function() { el.style.display = 'none'; }, 4000);
+}
+
+// ─── Construction des cartes (une par vanne, toutes visibles) ─────────
+function cwBuildCards() {
+  var container = document.getElementById('conditionalCards');
+  if (!container) return;
+  container.innerHTML = '';
+  cwBuilt = true;
+
+  CW_VALVES.forEach(function(valve) {
+    var card = document.createElement('div');
+    card.className = 'cw-card';
+    card.id = 'cw-card-' + valve.cmdId;
+
+    var header = document.createElement('div');
+    header.className = 'cw-header';
+    var title = document.createElement('div');
+    title.className = 'cw-title';
+    title.textContent = valve.label;
+    header.appendChild(title);
+    var count = document.createElement('span');
+    count.className = 'cw-count';
+    count.id = 'cw-count-' + valve.cmdId;
+    count.textContent = '0 règle';
+    header.appendChild(count);
+    card.appendChild(header);
+
+    var ruleList = document.createElement('div');
+    ruleList.className = 'cw-rule-list';
+    ruleList.id = 'cw-rules-' + valve.cmdId;
+    card.appendChild(ruleList);
+
+    var errorDiv = document.createElement('div');
+    errorDiv.className = 'cw-error';
+    errorDiv.id = 'cw-error-' + valve.cmdId;
+    errorDiv.style.display = 'none';
+    card.appendChild(errorDiv);
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.className = 'cw-toggle-btn';
+    toggleBtn.id = 'cw-toggle-' + valve.cmdId;
+    toggleBtn.textContent = '+ Ajouter une règle';
+    toggleBtn.addEventListener('click', function() { cwToggleForm(valve.cmdId); });
+    card.appendChild(toggleBtn);
+
+    card.appendChild(cwBuildForm(valve.cmdId));
+    container.appendChild(card);
+  });
+
+  document.getElementById('conditionalSection').style.display = '';
+  cwUpdateCards();
+}
+
+// `toggleId` désigne l'élément à masquer pendant la saisie ; il est déduit
+// du préfixe par défaut, mais la fiche Famille fait partager une même
+// rangée à ses deux formulaires et le fournit donc explicitement.
+function cwBuildForm(cmdId, prefix, toggleId) {
+  prefix = prefix || 'cw';
+
+  var form = document.createElement('div');
+  form.className = 'cw-form';
+  form.id = prefix + '-form-' + cmdId;
+  form.dataset.cmp = CW_CMP_LOWER;
+
+  // Capteur
+  var sensorLabel = document.createElement('div');
+  sensorLabel.className = 'cw-picker-label';
+  sensorLabel.textContent = 'Capteur';
+  form.appendChild(sensorLabel);
+
+  var select = document.createElement('select');
+  select.className = 'cw-select';
+  select.id = prefix + '-sensor-' + cmdId;
+  CW_SENSORS.forEach(function(s) {
+    var opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.label;
+    select.appendChild(opt);
+  });
+  select.addEventListener('change', function() { cwOnSensorChange(cmdId, prefix); });
+  form.appendChild(select);
+
+  // Condition : comparateur + seuil
+  var condLabel = document.createElement('div');
+  condLabel.className = 'cw-picker-label';
+  condLabel.textContent = 'Arroser si la mesure est';
+  form.appendChild(condLabel);
+
+  var cmpRow = document.createElement('div');
+  cmpRow.className = 'cw-cmp-row';
+
+  var lowerBtn = document.createElement('button');
+  lowerBtn.className = 'cw-cmp-btn active';
+  lowerBtn.id = prefix + '-cmp-lower-' + cmdId;
+  lowerBtn.textContent = '< inférieure à';
+  lowerBtn.addEventListener('click', function() { cwSetCmp(cmdId, CW_CMP_LOWER, prefix); });
+  cmpRow.appendChild(lowerBtn);
+
+  var geBtn = document.createElement('button');
+  geBtn.className = 'cw-cmp-btn';
+  geBtn.id = prefix + '-cmp-ge-' + cmdId;
+  geBtn.textContent = '≥ supérieure ou égale à';
+  geBtn.addEventListener('click', function() { cwSetCmp(cmdId, CW_CMP_GREATER_OR_EQUAL, prefix); });
+  cmpRow.appendChild(geBtn);
+
+  form.appendChild(cmpRow);
+
+  var thrRow = document.createElement('div');
+  thrRow.className = 'cw-thr-row';
+  var thr = document.createElement('input');
+  thr.type = 'range';
+  thr.id = prefix + '-thr-' + cmdId;
+  thr.addEventListener('input', function() { cwUpdateThresholdDisplay(cmdId, prefix); });
+  thrRow.appendChild(thr);
+  var thrVal = document.createElement('span');
+  thrVal.className = 'cw-thr-val';
+  thrVal.id = prefix + '-thrval-' + cmdId;
+  thrRow.appendChild(thrVal);
+  form.appendChild(thrRow);
+
+  // Durée d'arrosage
+  var durLabel = document.createElement('div');
+  durLabel.className = 'cw-picker-label';
+  durLabel.textContent = 'Durée';
+  form.appendChild(durLabel);
+
+  var durPicker = document.createElement('div');
+  durPicker.className = 'cw-drum-picker';
+  cwBuildDrum(durPicker, prefix + '-durmin-' + cmdId, 15, 0, 1);
+  var sepMin = document.createElement('div');
+  sepMin.className = 'cw-drum-sep';
+  sepMin.textContent = 'min';
+  durPicker.appendChild(sepMin);
+  cwBuildDrum(durPicker, prefix + '-dursec-' + cmdId, 12, 0, 5);
+  var sepSec = document.createElement('div');
+  sepSec.className = 'cw-drum-sep';
+  sepSec.textContent = 's';
+  durPicker.appendChild(sepSec);
+  form.appendChild(durPicker);
+
+  // Repos entre deux arrosages
+  var restLabel = document.createElement('div');
+  restLabel.className = 'cw-picker-label';
+  restLabel.textContent = 'Repos après un arrosage';
+  form.appendChild(restLabel);
+
+  var restPicker = document.createElement('div');
+  restPicker.className = 'cw-drum-picker';
+  cwBuildDrum(restPicker, prefix + '-rest-' + cmdId,
+              CW_MAX_REST - CW_MIN_REST + 1, CW_MIN_REST, 1);
+  var restSep = document.createElement('div');
+  restSep.className = 'cw-drum-sep';
+  restSep.textContent = 'h';
+  restPicker.appendChild(restSep);
+  form.appendChild(restPicker);
+
+  // Plage horaire
+  var hourLabel = document.createElement('div');
+  hourLabel.className = 'cw-picker-label';
+  hourLabel.textContent = 'Plage horaire';
+  form.appendChild(hourLabel);
+
+  var hourPicker = document.createElement('div');
+  hourPicker.className = 'cw-drum-picker';
+  cwBuildDrum(hourPicker, prefix + '-start-' + cmdId, 24, 0, 1);
+  var hourSep = document.createElement('div');
+  hourSep.className = 'cw-drum-sep';
+  hourSep.textContent = 'h →';
+  hourPicker.appendChild(hourSep);
+  cwBuildDrum(hourPicker, prefix + '-end-' + cmdId, 24, 0, 1);
+  var hourEnd = document.createElement('div');
+  hourEnd.className = 'cw-drum-sep';
+  hourEnd.textContent = 'h';
+  hourPicker.appendChild(hourEnd);
+  form.appendChild(hourPicker);
+
+  // Actions
+  var actions = document.createElement('div');
+  actions.className = 'cw-actions';
+
+  var confirmBtn = document.createElement('button');
+  confirmBtn.className = 'cw-confirm-btn';
+  confirmBtn.textContent = 'Confirmer';
+  confirmBtn.addEventListener('click', function() { cwConfirmRule(cmdId, prefix); });
+  actions.appendChild(confirmBtn);
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cw-cancel-btn';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.addEventListener('click', function() { cwToggleForm(cmdId, prefix, toggleId); });
+  actions.appendChild(cancelBtn);
+
+  form.appendChild(actions);
+  return form;
+}
+
+function cwSetCmp(cmdId, cmp, prefix) {
+  prefix = prefix || 'cw';
+  var form = document.getElementById(prefix + '-form-' + cmdId);
+  if (!form) return;
+  form.dataset.cmp = cmp;
+  var lowerBtn = document.getElementById(prefix + '-cmp-lower-' + cmdId);
+  var geBtn    = document.getElementById(prefix + '-cmp-ge-' + cmdId);
+  if (lowerBtn) lowerBtn.classList.toggle('active', cmp === CW_CMP_LOWER);
+  if (geBtn)    geBtn.classList.toggle('active', cmp === CW_CMP_GREATER_OR_EQUAL);
+}
+
+// Le seuil suit les bornes META du capteur sélectionné.
+function cwOnSensorChange(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  if (!select || !thr) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) return;
+
+  thr.min  = sensor.min;
+  thr.max  = sensor.max;
+  thr.step = sensor.step;
+
+  var suggested = (sensor.unit === '%') ? 40 : 25;
+  thr.value = Math.max(sensor.min, Math.min(sensor.max, suggested));
+
+  cwUpdateThresholdDisplay(cmdId, prefix);
+}
+
+function cwUpdateThresholdDisplay(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  var out    = document.getElementById(prefix + '-thrval-' + cmdId);
+  if (!select || !thr || !out) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) return;
+
+  out.textContent = cwFormatThreshold(sensor, thr.value) + ' ' + sensor.unit;
+}
+
+// ─── Affichage des règles ────────────────────────────────────────────
+function cwUpdateCards() {
+  CW_VALVES.forEach(function(valve) {
+    var ruleList = document.getElementById('cw-rules-' + valve.cmdId);
+    if (!ruleList) return;
+    ruleList.innerHTML = '';
+
+    var valveRules = cwRules.filter(function(r) { return r.cmdId === valve.cmdId; });
+
+    var countEl = document.getElementById('cw-count-' + valve.cmdId);
+    if (countEl) {
+      countEl.textContent = valveRules.length <= 1
+        ? valveRules.length + ' règle'
+        : valveRules.length + ' règles';
+    }
+
+    if (valveRules.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'cw-empty';
+      empty.textContent = 'Aucune règle conditionnelle';
+      ruleList.appendChild(empty);
+    } else {
+      valveRules.forEach(function(rule) {
+        ruleList.appendChild(cwBuildRuleLine(rule, ruleList));
+      });
+    }
+
+    // L'état vient de changer : on referme le formulaire s'il était ouvert.
+    var form   = document.getElementById('cw-form-' + valve.cmdId);
+    var toggle = document.getElementById('cw-toggle-' + valve.cmdId);
+    if (form)   form.classList.remove('open');
+    if (toggle) toggle.style.display = '';
+  });
+
+  // Miroir dans les cartes Famille, si la page en comporte : le bloc
+  // reste utilisable seul, la fonction étant simplement absente ailleurs.
+  if (typeof updateFamConditionalRules === 'function') updateFamConditionalRules();
+}
+
+function cwBuildRuleLine(rule, ruleList) {
+  var sensor = cwFindSensor(rule.sensorId);
+  var sensorLabel = sensor ? sensor.label : ('Capteur ' + rule.sensorId);
+  var unit        = sensor ? sensor.unit  : '';
+
+  var item = document.createElement('div');
+  item.className = 'cw-rule';
+
+  var info = document.createElement('div');
+  info.className = 'cw-rule-info';
+
+  var cond = document.createElement('span');
+  cond.className = 'cw-rule-cond';
+  cond.textContent = sensorLabel
+                   + (rule.cmp === CW_CMP_LOWER ? ' < ' : ' ≥ ')
+                   + cwFormatThreshold(sensor, rule.threshold) + ' ' + unit;
+  info.appendChild(cond);
+
+  var detail = document.createElement('span');
+  detail.className = 'cw-rule-detail';
+  // Même ordre que le formulaire : durée, repos, puis plage horaire.
+  detail.textContent = cwFormatDuration(rule.duration)
+                     + ' · repos ' + rule.restHours + ' h · '
+                     + String(rule.startHour).padStart(2, '0') + 'h → '
+                     + String(rule.endHour).padStart(2, '0') + 'h';
+  info.appendChild(detail);
+
+  item.appendChild(info);
+
+  var delBtn = document.createElement('button');
+  delBtn.className = 'cw-rule-del';
+  delBtn.textContent = '✕';
+  delBtn.addEventListener('click', function() {
+    var confirmDiv = document.createElement('div');
+    confirmDiv.className = 'cw-rule-confirm';
+
+    var text = document.createElement('span');
+    text.className = 'cw-rule-confirm-text';
+    text.textContent = 'Supprimer ?';
+    confirmDiv.appendChild(text);
+
+    var btns = document.createElement('div');
+    btns.className = 'cw-rule-confirm-btns';
+
+    var yesBtn = document.createElement('button');
+    yesBtn.className = 'cw-rule-confirm-yes';
+    yesBtn.textContent = 'Oui';
+    yesBtn.addEventListener('click', function() {
+      yesBtn.classList.add('confirmed');
+      yesBtn.disabled = true;
+      cwRemoveRule(rule);
+    });
+    btns.appendChild(yesBtn);
+
+    var noBtn = document.createElement('button');
+    noBtn.className = 'cw-rule-confirm-no';
+    noBtn.textContent = 'Non';
+    noBtn.addEventListener('click', function() {
+      ruleList.replaceChild(item, confirmDiv);
+    });
+    btns.appendChild(noBtn);
+
+    confirmDiv.appendChild(btns);
+    ruleList.replaceChild(confirmDiv, item);
+  });
+  item.appendChild(delBtn);
+
+  return item;
+}
+
+function cwToggleForm(cmdId, prefix, toggleId) {
+  prefix = prefix || 'cw';
+  var form   = document.getElementById(prefix + '-form-' + cmdId);
+  var toggle = document.getElementById(toggleId || (prefix + '-toggle-' + cmdId));
+  if (!form || !toggle) return;
+
+  if (form.classList.contains('open')) {
+    form.classList.remove('open');
+    toggle.style.display = '';
+  } else {
+    form.classList.add('open');
+    toggle.style.display = 'none';
+    cwSetCmp(cmdId, CW_CMP_LOWER, prefix);
+    cwOnSensorChange(cmdId, prefix);
+    setTimeout(function() {
+      cwSetDrum(prefix + '-start-' + cmdId, 8);
+      cwSetDrum(prefix + '-end-' + cmdId, 20);
+      cwSetDrum(prefix + '-rest-' + cmdId, 6);
+      cwSetDrum(prefix + '-durmin-' + cmdId, 5);
+      cwSetDrum(prefix + '-dursec-' + cmdId, 0);
+    }, 30);
+  }
+}
+
+// ─── Envoi des demandes (FromUser) ───────────────────────────────────
+// L'affichage n'est jamais modifié ici : on attend le prochain ToUser,
+// seule source de vérité.
+function cwConfirmRule(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var form   = document.getElementById(prefix + '-form-' + cmdId);
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  if (!form || !select || !thr) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) {
+    cwShowError(cmdId, 'Capteur inconnu', prefix);
+    return;
+  }
+
+  var duration = cwGetDrum(prefix + '-durmin-' + cmdId) * 60
+               + cwGetDrum(prefix + '-dursec-' + cmdId);
+  if (duration < CW_MIN_DURATION) {
+    cwShowError(cmdId, 'Durée minimum : ' + CW_MIN_DURATION + ' seconde', prefix);
+    return;
+  }
+  if (duration > CW_MAX_DURATION) {
+    cwShowError(cmdId, 'Durée maximum : 15 minutes', prefix);
+    return;
+  }
+
+  var rule = {
+    op: 'add',
+    cmdId: cmdId,
+    sensorId: sensor.id,
+    cmp: parseInt(form.dataset.cmp, 10),
+    threshold: parseFloat(parseFloat(thr.value).toFixed(1)),
+    startHour: cwGetDrum(prefix + '-start-' + cmdId),
+    endHour: cwGetDrum(prefix + '-end-' + cmdId),
+    restHours: cwGetDrum(prefix + '-rest-' + cmdId),
+    duration: duration
+  };
+
+  if (cwRules.length >= CW_MAX_RULES) {
+    cwShowError(cmdId, 'Maximum ' + CW_MAX_RULES + ' règles atteint', prefix);
+    return;
+  }
+  for (var i = 0; i < cwRules.length; i++) {
+    if (cwSameRule(cwRules[i], rule)) {
+      cwShowError(cmdId, 'Cette règle existe déjà à l\'identique', prefix);
+      return;
+    }
+  }
+
+  if (!client || !client.connected) {
+    cwShowError(cmdId, 'MQTT non connecté', prefix);
+    return;
+  }
+
+  client.publish(CW_TOPIC_FROM_USER, JSON.stringify(rule), { qos: 1 });
+}
+
+// La règle est identifiée par son contenu complet : on renvoie tous ses
+// champs, tels qu'ils ont été reçus dans ToUser.
+function cwRemoveRule(rule) {
+  if (!client || !client.connected) return;
+
+  client.publish(CW_TOPIC_FROM_USER, JSON.stringify({
+    op: 'remove',
+    cmdId: rule.cmdId,
+    sensorId: rule.sensorId,
+    cmp: rule.cmp,
+    threshold: rule.threshold,
+    startHour: rule.startHour,
+    endHour: rule.endHour,
+    restHours: rule.restHours,
+    duration: rule.duration
+  }), { qos: 1 });
+}
+
+// ─── Réception de l'état (ToUser, retain) ────────────────────────────
+function cwHandleState(payload) {
+  try {
+    var data = JSON.parse(payload);
+    cwRules = data.rules || [];
+    if (cwBuilt) cwUpdateCards();
+  } catch (e) {
+    console.error('Erreur parsing Conditional ToUser:', e);
+  }
+}
+
+cwBuildCards();
+
+// ══════════════════════════════════════════════════════════════
+// FIN DU BLOC PORTABLE — JavaScript de l'arrosage conditionnel
+// ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
 // Restauration du cache au chargement
 // ══════════════════════════════════════════════════════════════
 
@@ -2144,7 +3185,8 @@ var client = mqtt.connect(MQTT_URL, {
 
 client.on('connect', function() {
   setMqttStatus('connected', 'Tel connecté au broker');
-  client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS, GARDENER_TOPIC_TO_USER], { qos: 1 });
+  client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS,
+                    GARDENER_TOPIC_TO_USER, CW_TOPIC_TO_USER], { qos: 1 });
 });
 
 client.on('reconnect', function() {
@@ -2194,12 +3236,19 @@ client.on('message', function(topic, message) {
       deviceDot.className = 'status-dot offline';
       deviceText.textContent = 'Serre autonome hors ligne';
     }
+    if (lastValues[34]) updateAcPowerStatus(lastValues[34]);
     return;
   }
 
   // ── Gardener (arrosage programmé) ──
   if (topic === GARDENER_TOPIC_TO_USER) {
     handleGardenerState(payload);
+    return;
+  }
+
+  // ── Conditional (arrosage conditionnel) ──
+  if (topic === CW_TOPIC_TO_USER) {
+    cwHandleState(payload);
     return;
   }
 
@@ -2216,8 +3265,10 @@ client.on('message', function(topic, message) {
 
     if (entry.id === 34) updateAcPowerStatus(entry);
 
-    // Mémoriser le dernier arrosage (type 5 = Manuel, type 6 = Auto)
-    if ((entry.type === 5 || entry.type === 6) && entry.id >= 17 && entry.id <= 22) {
+    // Mémoriser le dernier arrosage
+    // (type 5 = Manuel, type 6 = Auto, type 7 = Conditionnel)
+    if ((entry.type === 5 || entry.type === 6 || entry.type === 7)
+        && entry.id >= 17 && entry.id <= 22) {
       lastWatering[entry.id] = entry;
       saveWatering();
       updateLastWateringDisplay(entry.id);
