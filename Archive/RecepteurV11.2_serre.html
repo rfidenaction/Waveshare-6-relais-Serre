@@ -1,0 +1,3269 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serre de Marie-Pierre</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #1976d2;
+  color: white;
+  text-align: center;
+  margin: 0;
+  padding: 20px;
+}
+
+h1 {
+  background: #0d47a1;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 0 0 20px 0;
+}
+
+/* ── Bandeau connexion ── */
+.status-bar, .device-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  font-size: 1.1em;
+  opacity: 0.85;
+}
+
+.status-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #999;
+  transition: background 0.4s;
+  flex-shrink: 0;
+}
+
+.status-dot.connected { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-dot.offline   { background: #f44336; box-shadow: 0 0 6px #f44336; }
+.status-dot.connecting { background: #ff9800; }
+
+/* ── Groupes repliables ── */
+.group-title {
+  font-size: 1.25em;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.9;
+  margin: 25px auto 10px auto;
+  max-width: 600px;
+  text-align: left;
+  padding-left: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.group-title::before {
+  content: '▼ ';
+  font-size: 0.8em;
+}
+.group-title.collapsed::before {
+  content: '▶ ';
+}
+.group-content {
+  max-width: 600px;
+  margin: 0 auto;
+}
+.group-content.collapsed {
+  display: none;
+}
+
+/* ── Cartes ── */
+.card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.card-label {
+  font-size: 0.95em;
+  opacity: 0.85;
+  margin-bottom: 8px;
+}
+
+.card .value {
+  font-size: 1.8em;
+  font-weight: bold;
+}
+
+.card .timestamp {
+  font-size: 0.8em;
+  margin-top: 10px;
+  opacity: 0.7;
+}
+
+.card .timestamp em {
+  font-style: italic;
+}
+
+/* ── Cartes vanne (interactives) ── */
+.valve-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.valve-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.valve-label {
+  font-size: 1.1em;
+  font-weight: bold;
+}
+
+.valve-state {
+  font-size: 1em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+
+.valve-state.opened {
+  background: #4caf50;
+  color: white;
+  font-weight: bold;
+}
+
+.valve-timestamp {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-bottom: 12px;
+}
+
+.duration-choices {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.duration-btn {
+  flex: 1;
+  padding: 10px 4px;
+  font-size: 1em;
+  border: 2px solid rgba(255,255,255,0.4);
+  background: transparent;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.duration-btn:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.duration-btn.selected {
+  background: #0d47a1;
+  border-color: #0d47a1;
+  font-weight: bold;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 14px;
+  font-size: 1.2em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.action-btn:hover {
+  background: #43a047;
+}
+
+.action-btn:active {
+  background: #388e3c;
+}
+
+.action-btn:disabled {
+  background: #9e9e9e;
+  cursor: not-allowed;
+}
+
+/* ══ Familles — vue jardinier ══ */
+.fam-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 16px 20px;
+  border-radius: 15px;
+}
+.fam-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.fam-name {
+  font-size: 1.2em;
+  font-weight: bold;
+  cursor: pointer;
+  border-bottom: 1px dashed rgba(255,255,255,0.4);
+  padding-bottom: 2px;
+}
+.fam-valve-state {
+  font-size: 1em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+.fam-valve-state.opened {
+  background: #4caf50;
+  color: white;
+  font-weight: bold;
+}
+.fam-sensors {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 1.1em;
+}
+.fam-sensor-val {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0.9;
+}
+.fam-sensor-icon {
+  margin-bottom: 2px;
+}
+.fam-sensor-val strong {
+  font-size: 1.2em;
+}
+.fam-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.fam-dur-btn {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 0.95em;
+  border: 2px solid rgba(255,255,255,0.4);
+  background: transparent;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.fam-dur-btn.selected {
+  background: #0d47a1;
+  border-color: #0d47a1;
+  font-weight: bold;
+}
+.fam-water-btn {
+  padding: 8px 16px;
+  font-size: 1em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.fam-water-btn:active { background: #388e3c; }
+.fam-rename-input {
+  font-size: 1.1em;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: none;
+  width: 160px;
+}
+.fam-add-row {
+  display: flex;
+  gap: 8px;
+}
+.fam-add-square {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 10px 14px;
+  font-size: 0.95em;
+  font-weight: bold;
+  border: 2px dashed rgba(255,255,255,0.4);
+  border-radius: 8px;
+  opacity: 0.8;
+  min-height: 56px;
+  cursor: pointer;
+}
+.fam-add-square:hover { background: rgba(255,255,255,0.1); opacity: 1; }
+/* Dans la fiche, le formulaire conditionnel adopte la typographie du
+   formulaire horaire, plus discrète que celle du chapitre dédié. */
+.fam-card .cw-picker-label { font-size: 1.15em; }
+
+/* ── Message d'attente ── */
+.waiting {
+  margin: 40px auto;
+  max-width: 600px;
+  font-size: 1.2em;
+  opacity: 0.7;
+}
+
+.waiting .spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Flash sur mise à jour ── */
+@keyframes flash {
+  0%   { background: rgba(255,255,255,0.45); }
+  100% { background: rgba(255,255,255,0.2); }
+}
+.card.flash, .valve-card.flash {
+  animation: flash 0.6s ease-out;
+}
+
+/* ══ Gardener — Programmation arrosage ══ */
+.gd-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+  text-align: left;
+}
+.gd-title {
+  font-size: 1.1em;
+  font-weight: bold;
+  text-align: left;
+}
+.gd-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.gd-state {
+  font-size: 1em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+.gd-state.opened {
+  background: #4caf50;
+  color: white;
+  font-weight: bold;
+}
+.gd-slot-list { margin-bottom: 8px; }
+.gd-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: #4caf50;
+  border-radius: 8px;
+  font-size: 1.05em;
+}
+.gd-slot-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gd-slot-time { font-weight: bold; font-size: 1.05em; }
+.gd-slot-dur { opacity: 0.85; font-size: 1.05em; }
+.gd-slot-del {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 1.3em;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.gd-slot-del:hover { color: #f44336; background: rgba(244,67,54,0.2); }
+.gd-slot-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: rgba(244,67,54,0.5);
+  border-radius: 8px;
+  font-size: 1.05em;
+}
+.gd-slot-confirm-text {
+  flex: 1;
+  font-size: 0.95em;
+}
+.gd-slot-confirm-btns {
+  display: flex;
+  gap: 8px;
+}
+.gd-slot-confirm-yes {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.gd-slot-confirm-yes:active {
+  transform: scale(0.92);
+  opacity: 0.7;
+}
+.gd-slot-confirm-yes.confirmed {
+  background: #9e9e9e;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.gd-slot-confirm-no {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.gd-slot-confirm-no:active {
+  transform: scale(0.92);
+  opacity: 0.7;
+}
+.gd-empty {
+  font-size: 1em;
+  opacity: 0.5;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.gd-error {
+  background: rgba(244,67,54,0.3);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.9em;
+  margin-bottom: 8px;
+}
+.gd-toggle-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gd-toggle-btn:hover { background: rgba(255,255,255,0.15); }
+.gd-form {
+  display: none;
+  border-top: 1px solid rgba(255,255,255,0.2);
+  padding-top: 14px;
+  margin-top: 10px;
+}
+.gd-form.open { display: block; background: #0d47a1; border-radius: 10px; padding: 14px; }
+.gd-drum-picker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 12px;
+  user-select: none;
+}
+.gd-drum-col {
+  position: relative;
+  width: 140px;
+  height: 120px;
+  overflow: hidden;
+}
+.gd-drum-scroll {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.gd-drum-scroll::-webkit-scrollbar { display: none; }
+.gd-drum-pad { height: 40px; flex-shrink: 0; }
+.gd-drum-item {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: rgba(255,255,255,0.3);
+  scroll-snap-align: center;
+  cursor: pointer;
+  transition: color 0.1s, font-size 0.1s;
+}
+.gd-drum-item.active {
+  color: white;
+  font-size: 26px;
+  font-weight: bold;
+}
+.gd-drum-highlight {
+  position: absolute;
+  top: 40px; left: 0; right: 0;
+  height: 40px;
+  border-top: 1.5px solid rgba(255,255,255,0.4);
+  border-bottom: 1.5px solid rgba(255,255,255,0.4);
+  pointer-events: none;
+}
+.gd-drum-sep {
+  font-size: 26px;
+  font-weight: bold;
+  color: white;
+  padding: 0 2px;
+}
+.gd-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.gd-slider-row label {
+  font-size: 1.15em;
+  font-weight: bold;
+  min-width: 50px;
+}
+.gd-slider-row input[type="range"] { flex: 1; }
+.gd-dur-val {
+  min-width: 85px;
+  text-align: right;
+  font-size: 1.15em;
+  font-weight: bold;
+}
+.gd-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75em;
+  opacity: 0.4;
+  margin-bottom: 14px;
+  padding: 0 56px;
+}
+.gd-actions {
+  display: flex;
+  gap: 8px;
+}
+.gd-confirm-btn {
+  flex: 1;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gd-confirm-btn:hover { background: #43a047; }
+.gd-cancel-btn {
+  padding: 12px 18px;
+  font-size: 1em;
+  background: transparent;
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gd-cancel-btn:hover { background: rgba(255,255,255,0.1); }
+.gd-picker-label {
+  font-size: 1.15em;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 4px;
+}
+.gd-last-water {
+  font-size: 1em;
+  font-weight: bold;
+  text-align: center;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DÉBUT DU BLOC PORTABLE — styles cw- (arrosage conditionnel)
+   Aucune collision possible avec les classes existantes.
+   ═══════════════════════════════════════════════════════════════ */
+.cw-card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 600px;
+  padding: 20px;
+  border-radius: 15px;
+  text-align: left;
+}
+.cw-title {
+  font-size: 1.1em;
+  font-weight: bold;
+  text-align: left;
+}
+.cw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.cw-count {
+  font-size: 0.9em;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+}
+.cw-rule-list { margin-bottom: 8px; }
+.cw-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: #4caf50;
+  border-radius: 8px;
+}
+.cw-rule-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cw-rule-cond { font-weight: bold; font-size: 1.05em; }
+.cw-rule-detail { opacity: 0.85; font-size: 0.9em; }
+.cw-rule-del {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 1.3em;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.cw-rule-del:hover { color: #f44336; background: rgba(244,67,54,0.2); }
+.cw-rule-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  background: rgba(244,67,54,0.5);
+  border-radius: 8px;
+  font-size: 1.05em;
+}
+.cw-rule-confirm-text { flex: 1; font-size: 0.95em; }
+.cw-rule-confirm-btns { display: flex; gap: 8px; }
+.cw-rule-confirm-yes {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.cw-rule-confirm-yes:active { transform: scale(0.92); opacity: 0.7; }
+.cw-rule-confirm-yes.confirmed {
+  background: #9e9e9e;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.cw-rule-confirm-no {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.1s;
+}
+.cw-rule-confirm-no:active { transform: scale(0.92); opacity: 0.7; }
+.cw-empty {
+  font-size: 1em;
+  opacity: 0.5;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.cw-error {
+  background: rgba(244,67,54,0.3);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.9em;
+  margin-bottom: 8px;
+}
+.cw-toggle-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-toggle-btn:hover { background: rgba(255,255,255,0.15); }
+.cw-form {
+  display: none;
+  border-top: 1px solid rgba(255,255,255,0.2);
+  padding-top: 14px;
+  margin-top: 10px;
+}
+.cw-form.open { display: block; background: #0d47a1; border-radius: 10px; padding: 14px; }
+/* Rythme vertical du formulaire : chaque intitulé ouvre une section et
+   porte seul l'espace qui la sépare de la précédente. Les marges basses
+   des contrôles sont volontairement minimes, la fusion des marges
+   verticales donnant un écart constant entre sections. */
+.cw-picker-label {
+  font-size: 1.35em;
+  font-weight: bold;
+  text-align: center;
+  margin: 26px 0 10px 0;
+}
+.cw-form > .cw-picker-label:first-child { margin-top: 2px; }
+.cw-select {
+  width: 100%;
+  padding: 10px;
+  font-size: 1em;
+  border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.3);
+  background: #0d47a1;
+  color: white;
+}
+.cw-cmp-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.cw-cmp-btn {
+  flex: 1;
+  padding: 10px;
+  font-size: 1.1em;
+  font-weight: bold;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-cmp-btn.active { background: #4caf50; border-color: #4caf50; }
+.cw-thr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.cw-thr-row input[type="range"] { flex: 1; }
+.cw-thr-val {
+  min-width: 90px;
+  text-align: right;
+  font-size: 1.15em;
+  font-weight: bold;
+}
+.cw-drum-picker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 2px;
+  user-select: none;
+}
+.cw-drum-col {
+  position: relative;
+  width: 140px;
+  height: 120px;
+  overflow: hidden;
+}
+.cw-drum-scroll {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.cw-drum-scroll::-webkit-scrollbar { display: none; }
+.cw-drum-pad { height: 40px; flex-shrink: 0; }
+.cw-drum-item {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: rgba(255,255,255,0.3);
+  scroll-snap-align: center;
+  cursor: pointer;
+  transition: color 0.1s, font-size 0.1s;
+}
+.cw-drum-item.active {
+  color: white;
+  font-size: 26px;
+  font-weight: bold;
+}
+.cw-drum-highlight {
+  position: absolute;
+  top: 40px; left: 0; right: 0;
+  height: 40px;
+  border-top: 1.5px solid rgba(255,255,255,0.4);
+  border-bottom: 1.5px solid rgba(255,255,255,0.4);
+  pointer-events: none;
+}
+.cw-drum-sep {
+  font-size: 22px;
+  font-weight: bold;
+  color: white;
+  padding: 0 4px;
+}
+.cw-actions { display: flex; gap: 8px; margin-top: 26px; }
+.cw-confirm-btn {
+  flex: 1;
+  padding: 12px;
+  font-size: 1em;
+  font-weight: bold;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-confirm-btn:hover { background: #43a047; }
+.cw-cancel-btn {
+  padding: 12px 18px;
+  font-size: 1em;
+  background: transparent;
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cw-cancel-btn:hover { background: rgba(255,255,255,0.1); }
+/* ═══════════════ FIN DU BLOC PORTABLE — styles cw- ═══════════════ */
+</style>
+</head>
+<body>
+
+<h1>Serre de Marie-Pierre</h1>
+
+<!-- Bandeau connexion MQTT -->
+<div class="status-bar">
+  <span class="status-dot connecting" id="mqttDot"></span>
+  <span id="mqttStatus">Connexion au broker…</span>
+</div>
+
+<!-- État carte Waveshare (LWT) -->
+<div class="device-status" id="deviceStatus">
+  <span class="status-dot" id="deviceDot"></span>
+  <span id="deviceText"></span>
+</div>
+
+<!-- État alimentation 220V -->
+<div class="device-status" id="acPowerStatus">
+  <span class="status-dot" id="acPowerDot"></span>
+  <span id="acPowerText"></span>
+</div>
+
+<!-- Familles — vue jardinier -->
+<div id="familySection" style="display:none;">
+  <div class="group-title collapsed" onclick="toggleGroup(this)">Familles</div>
+  <div class="group-content collapsed" id="familyCards"></div>
+</div>
+
+<!-- Conteneur des cartes (généré dynamiquement) -->
+<div id="cards">
+  <div class="waiting" id="waitingMsg">
+    <span class="spinner"></span>
+    En attente du schéma…
+  </div>
+</div>
+
+<!-- Programmation arrosage automatique (Gardener) -->
+<div id="gardenerSection" style="display:none;">
+  <div class="group-title collapsed" onclick="toggleGroup(this)">Programmation arrosage</div>
+  <div class="group-content collapsed" id="gardenerCards"></div>
+</div>
+
+<!-- ═══════════ DÉBUT DU BLOC PORTABLE — HTML de la section ═══════════ -->
+<div id="conditionalSection" style="display:none;">
+  <div class="group-title collapsed" onclick="toggleGroup(this)">Arrosage conditionnel</div>
+  <div class="group-content collapsed" id="conditionalCards"></div>
+</div>
+<!-- ═══════════ FIN DU BLOC PORTABLE — HTML de la section ═══════════ -->
+
+<!-- mqtt.js CDN -->
+<script src="https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js"></script>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// Configuration
+// ══════════════════════════════════════════════════════════════
+const MQTT_URL  = 'wss://3db6155980d4483e8b8c3036fd0afd6f.s1.eu.hivemq.cloud:8884/mqtt';
+const MQTT_USER = 'Graindesable';
+const MQTT_PASS = 'Chaperonrouge64';
+
+const TOPIC_SCHEMA = 'serre/schema';
+const TOPIC_DATA   = 'serre/data/#';
+const TOPIC_STATUS = 'serre/status/waveshare';
+
+// Durées d'arrosage proposées (secondes)
+const DURATION_CHOICES = [3, 5, 10, 30];
+const DURATION_DEFAULT = 3;
+
+// Mapping famille → DataIds associés
+// airId : température de l'air affichée sur la carte. Le capteur air 15
+// (DataId 1) est provisoirement partagé par les six familles ; le choix
+// deviendra modifiable par l'utilisateur dans un second temps.
+var FAMILIES = [
+  { id: 1, valveId: 4,  cmdId: 17, moistureId: 3,  temperatureId: 23, airId: 1 },
+  { id: 2, valveId: 12, cmdId: 18, moistureId: 24, temperatureId: 25, airId: 1 },
+  { id: 3, valveId: 13, cmdId: 19, moistureId: 26, temperatureId: 27, airId: 1 },
+  { id: 4, valveId: 14, cmdId: 20, moistureId: 28, temperatureId: 29, airId: 1 },
+  { id: 5, valveId: 15, cmdId: 21, moistureId: 30, temperatureId: 31, airId: 1 },
+  { id: 6, valveId: 16, cmdId: 22, moistureId: 32, temperatureId: 33, airId: 1 }
+];
+var familyNames = ['Famille', 'Famille', 'Famille', 'Famille', 'Famille', 'Famille'];
+var familyCardsBuilt = false;
+
+// ══════════════════════════════════════════════════════════════
+// État local + restauration depuis localStorage
+// ══════════════════════════════════════════════════════════════
+let schema = null;
+let lastValues = {};
+let cardsBuilt = false;
+
+// Durée sélectionnée par vanne : { dataId: seconds }
+let selectedDurations = {};
+
+// Dernier arrosage par cmdId : { cmdId: entry }
+let lastWatering = {};
+
+// Clés localStorage
+var LS_SCHEMA = 'serre_schema';
+var LS_VALUES = 'serre_values';
+var LS_WATERING = 'serre_last_watering';
+
+// Restaurer le cache
+try {
+  var cachedSchema = localStorage.getItem(LS_SCHEMA);
+  if (cachedSchema) schema = JSON.parse(cachedSchema);
+
+  var cachedValues = localStorage.getItem(LS_VALUES);
+  if (cachedValues) lastValues = JSON.parse(cachedValues);
+
+  var cachedWatering = localStorage.getItem(LS_WATERING);
+  if (cachedWatering) lastWatering = JSON.parse(cachedWatering);
+} catch (e) {
+  console.warn('localStorage: erreur lecture cache', e);
+}
+
+// Sauvegarder le schéma
+function saveSchema() {
+  try { localStorage.setItem(LS_SCHEMA, JSON.stringify(schema)); }
+  catch (e) { console.warn('localStorage: erreur écriture schéma', e); }
+}
+
+// Sauvegarder les dernières valeurs
+function saveValues() {
+  try { localStorage.setItem(LS_VALUES, JSON.stringify(lastValues)); }
+  catch (e) { console.warn('localStorage: erreur écriture valeurs', e); }
+}
+
+// Sauvegarder les derniers arrosages
+function saveWatering() {
+  try { localStorage.setItem(LS_WATERING, JSON.stringify(lastWatering)); }
+  catch (e) { console.warn('localStorage: erreur écriture watering', e); }
+}
+
+// Noms des groupes DataType
+const TYPE_LABELS = {
+  0: 'Alimentation',
+  1: 'Capteurs',
+  2: 'Actionneurs',
+  3: 'Système'
+};
+
+// ══════════════════════════════════════════════════════════════
+// DOM
+// ══════════════════════════════════════════════════════════════
+const mqttDot      = document.getElementById('mqttDot');
+const mqttStatusEl = document.getElementById('mqttStatus');
+const deviceDot    = document.getElementById('deviceDot');
+const deviceText   = document.getElementById('deviceText');
+const acPowerDot   = document.getElementById('acPowerDot');
+const acPowerText  = document.getElementById('acPowerText');
+const cardsDiv     = document.getElementById('cards');
+const waitingMsg   = document.getElementById('waitingMsg');
+
+// ══════════════════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════════════════
+
+function setMqttStatus(state, text) {
+  mqttDot.className = 'status-dot ' + state;
+  mqttStatusEl.textContent = text;
+}
+
+function updateAcPowerStatus(entry) {
+  var connected = Math.round(entry.value) === 1;
+  acPowerDot.className = 'status-dot ' + (connected ? 'connected' : 'offline');
+  acPowerText.textContent = connected ? 'Alim 220V connectée' : 'Alim 220V coupée';
+}
+
+// Formater un timestamp UTC en heure locale
+function formatUtcLocal(ts) {
+  var d = new Date(ts * 1000);
+  var dd = String(d.getDate()).padStart(2, '0');
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var yy = String(d.getFullYear()).slice(2);
+  var hh = String(d.getHours()).padStart(2, '0');
+  var mi = String(d.getMinutes()).padStart(2, '0');
+  var ss = String(d.getSeconds()).padStart(2, '0');
+  return dd + '/' + mm + '/' + yy + ' ' + hh + ':' + mi + ':' + ss;
+}
+
+// Formater un âge en ms en texte "Depuis Xh Ym Zs"
+function formatAge(ageMs) {
+  var s = Math.floor(ageMs / 1000);
+  var m = Math.floor(s / 60); s %= 60;
+  var h = Math.floor(m / 60); m %= 60;
+  var text = 'Depuis ';
+  if (h) text += h + 'h ';
+  if (m) text += m + 'm ';
+  text += s + 's';
+  return text;
+}
+
+// Construire le HTML de l'horodatage
+function timeHtml(entry) {
+  if (entry.vclockAvailable && entry.vclockReliable) {
+    return formatUtcLocal(entry.timestamp);
+  }
+  if (entry.vclockAvailable && !entry.vclockReliable) {
+    return formatUtcLocal(entry.timestamp) + ' <em>(Imprécis)</em>';
+  }
+  var ageMs = Date.now() - entry.receivedAt;
+  return '<span class="age" data-received="' + entry.receivedAt + '">' +
+         formatAge(ageMs) + '</span>';
+}
+
+// Parser une ligne CSV 7 champs
+function parseCsvPayload(csv) {
+  csv = csv.trim();
+
+  var commas = [];
+  for (var i = 0; i < csv.length && commas.length < 6; i++) {
+    if (csv[i] === ',') commas.push(i);
+  }
+  if (commas.length < 6) return null;
+
+  var timestamp       = parseInt(csv.substring(0, commas[0]));
+  var vclockAvailable = parseInt(csv.substring(commas[0] + 1, commas[1])) !== 0;
+  var vclockReliable  = parseInt(csv.substring(commas[1] + 1, commas[2])) !== 0;
+  var type            = parseInt(csv.substring(commas[2] + 1, commas[3]));
+  var id              = parseInt(csv.substring(commas[3] + 1, commas[4]));
+  var valueType       = parseInt(csv.substring(commas[4] + 1, commas[5]));
+  var rawValue        = csv.substring(commas[5] + 1);
+
+  var value;
+  if (valueType === 0) {
+    value = parseFloat(rawValue);
+  } else {
+    if (rawValue.length >= 2 && rawValue[0] === '"' && rawValue[rawValue.length - 1] === '"') {
+      value = rawValue.substring(1, rawValue.length - 1).replace(/""/g, '"');
+    } else {
+      value = rawValue;
+    }
+  }
+
+  return {
+    timestamp: timestamp,
+    vclockAvailable: vclockAvailable,
+    vclockReliable: vclockReliable,
+    type: type,
+    id: id,
+    valueType: valueType,
+    value: value,
+    receivedAt: Date.now()
+  };
+}
+
+function escapeHtml(text) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(text));
+  return div.innerHTML;
+}
+
+function toggleGroup(titleEl) {
+  titleEl.classList.toggle('collapsed');
+  var content = titleEl.nextElementSibling;
+  if (content) content.classList.toggle('collapsed');
+}
+
+// ══════════════════════════════════════════════════════════════
+// Détection "vanne" : Actionneur (type=2) de nature "etat"
+// Basé sur META, aucune info en dur
+// ══════════════════════════════════════════════════════════════
+function isValve(di) {
+  return di.type === 2 && di.nature === 'etat';
+}
+
+// ══════════════════════════════════════════════════════════════
+// Capteurs air RS485 (Ebyte KTH2-R) — affichage en tête du groupe
+// "Capteurs", dans l'ordre des adresses RS485 réelles (15, 14, 13),
+// avec le numéro d'adresse réel affiché à la place du numéro logique.
+// ══════════════════════════════════════════════════════════════
+var AIR_SENSOR_DISPLAY_ORDER = [1, 2, 35, 36, 37, 38];
+var AIR_SENSOR_REAL_ADDRESS  = { 1: 15, 2: 15, 35: 14, 36: 14, 37: 13, 38: 13 };
+
+// ══════════════════════════════════════════════════════════════
+// Construction des cartes depuis le schéma
+// ══════════════════════════════════════════════════════════════
+
+function buildCards() {
+  if (!schema || !schema.dataIds) return;
+
+  cardsDiv.innerHTML = '';
+  cardsBuilt = true;
+
+  // Regrouper par DataType
+  var groups = {};
+  schema.dataIds.forEach(function(di) {
+    var t = di.type;
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(di);
+  });
+
+  // Ordre des groupes
+  [0, 1, 2, 3].forEach(function(typeId) {
+    var items = groups[typeId];
+    if (!items || items.length === 0) return;
+
+    // Titre du groupe
+    var label = TYPE_LABELS[typeId] || ('Type ' + typeId);
+    if (schema.dataTypes) {
+      schema.dataTypes.forEach(function(dt) {
+        if (dt.id === typeId && dt.label) label = dt.label;
+      });
+    }
+    if (label === 'Capteur')    label = 'Capteurs';
+    if (label === 'Actionneur') label = 'Actionneurs';
+
+    // Capteurs air en tête, dans l'ordre des adresses RS485 réelles
+    if (typeId === 1) {
+      items = items.slice().sort(function(a, b) {
+        var ia = AIR_SENSOR_DISPLAY_ORDER.indexOf(a.id);
+        var ib = AIR_SENSOR_DISPLAY_ORDER.indexOf(b.id);
+        if (ia === -1) ia = AIR_SENSOR_DISPLAY_ORDER.length + a.id;
+        if (ib === -1) ib = AIR_SENSOR_DISPLAY_ORDER.length + b.id;
+        return ia - ib;
+      });
+    }
+
+    var title = document.createElement('div');
+    title.className = 'group-title collapsed';
+    title.textContent = label;
+    title.addEventListener('click', function() { toggleGroup(title); });
+    cardsDiv.appendChild(title);
+
+    var groupContent = document.createElement('div');
+    groupContent.className = 'group-content collapsed';
+
+    items.forEach(function(di) {
+      if (isValve(di)) {
+        groupContent.appendChild(buildValveCard(di));
+      } else {
+        groupContent.appendChild(buildDataCard(di));
+      }
+    });
+
+    cardsDiv.appendChild(groupContent);
+  });
+}
+
+// Carte de données (affichage simple, comportement existant)
+function buildDataCard(di) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'card-' + di.id;
+
+  var label = di.label;
+  if (di.id in AIR_SENSOR_REAL_ADDRESS) {
+    label = label.replace(/\s\d+$/, ' ' + AIR_SENSOR_REAL_ADDRESS[di.id]);
+  }
+
+  card.innerHTML =
+    '<div class="card-label">' + escapeHtml(label) + '</div>' +
+    '<div class="value" id="value-' + di.id + '">—</div>' +
+    '<div class="timestamp" id="time-' + di.id + '"></div>';
+
+  return card;
+}
+
+// Carte vanne (interactive)
+function buildValveCard(di) {
+  if (!(di.id in selectedDurations)) {
+    selectedDurations[di.id] = DURATION_DEFAULT;
+  }
+
+  var card = document.createElement('div');
+  card.className = 'valve-card';
+  card.id = 'card-' + di.id;
+
+  // Header : label + état
+  var header = document.createElement('div');
+  header.className = 'valve-header';
+  header.innerHTML =
+    '<div class="valve-label">' + escapeHtml(di.label) + '</div>' +
+    '<div class="valve-state" id="state-' + di.id + '">—</div>';
+  card.appendChild(header);
+
+  // Timestamp
+  var ts = document.createElement('div');
+  ts.className = 'valve-timestamp';
+  ts.id = 'time-' + di.id;
+  card.appendChild(ts);
+
+  // Boutons de durée
+  var choices = document.createElement('div');
+  choices.className = 'duration-choices';
+  DURATION_CHOICES.forEach(function(sec) {
+    var btn = document.createElement('button');
+    btn.className = 'duration-btn';
+    btn.textContent = sec + ' s';
+    btn.dataset.id = di.id;
+    btn.dataset.sec = sec;
+    if (selectedDurations[di.id] === sec) {
+      btn.classList.add('selected');
+    }
+    btn.addEventListener('click', function() {
+      selectDuration(di.id, sec);
+    });
+    choices.appendChild(btn);
+  });
+  card.appendChild(choices);
+
+  // Bouton d'action
+  var action = document.createElement('button');
+  action.className = 'action-btn';
+  action.textContent = 'Arroser';
+  action.addEventListener('click', function() {
+    sendValveCommand(di.id);
+  });
+  card.appendChild(action);
+
+  return card;
+}
+
+// Sélection d'une durée pour une vanne
+function selectDuration(dataId, sec) {
+  selectedDurations[dataId] = sec;
+
+  // Mettre à jour visuellement les boutons de cette vanne
+  var card = document.getElementById('card-' + dataId);
+  if (!card) return;
+  var btns = card.querySelectorAll('.duration-btn');
+  btns.forEach(function(b) {
+    if (parseInt(b.dataset.sec) === sec) {
+      b.classList.add('selected');
+    } else {
+      b.classList.remove('selected');
+    }
+  });
+}
+
+// Correspondance Vanne → Commande (figée selon META + RELAYS[] côté carte).
+// Si on remplace un relais d'arrosage par un autre actionneur (lumière,
+// ventilation...), il faudra ajuster cette table ET refaire l'UI en
+// conséquence. C'est la seule duplication de RELAYS[] dans le code client.
+var VALVE_TO_CMD = {
+  4:  17,   // Valve1 → CommandValve1
+  12: 18,   // Valve2 → CommandValve2
+  13: 19,   // Valve3 → CommandValve3
+  14: 20,   // Valve4 → CommandValve4
+  15: 21,   // Valve5 → CommandValve5
+  16: 22    // Valve6 → CommandValve6
+};
+
+// Type d'origine d'une commande émise depuis l'UI manuelle (cf. DataType
+// dans DataLogger.h : 5 = CommandManual, 6 = CommandAuto).
+var CMD_TYPE_MANUAL = 5;
+
+// Publier une commande d'ouverture via MQTT.
+// Payload : CSV 7 champs non horodaté. Les 3 premiers champs sont vides :
+// la carte horodatera à réception via VirtualClock::read().
+function sendValveCommand(valveId) {
+  var cmdId = VALVE_TO_CMD[valveId];
+  if (cmdId === undefined) {
+    console.warn('Vanne sans commande associée : id=' + valveId);
+    return;
+  }
+
+  var sec = selectedDurations[valveId] || DURATION_DEFAULT;
+  var topic = 'serre/cmd';
+  var payload = ',,,' + CMD_TYPE_MANUAL + ',' + cmdId + ',0,' + sec;
+
+  if (!client || !client.connected) {
+    console.warn('MQTT non connecté, commande ignorée');
+    return;
+  }
+
+  client.publish(topic, payload, { qos: 1 }, function(err) {
+    if (err) {
+      console.error('Erreur publication commande :', err);
+    } else {
+      console.log('Commande envoyée :', topic, '=', payload);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Mise à jour d'une carte
+// ══════════════════════════════════════════════════════════════
+
+function updateCard(entry) {
+  if (!schema || !cardsBuilt) return;
+
+  var di = null;
+  schema.dataIds.forEach(function(d) {
+    if (d.id === entry.id) di = d;
+  });
+  if (!di) return;
+
+  var cardEl = document.getElementById('card-' + di.id);
+  var timeEl = document.getElementById('time-' + di.id);
+
+  if (isValve(di)) {
+    // Carte vanne : mettre à jour l'état Fermée/Ouverte
+    var stateEl = document.getElementById('state-' + di.id);
+    if (stateEl) {
+      var intVal = Math.round(entry.value);
+      var display = String(entry.value);
+      if (di.states) {
+        di.states.forEach(function(s) {
+          if (s.value === intVal) display = s.label;
+        });
+      }
+      stateEl.textContent = display;
+      if (intVal === 1) {
+        stateEl.classList.add('opened');
+      } else {
+        stateEl.classList.remove('opened');
+      }
+    }
+    if (timeEl) timeEl.innerHTML = timeHtml(entry);
+  } else {
+    // Carte de données classique
+    var valueEl = document.getElementById('value-' + di.id);
+    if (!valueEl) return;
+
+    var display;
+    if (di.nature === 'metrique') {
+      display = entry.value.toFixed(1);
+      if (di.unit) display += ' ' + di.unit;
+    } else if (di.nature === 'etat') {
+      display = String(entry.value);
+      if (di.states) {
+        var intVal = Math.round(entry.value);
+        di.states.forEach(function(s) {
+          if (s.value === intVal) display = s.label;
+        });
+      }
+    } else {
+      display = String(entry.value);
+    }
+
+    valueEl.textContent = display;
+    if (timeEl) timeEl.innerHTML = timeHtml(entry);
+  }
+
+  // Flash visuel
+  if (cardEl) {
+    cardEl.classList.remove('flash');
+    void cardEl.offsetWidth;
+    cardEl.classList.add('flash');
+  }
+
+  lastValues[entry.id] = entry;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Mise à jour périodique des âges relatifs
+// ══════════════════════════════════════════════════════════════
+
+setInterval(function() {
+  document.querySelectorAll('.age').forEach(function(el) {
+    var received = parseInt(el.dataset.received);
+    if (isNaN(received)) return;
+    var ageMs = Date.now() - received;
+    el.textContent = formatAge(ageMs);
+  });
+}, 1000);
+
+// ══════════════════════════════════════════════════════════════
+// Familles — vue jardinier
+// ══════════════════════════════════════════════════════════════
+
+function buildFamilyCards() {
+  if (!schema || !schema.families) return;
+
+  familyNames = schema.families.slice();
+  var container = document.getElementById('familyCards');
+  if (!container) return;
+  container.innerHTML = '';
+  familyCardsBuilt = true;
+
+  FAMILIES.forEach(function(fam) {
+    if (!(fam.valveId in selectedDurations)) {
+      selectedDurations[fam.valveId] = DURATION_DEFAULT;
+    }
+
+    var card = document.createElement('div');
+    card.className = 'fam-card';
+    card.id = 'fam-card-' + fam.id;
+
+    var header = document.createElement('div');
+    header.className = 'fam-header';
+
+    var nameEl = document.createElement('span');
+    nameEl.className = 'fam-name';
+    nameEl.id = 'fam-name-' + fam.id;
+    nameEl.textContent = fam.id + ' ' + familyNames[fam.id - 1];
+    nameEl.addEventListener('click', function() {
+      startFamilyRename(fam.id);
+    });
+    header.appendChild(nameEl);
+
+    var stateEl = document.createElement('span');
+    stateEl.className = 'fam-valve-state';
+    stateEl.id = 'fam-valve-' + fam.id;
+    stateEl.textContent = 'Vanne —';
+    header.appendChild(stateEl);
+
+    card.appendChild(header);
+
+    var sensors = document.createElement('div');
+    sensors.className = 'fam-sensors';
+    sensors.innerHTML =
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">🌱💧</span><strong id="fam-moist-' + fam.id + '">—</strong></span>' +
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">🌱🌡</span><strong id="fam-temp-' + fam.id + '">—</strong></span>' +
+      '<span class="fam-sensor-val"><span class="fam-sensor-icon">☁️🌡</span><strong id="fam-air-' + fam.id + '">—</strong></span>';
+    card.appendChild(sensors);
+
+    var actions = document.createElement('div');
+    actions.className = 'fam-actions';
+
+    DURATION_CHOICES.forEach(function(sec) {
+      var btn = document.createElement('button');
+      btn.className = 'fam-dur-btn';
+      btn.textContent = sec + 's';
+      if (selectedDurations[fam.valveId] === sec) btn.classList.add('selected');
+      btn.addEventListener('click', function() {
+        selectedDurations[fam.valveId] = sec;
+        var btns = card.querySelectorAll('.fam-dur-btn');
+        btns.forEach(function(b) { b.classList.remove('selected'); });
+        btn.classList.add('selected');
+      });
+      actions.appendChild(btn);
+    });
+
+    var waterBtn = document.createElement('button');
+    waterBtn.className = 'fam-water-btn';
+    waterBtn.textContent = 'Arroser';
+    waterBtn.addEventListener('click', function() {
+      sendValveCommand(fam.valveId);
+    });
+    actions.appendChild(waterBtn);
+
+    card.appendChild(actions);
+
+    // ── Programmation arrosage intégrée ──
+    var fgSection = document.createElement('div');
+    fgSection.style.borderTop = '1px solid rgba(255,255,255,0.15)';
+    fgSection.style.marginTop = '12px';
+    fgSection.style.paddingTop = '10px';
+
+    var fgTitle = document.createElement('div');
+    fgTitle.style.fontWeight = 'bold';
+    fgTitle.style.fontSize = '0.95em';
+    fgTitle.style.marginBottom = '8px';
+    fgTitle.style.opacity = '0.8';
+    fgTitle.textContent = 'Programmation';
+    fgSection.appendChild(fgTitle);
+
+    var fgSlotList = document.createElement('div');
+    fgSlotList.className = 'gd-slot-list';
+    fgSlotList.id = 'fg-slots-' + fam.cmdId;
+    fgSection.appendChild(fgSlotList);
+
+    // Règles conditionnelles de la vanne, sous les créneaux horaires :
+    // la carte Famille montre ainsi toute la programmation en un endroit.
+    var fgCondList = document.createElement('div');
+    fgCondList.className = 'cw-rule-list';
+    fgCondList.id = 'fg-cond-' + fam.cmdId;
+    fgSection.appendChild(fgCondList);
+
+    var fgErrorDiv = document.createElement('div');
+    fgErrorDiv.className = 'gd-error';
+    fgErrorDiv.id = 'fg-error-' + fam.cmdId;
+    fgErrorDiv.style.display = 'none';
+    fgSection.appendChild(fgErrorDiv);
+
+    var fcErrorDiv = document.createElement('div');
+    fcErrorDiv.className = 'cw-error';
+    fcErrorDiv.id = 'fc-error-' + fam.cmdId;
+    fcErrorDiv.style.display = 'none';
+    fgSection.appendChild(fcErrorDiv);
+
+    // La rangée porte l'identifiant de bascule que la V9.9 donnait au
+    // bouton « + Ajouter un créneau » : les deux formulaires la masquent
+    // à l'ouverture, ce qui interdit d'ouvrir le second dans la foulée.
+    var fgAddRow = document.createElement('div');
+    fgAddRow.className = 'fam-add-row';
+    fgAddRow.id = 'fg-toggle-' + fam.cmdId;
+
+    var fgAddHoraire = document.createElement('div');
+    fgAddHoraire.className = 'fam-add-square';
+    fgAddHoraire.textContent = '+ Ajouter arrosage horaire';
+    fgAddHoraire.addEventListener('click', function() {
+      toggleFgForm(fam.cmdId);
+    });
+    fgAddRow.appendChild(fgAddHoraire);
+
+    var fgAddConditionnel = document.createElement('div');
+    fgAddConditionnel.className = 'fam-add-square';
+    fgAddConditionnel.textContent = '+ Ajouter arrosage conditionnel';
+    fgAddConditionnel.addEventListener('click', function() {
+      cwToggleForm(fam.cmdId, 'fc', 'fg-toggle-' + fam.cmdId);
+    });
+    fgAddRow.appendChild(fgAddConditionnel);
+
+    fgSection.appendChild(fgAddRow);
+
+    // Formulaire horaire — jumeau de celui du chapitre dédié, identifiants
+    // fg- au lieu de gd-, molettes et styles partagés.
+    var fgForm = document.createElement('div');
+    fgForm.className = 'gd-form';
+    fgForm.id = 'fg-form-' + fam.cmdId;
+
+    var fgHourLabel = document.createElement('div');
+    fgHourLabel.className = 'gd-picker-label';
+    fgHourLabel.textContent = 'Heure';
+    fgForm.appendChild(fgHourLabel);
+
+    var fgPicker = document.createElement('div');
+    fgPicker.className = 'gd-drum-picker';
+    buildDrumColumn(fgPicker, 'fg-hour-' + fam.cmdId, 24, fam.cmdId);
+    var fgSep = document.createElement('div');
+    fgSep.className = 'gd-drum-sep';
+    fgSep.textContent = ':';
+    fgPicker.appendChild(fgSep);
+    buildDrumColumn(fgPicker, 'fg-min-' + fam.cmdId, 60, fam.cmdId);
+    fgForm.appendChild(fgPicker);
+
+    var fgDurLabel = document.createElement('div');
+    fgDurLabel.className = 'gd-picker-label';
+    fgDurLabel.textContent = 'Durée';
+    fgForm.appendChild(fgDurLabel);
+
+    var fgDurPicker = document.createElement('div');
+    fgDurPicker.className = 'gd-drum-picker';
+    buildDrumColumn(fgDurPicker, 'fg-dur-min-' + fam.cmdId, 15, fam.cmdId);
+    var fgSepMin = document.createElement('div');
+    fgSepMin.className = 'gd-drum-sep';
+    fgSepMin.textContent = 'min';
+    fgDurPicker.appendChild(fgSepMin);
+    buildDrumColumnStep(fgDurPicker, 'fg-dur-sec-' + fam.cmdId, 12, fam.cmdId, 5);
+    var fgSepSec = document.createElement('div');
+    fgSepSec.className = 'gd-drum-sep';
+    fgSepSec.textContent = 's';
+    fgDurPicker.appendChild(fgSepSec);
+    fgForm.appendChild(fgDurPicker);
+
+    var fgActions = document.createElement('div');
+    fgActions.className = 'gd-actions';
+
+    var fgConfirmBtn = document.createElement('button');
+    fgConfirmBtn.className = 'gd-confirm-btn';
+    fgConfirmBtn.textContent = 'Confirmer';
+    fgConfirmBtn.addEventListener('click', function() {
+      confirmFgSlot(fam.cmdId);
+    });
+    fgActions.appendChild(fgConfirmBtn);
+
+    var fgCancelBtn = document.createElement('button');
+    fgCancelBtn.className = 'gd-cancel-btn';
+    fgCancelBtn.textContent = 'Annuler';
+    fgCancelBtn.addEventListener('click', function() {
+      toggleFgForm(fam.cmdId);
+    });
+    fgActions.appendChild(fgCancelBtn);
+
+    fgForm.appendChild(fgActions);
+    fgSection.appendChild(fgForm);
+
+    // Formulaire conditionnel — second exemplaire du bloc portable, monté
+    // sous les identifiants fc- et partageant la rangée de bascule.
+    fgSection.appendChild(cwBuildForm(fam.cmdId, 'fc', 'fg-toggle-' + fam.cmdId));
+
+    var fgLastWater = document.createElement('div');
+    fgLastWater.className = 'gd-last-water';
+    fgLastWater.id = 'fg-last-water-' + fam.cmdId;
+    fgLastWater.textContent = 'Aucun arrosage enregistré';
+    fgSection.appendChild(fgLastWater);
+
+    card.appendChild(fgSection);
+
+    container.appendChild(card);
+  });
+
+  document.getElementById('familySection').style.display = '';
+  refreshFamilyValues();
+  if (gardenerSlots.length > 0) updateFgSlots();
+  updateFamConditionalRules();
+  refreshAllLastWateringDisplays();
+}
+
+function refreshFamilyValues() {
+  FAMILIES.forEach(function(fam) {
+    if (lastValues[fam.moistureId]) updateFamilyMoisture(fam, lastValues[fam.moistureId]);
+    if (lastValues[fam.temperatureId]) updateFamilyTemperature(fam, lastValues[fam.temperatureId]);
+    if (lastValues[fam.valveId]) updateFamilyValve(fam, lastValues[fam.valveId]);
+    if (lastValues[fam.airId]) updateFamilyAir(fam, lastValues[fam.airId]);
+  });
+}
+
+function updateFamilyMoisture(fam, entry) {
+  var el = document.getElementById('fam-moist-' + fam.id);
+  if (el) el.textContent = entry.value.toFixed(1) + ' %';
+}
+
+function updateFamilyTemperature(fam, entry) {
+  var el = document.getElementById('fam-temp-' + fam.id);
+  if (el) el.textContent = entry.value.toFixed(1) + ' °C';
+}
+
+function updateFamilyAir(fam, entry) {
+  var el = document.getElementById('fam-air-' + fam.id);
+  if (el) el.textContent = entry.value.toFixed(1) + ' °C';
+}
+
+function updateFamilyValve(fam, entry) {
+  var el = document.getElementById('fam-valve-' + fam.id);
+  if (!el) return;
+  var intVal = Math.round(entry.value);
+  var stateLabel = intVal === 1 ? 'ouverte' : 'fermée';
+  el.textContent = 'Vanne ' + stateLabel;
+  if (intVal === 1) {
+    el.classList.add('opened');
+  } else {
+    el.classList.remove('opened');
+  }
+}
+
+function updateFamilyFromEntry(entry) {
+  if (!familyCardsBuilt) return;
+  for (var i = 0; i < FAMILIES.length; i++) {
+    var fam = FAMILIES[i];
+    if (entry.id === fam.moistureId) { updateFamilyMoisture(fam, entry); return; }
+    if (entry.id === fam.temperatureId) { updateFamilyTemperature(fam, entry); return; }
+    if (entry.id === fam.valveId) { updateFamilyValve(fam, entry); return; }
+    // Le capteur air est partagé par plusieurs familles : pas de sortie
+    // anticipée, toutes les cartes concernées doivent être rafraîchies.
+    if (entry.id === fam.airId) { updateFamilyAir(fam, entry); }
+  }
+}
+
+function startFamilyRename(famId) {
+  var nameEl = document.getElementById('fam-name-' + famId);
+  if (!nameEl) return;
+
+  var currentName = familyNames[famId - 1];
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'fam-rename-input';
+  input.value = currentName;
+  input.maxLength = 24;
+
+  nameEl.textContent = famId + ' ';
+  nameEl.appendChild(input);
+  input.focus();
+  input.select();
+
+  function finish() {
+    var newName = input.value.trim();
+    if (!newName) newName = 'Famille';
+    familyNames[famId - 1] = newName;
+    nameEl.textContent = famId + ' ' + newName;
+
+    if (client && client.connected) {
+      var payload = JSON.stringify({ id: famId, name: newName });
+      client.publish('serre/families/rename', payload, { qos: 1 });
+    }
+  }
+
+  input.addEventListener('blur', finish);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { input.blur(); }
+    if (e.key === 'Escape') { input.value = currentName; input.blur(); }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Familles — fonctions programmation intégrée (préfixe fg-)
+// ══════════════════════════════════════════════════════════════
+
+function showFgError(cmdId, msg) {
+  var el = document.getElementById('fg-error-' + cmdId);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  if (el._timeout) clearTimeout(el._timeout);
+  el._timeout = setTimeout(function() {
+    el.style.display = 'none';
+  }, 4000);
+}
+
+function toggleFgForm(cmdId) {
+  var form = document.getElementById('fg-form-' + cmdId);
+  var toggle = document.getElementById('fg-toggle-' + cmdId);
+  if (!form || !toggle) return;
+
+  if (form.classList.contains('open')) {
+    form.classList.remove('open');
+    toggle.style.display = '';
+  } else {
+    form.classList.add('open');
+    toggle.style.display = 'none';
+    setTimeout(function() {
+      setDrumValue('fg-hour-' + cmdId, 7);
+      setDrumValue('fg-min-' + cmdId, 0);
+      setDrumValue('fg-dur-min-' + cmdId, 1);
+      setDrumValue('fg-dur-sec-' + cmdId, 0);
+    }, 30);
+  }
+}
+
+function confirmFgSlot(cmdId) {
+  var hour     = getDrumValue('fg-hour-' + cmdId);
+  var minute   = getDrumValue('fg-min-' + cmdId);
+  var durMin   = getDrumValue('fg-dur-min-' + cmdId);
+  var durSec   = getDrumValue('fg-dur-sec-' + cmdId) * 5;
+  var duration = durMin * 60 + durSec;
+
+  if (duration < 3) {
+    showFgError(cmdId, 'Durée minimum : 3 secondes');
+    return;
+  }
+  if (duration > 900) {
+    showFgError(cmdId, 'Durée maximum : 15 minutes');
+    return;
+  }
+
+  if (countGardenerSlotsForValve(cmdId) >= GARDENER_MAX_SLOTS_PER_VALVE) {
+    showFgError(cmdId, 'Maximum 6 créneaux atteint pour cette vanne');
+    return;
+  }
+  if (hasDuplicateGardenerSlot(cmdId, hour, minute)) {
+    showFgError(cmdId, 'Un créneau existe déjà à cette heure');
+    return;
+  }
+  if (hasGardenerOverlap(cmdId, hour, minute, duration)) {
+    showFgError(cmdId, 'Ce créneau chevauche un créneau existant');
+    return;
+  }
+
+  if (!client || !client.connected) {
+    showFgError(cmdId, 'MQTT non connecté');
+    return;
+  }
+
+  var payload = JSON.stringify({
+    op: 'add',
+    cmdId: cmdId,
+    hour: hour,
+    minute: minute,
+    duration: duration,
+    cancellableBySensor: false
+  });
+  client.publish(GARDENER_TOPIC_FROM_USER, payload, { qos: 1 });
+}
+
+function updateFgSlots() {
+  FAMILIES.forEach(function(fam) {
+    var slotList = document.getElementById('fg-slots-' + fam.cmdId);
+    if (!slotList) return;
+    slotList.innerHTML = '';
+
+    var valveSlots = gardenerSlots.filter(function(s) {
+      return s.cmdId === fam.cmdId;
+    });
+    valveSlots.sort(function(a, b) {
+      return (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute);
+    });
+
+    // Pas de ligne « aucun créneau » ici : la rubrique s'efface d'elle-même.
+    if (valveSlots.length > 0) {
+      valveSlots.forEach(function(s) {
+        var item = document.createElement('div');
+        item.className = 'gd-slot';
+
+        var info = document.createElement('div');
+        info.className = 'gd-slot-info';
+        var time = document.createElement('span');
+        time.className = 'gd-slot-time';
+        time.textContent = String(s.hour).padStart(2, '0') + ':' + String(s.minute).padStart(2, '0');
+        info.appendChild(time);
+        var dur = document.createElement('span');
+        dur.className = 'gd-slot-dur';
+        dur.textContent = formatGardenerDuration(s.duration);
+        info.appendChild(dur);
+        item.appendChild(info);
+
+        var delBtn = document.createElement('button');
+        delBtn.className = 'gd-slot-del';
+        delBtn.textContent = '✕';
+        (function(cmdId, hour, minute, slotEl, slotListEl) {
+          delBtn.addEventListener('click', function() {
+            var confirmDiv = document.createElement('div');
+            confirmDiv.className = 'gd-slot-confirm';
+
+            var text = document.createElement('span');
+            text.className = 'gd-slot-confirm-text';
+            text.textContent = 'Supprimer ?';
+            confirmDiv.appendChild(text);
+
+            var btns = document.createElement('div');
+            btns.className = 'gd-slot-confirm-btns';
+
+            var yesBtn = document.createElement('button');
+            yesBtn.className = 'gd-slot-confirm-yes';
+            yesBtn.textContent = 'Oui';
+            yesBtn.addEventListener('click', function() {
+              yesBtn.classList.add('confirmed');
+              yesBtn.disabled = true;
+              removeGardenerSlot(cmdId, hour, minute);
+            });
+            btns.appendChild(yesBtn);
+
+            var noBtn = document.createElement('button');
+            noBtn.className = 'gd-slot-confirm-no';
+            noBtn.textContent = 'Non';
+            noBtn.addEventListener('click', function() {
+              slotListEl.replaceChild(slotEl, confirmDiv);
+            });
+            btns.appendChild(noBtn);
+
+            confirmDiv.appendChild(btns);
+            slotListEl.replaceChild(confirmDiv, slotEl);
+          });
+        })(s.cmdId, s.hour, s.minute, item, slotList);
+        item.appendChild(delBtn);
+
+        slotList.appendChild(item);
+      });
+    }
+
+    var form = document.getElementById('fg-form-' + fam.cmdId);
+    if (form) form.classList.remove('open');
+    refreshFamAddRow(fam.cmdId);
+  });
+}
+
+// Miroir, dans les cartes Famille, des règles conditionnelles de la vanne.
+// Les lignes sont construites par le bloc portable : même présentation et
+// même confirmation de suppression que dans le chapitre dédié.
+function updateFamConditionalRules() {
+  if (!familyCardsBuilt) return;
+
+  FAMILIES.forEach(function(fam) {
+    var list = document.getElementById('fg-cond-' + fam.cmdId);
+    if (!list) return;
+    list.innerHTML = '';
+
+    var valveRules = cwRules.filter(function(r) { return r.cmdId === fam.cmdId; });
+
+    // Pas de ligne « aucune règle » ici non plus.
+    valveRules.forEach(function(rule) {
+      list.appendChild(cwBuildRuleLine(rule, list));
+    });
+
+    // L'état vient de changer : on referme le formulaire conditionnel.
+    var form = document.getElementById('fc-form-' + fam.cmdId);
+    if (form) form.classList.remove('open');
+    refreshFamAddRow(fam.cmdId);
+  });
+}
+
+// La rangée des deux carrés est masquée tant qu'un formulaire de la fiche
+// est ouvert. Un état reçu ne referme que le formulaire qui le concerne,
+// d'où la vérification des deux avant de la réafficher.
+function refreshFamAddRow(cmdId) {
+  var row = document.getElementById('fg-toggle-' + cmdId);
+  if (!row) return;
+
+  var fgForm = document.getElementById('fg-form-' + cmdId);
+  var fcForm = document.getElementById('fc-form-' + cmdId);
+  var opened = (fgForm && fgForm.classList.contains('open'))
+            || (fcForm && fcForm.classList.contains('open'));
+
+  row.style.display = opened ? 'none' : '';
+}
+
+// ══════════════════════════════════════════════════════════════
+// Gardener — Programmation arrosage automatique
+// ══════════════════════════════════════════════════════════════
+
+var GARDENER_TOPIC_FROM_USER = 'serre/gardener/FromUser';
+var GARDENER_TOPIC_TO_USER   = 'serre/gardener/ToUser';
+var GARDENER_MAX_SLOTS_PER_VALVE = 6;
+
+var GARDENER_VALVES = [
+  { cmdId: 17, entityId: 4, label: 'Vanne 1' },
+  { cmdId: 18, entityId: 12, label: 'Vanne 2' },
+  { cmdId: 19, entityId: 13, label: 'Vanne 3' },
+  { cmdId: 20, entityId: 14, label: 'Vanne 4' },
+  { cmdId: 21, entityId: 15, label: 'Vanne 5' },
+  { cmdId: 22, entityId: 16, label: 'Vanne 6' }
+];
+
+var gardenerSlots = [];
+var gardenerBuilt = false;
+
+// Slider logarithmique : 100 positions → 5..900 secondes
+function logSliderToSeconds(pos) {
+  var raw = 5 * Math.pow(180, pos / 100);
+  var step = raw < 30 ? 5 : raw < 120 ? 10 : raw < 300 ? 15 : 30;
+  var snapped = Math.round(raw / step) * step;
+  return Math.max(5, Math.min(900, snapped));
+}
+
+function formatGardenerDuration(sec) {
+  sec = Math.round(sec);
+  if (sec < 60) return sec + ' s';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return s === 0 ? m + ' min' : m + ' min ' + s + ' s';
+}
+
+function countGardenerSlotsForValve(cmdId) {
+  var count = 0;
+  for (var i = 0; i < gardenerSlots.length; i++) {
+    if (gardenerSlots[i].cmdId === cmdId) count++;
+  }
+  return count;
+}
+
+function hasDuplicateGardenerSlot(cmdId, hour, minute) {
+  for (var i = 0; i < gardenerSlots.length; i++) {
+    if (gardenerSlots[i].cmdId === cmdId &&
+        gardenerSlots[i].hour === hour &&
+        gardenerSlots[i].minute === minute) return true;
+  }
+  return false;
+}
+
+function hasGardenerOverlap(cmdId, hour, minute, duration) {
+  var start = hour * 60 + minute;
+  var span = Math.ceil(duration / 60);
+  for (var i = 0; i < gardenerSlots.length; i++) {
+    var s = gardenerSlots[i];
+    if (s.cmdId !== cmdId) continue;
+    if (s.hour === hour && s.minute === minute) continue;
+    var sStart = s.hour * 60 + s.minute;
+    var sSpan = Math.ceil(s.duration / 60);
+    for (var m = 0; m < span; m++) {
+      var mine = (start + m) % 1440;
+      for (var n = 0; n < sSpan; n++) {
+        if (mine === (sStart + n) % 1440) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function buildDrumColumn(parentEl, id, count, cmdId) {
+  var col = document.createElement('div');
+  col.className = 'gd-drum-col';
+
+  var highlight = document.createElement('div');
+  highlight.className = 'gd-drum-highlight';
+  col.appendChild(highlight);
+
+  var scroll = document.createElement('div');
+  scroll.className = 'gd-drum-scroll';
+  scroll.id = id;
+  scroll.dataset.cmdid = cmdId;
+
+  var padTop = document.createElement('div');
+  padTop.className = 'gd-drum-pad';
+  scroll.appendChild(padTop);
+
+  for (var i = 0; i < count; i++) {
+    var item = document.createElement('div');
+    item.className = 'gd-drum-item';
+    item.textContent = String(i).padStart(2, '0');
+    item.dataset.val = i;
+    item.addEventListener('click', (function(scrollEl, val) {
+      return function() { scrollEl.scrollTop = val * 40; };
+    })(scroll, i));
+    scroll.appendChild(item);
+  }
+
+  var padBot = document.createElement('div');
+  padBot.className = 'gd-drum-pad';
+  scroll.appendChild(padBot);
+
+  scroll.addEventListener('scroll', function() {
+    updateDrumActive(scroll);
+  });
+
+  col.appendChild(scroll);
+  parentEl.appendChild(col);
+  return scroll;
+}
+
+// Variante avec pas : affiche i*step (ex. 00, 05, 10, …)
+// getDrumValue retourne l'index ; le caller multiplie par step.
+function buildDrumColumnStep(parentEl, id, count, cmdId, step) {
+  var col = document.createElement('div');
+  col.className = 'gd-drum-col';
+
+  var highlight = document.createElement('div');
+  highlight.className = 'gd-drum-highlight';
+  col.appendChild(highlight);
+
+  var scroll = document.createElement('div');
+  scroll.className = 'gd-drum-scroll';
+  scroll.id = id;
+  scroll.dataset.cmdid = cmdId;
+
+  var padTop = document.createElement('div');
+  padTop.className = 'gd-drum-pad';
+  scroll.appendChild(padTop);
+
+  for (var i = 0; i < count; i++) {
+    var item = document.createElement('div');
+    item.className = 'gd-drum-item';
+    item.textContent = String(i * step).padStart(2, '0');
+    item.dataset.val = i;
+    item.addEventListener('click', (function(scrollEl, idx) {
+      return function() { scrollEl.scrollTop = idx * 40; };
+    })(scroll, i));
+    scroll.appendChild(item);
+  }
+
+  var padBot = document.createElement('div');
+  padBot.className = 'gd-drum-pad';
+  scroll.appendChild(padBot);
+
+  scroll.addEventListener('scroll', function() {
+    updateDrumActive(scroll);
+  });
+
+  col.appendChild(scroll);
+  parentEl.appendChild(col);
+  return scroll;
+}
+
+function updateDrumActive(scrollEl) {
+  var idx = Math.round(scrollEl.scrollTop / 40);
+  var items = scrollEl.querySelectorAll('.gd-drum-item');
+  for (var i = 0; i < items.length; i++) {
+    if (i === idx) {
+      items[i].classList.add('active');
+    } else {
+      items[i].classList.remove('active');
+    }
+  }
+}
+
+function getDrumValue(id) {
+  var el = document.getElementById(id);
+  if (!el) return 0;
+  return Math.max(0, Math.round(el.scrollTop / 40));
+}
+
+function setDrumValue(id, val) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.scrollTop = val * 40;
+  setTimeout(function() {
+    updateDrumActive(el);
+  }, 30);
+}
+
+function showGardenerError(cmdId, msg) {
+  var el = document.getElementById('gd-error-' + cmdId);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  if (el._timeout) clearTimeout(el._timeout);
+  el._timeout = setTimeout(function() {
+    el.style.display = 'none';
+  }, 4000);
+}
+
+function updateLastWateringDisplay(cmdId) {
+  var entry = lastWatering[cmdId];
+  var text, html;
+  if (!entry) {
+    text = 'Aucun arrosage enregistré';
+    html = null;
+  } else {
+    var ts;
+    if (entry.vclockAvailable && entry.timestamp) {
+      ts = formatUtcLocal(entry.timestamp);
+    } else {
+      ts = '?';
+    }
+    var dur = formatGardenerDuration(Math.round(parseFloat(entry.value)));
+    var origin = entry.type === 6 ? 'AUTO'
+               : entry.type === 7 ? 'CONDITIONNEL'
+               : 'MANUEL';
+    html = 'Dernier arrosage :<br>' + escapeHtml(ts) + ' — ' + escapeHtml(dur) + ' — ' + origin;
+  }
+  var el = document.getElementById('gd-last-water-' + cmdId);
+  if (el) {
+    if (html) el.innerHTML = html; else el.textContent = text;
+  }
+  var fgEl = document.getElementById('fg-last-water-' + cmdId);
+  if (fgEl) {
+    if (html) fgEl.innerHTML = html; else fgEl.textContent = text;
+  }
+}
+
+function refreshAllLastWateringDisplays() {
+  GARDENER_VALVES.forEach(function(valve) {
+    updateLastWateringDisplay(valve.cmdId);
+  });
+}
+
+function buildGardenerCards() {
+  var container = document.getElementById('gardenerCards');
+  if (!container) return;
+  container.innerHTML = '';
+  gardenerBuilt = true;
+
+  GARDENER_VALVES.forEach(function(valve) {
+    var card = document.createElement('div');
+    card.className = 'gd-card';
+    card.id = 'gd-card-' + valve.cmdId;
+
+    var header = document.createElement('div');
+    header.className = 'gd-header';
+    var title = document.createElement('div');
+    title.className = 'gd-title';
+    title.textContent = valve.label;
+    header.appendChild(title);
+    var state = document.createElement('span');
+    state.className = 'gd-state';
+    state.id = 'gd-state-' + valve.entityId;
+    state.textContent = '—';
+    header.appendChild(state);
+    card.appendChild(header);
+
+    var slotList = document.createElement('div');
+    slotList.className = 'gd-slot-list';
+    slotList.id = 'gd-slots-' + valve.cmdId;
+    card.appendChild(slotList);
+
+    var errorDiv = document.createElement('div');
+    errorDiv.className = 'gd-error';
+    errorDiv.id = 'gd-error-' + valve.cmdId;
+    errorDiv.style.display = 'none';
+    card.appendChild(errorDiv);
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.className = 'gd-toggle-btn';
+    toggleBtn.id = 'gd-toggle-' + valve.cmdId;
+    toggleBtn.textContent = '+ Ajouter un créneau';
+    toggleBtn.addEventListener('click', function() {
+      toggleGardenerForm(valve.cmdId);
+    });
+    card.appendChild(toggleBtn);
+
+    var lastWaterDiv = document.createElement('div');
+    lastWaterDiv.className = 'gd-last-water';
+    lastWaterDiv.id = 'gd-last-water-' + valve.cmdId;
+    lastWaterDiv.textContent = 'Aucun arrosage enregistré';
+    card.appendChild(lastWaterDiv);
+
+    var form = document.createElement('div');
+    form.className = 'gd-form';
+    form.id = 'gd-form-' + valve.cmdId;
+
+    var hourLabel = document.createElement('div');
+    hourLabel.className = 'gd-picker-label';
+    hourLabel.textContent = 'Heure';
+    form.appendChild(hourLabel);
+
+    var picker = document.createElement('div');
+    picker.className = 'gd-drum-picker';
+    var hScroll = buildDrumColumn(picker, 'gd-hour-' + valve.cmdId, 24, valve.cmdId);
+    var sep = document.createElement('div');
+    sep.className = 'gd-drum-sep';
+    sep.textContent = ':';
+    picker.appendChild(sep);
+    var mScroll = buildDrumColumn(picker, 'gd-min-' + valve.cmdId, 60, valve.cmdId);
+    form.appendChild(picker);
+
+    var durLabel = document.createElement('div');
+    durLabel.className = 'gd-picker-label';
+    durLabel.textContent = 'Durée';
+    form.appendChild(durLabel);
+
+    var durPicker = document.createElement('div');
+    durPicker.className = 'gd-drum-picker';
+    var dmScroll = buildDrumColumn(durPicker, 'gd-dur-min-' + valve.cmdId, 15, valve.cmdId);
+    var sepMin = document.createElement('div');
+    sepMin.className = 'gd-drum-sep';
+    sepMin.textContent = 'min';
+    durPicker.appendChild(sepMin);
+    var dsScroll = buildDrumColumnStep(durPicker, 'gd-dur-sec-' + valve.cmdId, 12, valve.cmdId, 5);
+    var sepSec = document.createElement('div');
+    sepSec.className = 'gd-drum-sep';
+    sepSec.textContent = 's';
+    durPicker.appendChild(sepSec);
+    form.appendChild(durPicker);
+
+    var actions = document.createElement('div');
+    actions.className = 'gd-actions';
+
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'gd-confirm-btn';
+    confirmBtn.textContent = 'Confirmer';
+    confirmBtn.addEventListener('click', function() {
+      confirmGardenerSlot(valve.cmdId);
+    });
+    actions.appendChild(confirmBtn);
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'gd-cancel-btn';
+    cancelBtn.textContent = 'Annuler';
+    cancelBtn.addEventListener('click', function() {
+      toggleGardenerForm(valve.cmdId);
+    });
+    actions.appendChild(cancelBtn);
+
+    form.appendChild(actions);
+    card.appendChild(form);
+    container.appendChild(card);
+  });
+
+  document.getElementById('gardenerSection').style.display = '';
+  updateGardenerCards();
+  refreshAllLastWateringDisplays();
+}
+
+function updateGardenerCards() {
+  GARDENER_VALVES.forEach(function(valve) {
+    var slotList = document.getElementById('gd-slots-' + valve.cmdId);
+    if (!slotList) return;
+    slotList.innerHTML = '';
+
+    var valveSlots = gardenerSlots.filter(function(s) {
+      return s.cmdId === valve.cmdId;
+    });
+    valveSlots.sort(function(a, b) {
+      return (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute);
+    });
+
+    if (valveSlots.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'gd-empty';
+      empty.textContent = 'Aucun créneau programmé';
+      slotList.appendChild(empty);
+    } else {
+      valveSlots.forEach(function(s) {
+        var item = document.createElement('div');
+        item.className = 'gd-slot';
+
+        var info = document.createElement('div');
+        info.className = 'gd-slot-info';
+        var time = document.createElement('span');
+        time.className = 'gd-slot-time';
+        time.textContent = String(s.hour).padStart(2, '0') + ':' + String(s.minute).padStart(2, '0');
+        info.appendChild(time);
+        var dur = document.createElement('span');
+        dur.className = 'gd-slot-dur';
+        dur.textContent = formatGardenerDuration(s.duration);
+        info.appendChild(dur);
+        item.appendChild(info);
+
+        var delBtn = document.createElement('button');
+        delBtn.className = 'gd-slot-del';
+        delBtn.textContent = '✕';
+        (function(cmdId, hour, minute, slotEl, slotList) {
+          delBtn.addEventListener('click', function() {
+            var confirmDiv = document.createElement('div');
+            confirmDiv.className = 'gd-slot-confirm';
+
+            var text = document.createElement('span');
+            text.className = 'gd-slot-confirm-text';
+            text.textContent = 'Supprimer ?';
+            confirmDiv.appendChild(text);
+
+            var btns = document.createElement('div');
+            btns.className = 'gd-slot-confirm-btns';
+
+            var yesBtn = document.createElement('button');
+            yesBtn.className = 'gd-slot-confirm-yes';
+            yesBtn.textContent = 'Oui';
+            yesBtn.addEventListener('click', function() {
+              yesBtn.classList.add('confirmed');
+              yesBtn.disabled = true;
+              removeGardenerSlot(cmdId, hour, minute);
+            });
+            btns.appendChild(yesBtn);
+
+            var noBtn = document.createElement('button');
+            noBtn.className = 'gd-slot-confirm-no';
+            noBtn.textContent = 'Non';
+            noBtn.addEventListener('click', function() {
+              slotList.replaceChild(slotEl, confirmDiv);
+            });
+            btns.appendChild(noBtn);
+
+            confirmDiv.appendChild(btns);
+            slotList.replaceChild(confirmDiv, slotEl);
+          });
+        })(s.cmdId, s.hour, s.minute, item, slotList);
+        item.appendChild(delBtn);
+
+        slotList.appendChild(item);
+      });
+    }
+
+    // Refermer le formulaire si l'état vient de changer
+    var form = document.getElementById('gd-form-' + valve.cmdId);
+    var toggle = document.getElementById('gd-toggle-' + valve.cmdId);
+    if (form) form.classList.remove('open');
+    if (toggle) toggle.style.display = '';
+  });
+}
+
+function toggleGardenerForm(cmdId) {
+  var form = document.getElementById('gd-form-' + cmdId);
+  var toggle = document.getElementById('gd-toggle-' + cmdId);
+  if (!form || !toggle) return;
+
+  if (form.classList.contains('open')) {
+    form.classList.remove('open');
+    toggle.style.display = '';
+  } else {
+    form.classList.add('open');
+    toggle.style.display = 'none';
+    setTimeout(function() {
+      setDrumValue('gd-hour-' + cmdId, 7);
+      setDrumValue('gd-min-' + cmdId, 0);
+      setDrumValue('gd-dur-min-' + cmdId, 1);
+      setDrumValue('gd-dur-sec-' + cmdId, 0);
+    }, 30);
+  }
+}
+
+function confirmGardenerSlot(cmdId) {
+  var hour     = getDrumValue('gd-hour-' + cmdId);
+  var minute   = getDrumValue('gd-min-' + cmdId);
+  var durMin   = getDrumValue('gd-dur-min-' + cmdId);
+  var durSec   = getDrumValue('gd-dur-sec-' + cmdId) * 5;
+  var duration = durMin * 60 + durSec;
+
+  if (duration < 3) {
+    showGardenerError(cmdId, 'Durée minimum : 3 secondes');
+    return;
+  }
+  if (duration > 900) {
+    showGardenerError(cmdId, 'Durée maximum : 15 minutes');
+    return;
+  }
+
+  if (countGardenerSlotsForValve(cmdId) >= GARDENER_MAX_SLOTS_PER_VALVE) {
+    showGardenerError(cmdId, 'Maximum 6 créneaux atteint pour cette vanne');
+    return;
+  }
+  if (hasDuplicateGardenerSlot(cmdId, hour, minute)) {
+    showGardenerError(cmdId, 'Un créneau existe déjà à cette heure');
+    return;
+  }
+  if (hasGardenerOverlap(cmdId, hour, minute, duration)) {
+    showGardenerError(cmdId, 'Ce créneau chevauche un créneau existant');
+    return;
+  }
+
+  if (!client || !client.connected) {
+    showGardenerError(cmdId, 'MQTT non connecté');
+    return;
+  }
+
+  var payload = JSON.stringify({
+    op: 'add',
+    cmdId: cmdId,
+    hour: hour,
+    minute: minute,
+    duration: duration,
+    cancellableBySensor: false
+  });
+  client.publish(GARDENER_TOPIC_FROM_USER, payload, { qos: 1 });
+}
+
+function removeGardenerSlot(cmdId, hour, minute) {
+  if (!client || !client.connected) return;
+
+  var payload = JSON.stringify({
+    op: 'remove',
+    cmdId: cmdId,
+    hour: hour,
+    minute: minute
+  });
+  client.publish(GARDENER_TOPIC_FROM_USER, payload, { qos: 1 });
+}
+
+function handleGardenerState(payload) {
+  try {
+    var data = JSON.parse(payload);
+    gardenerSlots = data.slots || [];
+    if (gardenerBuilt) {
+      updateGardenerCards();
+    }
+    if (familyCardsBuilt) {
+      updateFgSlots();
+    }
+  } catch (e) {
+    console.error('Erreur parsing Gardener ToUser:', e);
+  }
+}
+
+function updateGardenerValveState(entry) {
+  if (!gardenerBuilt) return;
+  var entryId = parseInt(entry.id);
+  for (var i = 0; i < GARDENER_VALVES.length; i++) {
+    if (GARDENER_VALVES[i].entityId === entryId) {
+      var el = document.getElementById('gd-state-' + entryId);
+      if (!el) return;
+      var intVal = Math.round(parseFloat(entry.value));
+      var display = String(intVal);
+      if (schema && schema.dataIds) {
+        var di = null;
+        schema.dataIds.forEach(function(d) {
+          if (d.id === entryId) di = d;
+        });
+        if (di && di.states) {
+          di.states.forEach(function(s) {
+            if (s.value === intVal) display = s.label;
+          });
+        }
+      }
+      el.textContent = display;
+      if (intVal === 1) {
+        el.classList.add('opened');
+      } else {
+        el.classList.remove('opened');
+      }
+      return;
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// DÉBUT DU BLOC PORTABLE — JavaScript de l'arrosage conditionnel
+//
+// Ne dépend que de la variable globale `client` (mqtt.js) et de la
+// présence des deux conteneurs #conditionalSection / #conditionalCards.
+// Tout est préfixé cw / CW : aucune collision avec l'existant.
+//
+// Le formulaire peut être monté ailleurs dans la page en exemplaires
+// supplémentaires : voir le paramètre `prefix` de cwBuildForm.
+// ══════════════════════════════════════════════════════════════
+
+var CW_TOPIC_FROM_USER = 'serre/conditional/FromUser';
+var CW_TOPIC_TO_USER   = 'serre/conditional/ToUser';
+
+var CW_MAX_RULES    = 16;   // plafond global, aligné sur le firmware
+var CW_MIN_REST     = 1;    // heures
+var CW_MAX_REST     = 24;   // heures
+var CW_MIN_DURATION = 1;    // secondes (borne META de CommandValveN)
+var CW_MAX_DURATION = 900;  // secondes
+
+var CW_CMP_LOWER            = 0;  // valeur <  seuil
+var CW_CMP_GREATER_OR_EQUAL = 1;  // valeur >= seuil
+
+// Vannes — table codée en dur, comme GARDENER_VALVES : elle permet de
+// renommer une vanne dans l'interface sans recompiler le firmware.
+var CW_VALVES = [
+  { cmdId: 17, label: 'Vanne 1' },
+  { cmdId: 18, label: 'Vanne 2' },
+  { cmdId: 19, label: 'Vanne 3' },
+  { cmdId: 20, label: 'Vanne 4' },
+  { cmdId: 21, label: 'Vanne 5' },
+  { cmdId: 22, label: 'Vanne 6' }
+];
+
+// Capteurs — recopie de DATA_ID_LIST (MetaDataModel.h) pour les entrées
+// de type Sensor. Les bornes reprennent les min/max META : le firmware
+// rejette tout seuil qui en sortirait.
+//
+// Le champ `id` est le DataId META, seul identifiant qui circule sur MQTT.
+// Le libellé, lui, porte le numéro d'adresse RS485 du capteur, qui est ce
+// que l'on lit sur le matériel : sondes de sol aux adresses 1 à 6
+// (SoilSensorRS485.h), capteurs air aux adresses 13, 14 et 15
+// (AirSensorRS485.h, où l'adresse 13 est « air 3 » de META, 14 « air 2 »
+// et 15 « air 1 »). Les capteurs air ferment la liste.
+var CW_SENSORS = [
+  { id: 3,  label: 'Humidité sol 1',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 24, label: 'Humidité sol 2',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 26, label: 'Humidité sol 3',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 28, label: 'Humidité sol 4',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 30, label: 'Humidité sol 5',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 32, label: 'Humidité sol 6',     unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 23, label: 'Température sol 1',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 25, label: 'Température sol 2',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 27, label: 'Température sol 3',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 29, label: 'Température sol 4',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 31, label: 'Température sol 5',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 33, label: 'Température sol 6',  unit: '°C', min: -40, max: 80,  step: 0.5 },
+  { id: 37, label: 'Température air 13', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 35, label: 'Température air 14', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 1,  label: 'Température air 15', unit: '°C', min: -20, max: 60,  step: 0.5 },
+  { id: 38, label: 'Humidité air 13',    unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 36, label: 'Humidité air 14',    unit: '%',  min: 0,   max: 100, step: 1 },
+  { id: 2,  label: 'Humidité air 15',    unit: '%',  min: 0,   max: 100, step: 1 }
+];
+
+// Source de vérité de l'affichage : le dernier ToUser reçu (retain).
+var cwRules = [];
+var cwBuilt = false;
+
+function cwFindSensor(id) {
+  for (var i = 0; i < CW_SENSORS.length; i++) {
+    if (CW_SENSORS[i].id === id) return CW_SENSORS[i];
+  }
+  return null;
+}
+
+function cwFormatThreshold(sensor, value) {
+  var decimals = (sensor && sensor.step < 1) ? 1 : 0;
+  return parseFloat(value).toFixed(decimals);
+}
+
+function cwFormatDuration(sec) {
+  sec = Math.round(sec);
+  if (sec < 60) return sec + ' s';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return s === 0 ? m + ' min' : m + ' min ' + s + ' s';
+}
+
+// Deux règles sont identiques si tous leurs champs le sont : c'est la
+// définition d'identité retenue côté firmware (pas d'identifiant).
+function cwSameRule(a, b) {
+  return a.cmdId     === b.cmdId
+      && a.sensorId  === b.sensorId
+      && a.cmp       === b.cmp
+      && a.startHour === b.startHour
+      && a.endHour   === b.endHour
+      && a.restHours === b.restHours
+      && a.duration  === b.duration
+      && Math.abs(a.threshold - b.threshold) < 0.05;
+}
+
+// ─── Molettes (mêmes mécanique et gabarit que le bloc Gardener) ───────
+function cwBuildDrum(parentEl, id, count, offset, step) {
+  var col = document.createElement('div');
+  col.className = 'cw-drum-col';
+
+  var highlight = document.createElement('div');
+  highlight.className = 'cw-drum-highlight';
+  col.appendChild(highlight);
+
+  var scroll = document.createElement('div');
+  scroll.className = 'cw-drum-scroll';
+  scroll.id = id;
+  scroll.dataset.offset = offset;
+  scroll.dataset.step   = step;
+
+  var padTop = document.createElement('div');
+  padTop.className = 'cw-drum-pad';
+  scroll.appendChild(padTop);
+
+  for (var i = 0; i < count; i++) {
+    var item = document.createElement('div');
+    item.className = 'cw-drum-item';
+    item.textContent = String(offset + i * step).padStart(2, '0');
+    item.addEventListener('click', (function(scrollEl, idx) {
+      return function() { scrollEl.scrollTop = idx * 40; };
+    })(scroll, i));
+    scroll.appendChild(item);
+  }
+
+  var padBot = document.createElement('div');
+  padBot.className = 'cw-drum-pad';
+  scroll.appendChild(padBot);
+
+  scroll.addEventListener('scroll', function() { cwUpdateDrumActive(scroll); });
+
+  col.appendChild(scroll);
+  parentEl.appendChild(col);
+  return scroll;
+}
+
+function cwUpdateDrumActive(scrollEl) {
+  var idx = Math.round(scrollEl.scrollTop / 40);
+  var items = scrollEl.querySelectorAll('.cw-drum-item');
+  for (var i = 0; i < items.length; i++) {
+    if (i === idx) items[i].classList.add('active');
+    else           items[i].classList.remove('active');
+  }
+}
+
+function cwGetDrum(id) {
+  var el = document.getElementById(id);
+  if (!el) return 0;
+  var idx = Math.max(0, Math.round(el.scrollTop / 40));
+  return parseInt(el.dataset.offset, 10) + idx * parseInt(el.dataset.step, 10);
+}
+
+function cwSetDrum(id, value) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var offset = parseInt(el.dataset.offset, 10);
+  var step   = parseInt(el.dataset.step, 10);
+  el.scrollTop = Math.max(0, Math.round((value - offset) / step)) * 40;
+  setTimeout(function() { cwUpdateDrumActive(el); }, 30);
+}
+
+// Le formulaire peut être monté en plusieurs exemplaires (chapitre dédié,
+// fiche Famille…). Seuls les identifiants changent d'un exemplaire à
+// l'autre : `prefix` les distingue, et vaut 'cw' pour le chapitre. Les
+// classes CSS, elles, restent communes.
+function cwShowError(cmdId, msg, prefix) {
+  prefix = prefix || 'cw';
+  var el = document.getElementById(prefix + '-error-' + cmdId);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  if (el._timeout) clearTimeout(el._timeout);
+  el._timeout = setTimeout(function() { el.style.display = 'none'; }, 4000);
+}
+
+// ─── Construction des cartes (une par vanne, toutes visibles) ─────────
+function cwBuildCards() {
+  var container = document.getElementById('conditionalCards');
+  if (!container) return;
+  container.innerHTML = '';
+  cwBuilt = true;
+
+  CW_VALVES.forEach(function(valve) {
+    var card = document.createElement('div');
+    card.className = 'cw-card';
+    card.id = 'cw-card-' + valve.cmdId;
+
+    var header = document.createElement('div');
+    header.className = 'cw-header';
+    var title = document.createElement('div');
+    title.className = 'cw-title';
+    title.textContent = valve.label;
+    header.appendChild(title);
+    var count = document.createElement('span');
+    count.className = 'cw-count';
+    count.id = 'cw-count-' + valve.cmdId;
+    count.textContent = '0 règle';
+    header.appendChild(count);
+    card.appendChild(header);
+
+    var ruleList = document.createElement('div');
+    ruleList.className = 'cw-rule-list';
+    ruleList.id = 'cw-rules-' + valve.cmdId;
+    card.appendChild(ruleList);
+
+    var errorDiv = document.createElement('div');
+    errorDiv.className = 'cw-error';
+    errorDiv.id = 'cw-error-' + valve.cmdId;
+    errorDiv.style.display = 'none';
+    card.appendChild(errorDiv);
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.className = 'cw-toggle-btn';
+    toggleBtn.id = 'cw-toggle-' + valve.cmdId;
+    toggleBtn.textContent = '+ Ajouter une règle';
+    toggleBtn.addEventListener('click', function() { cwToggleForm(valve.cmdId); });
+    card.appendChild(toggleBtn);
+
+    card.appendChild(cwBuildForm(valve.cmdId));
+    container.appendChild(card);
+  });
+
+  document.getElementById('conditionalSection').style.display = '';
+  cwUpdateCards();
+}
+
+// `toggleId` désigne l'élément à masquer pendant la saisie ; il est déduit
+// du préfixe par défaut, mais la fiche Famille fait partager une même
+// rangée à ses deux formulaires et le fournit donc explicitement.
+function cwBuildForm(cmdId, prefix, toggleId) {
+  prefix = prefix || 'cw';
+
+  var form = document.createElement('div');
+  form.className = 'cw-form';
+  form.id = prefix + '-form-' + cmdId;
+  form.dataset.cmp = CW_CMP_LOWER;
+
+  // Capteur
+  var sensorLabel = document.createElement('div');
+  sensorLabel.className = 'cw-picker-label';
+  sensorLabel.textContent = 'Capteur';
+  form.appendChild(sensorLabel);
+
+  var select = document.createElement('select');
+  select.className = 'cw-select';
+  select.id = prefix + '-sensor-' + cmdId;
+  CW_SENSORS.forEach(function(s) {
+    var opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.label;
+    select.appendChild(opt);
+  });
+  select.addEventListener('change', function() { cwOnSensorChange(cmdId, prefix); });
+  form.appendChild(select);
+
+  // Condition : comparateur + seuil
+  var condLabel = document.createElement('div');
+  condLabel.className = 'cw-picker-label';
+  condLabel.textContent = 'Arroser si la mesure est';
+  form.appendChild(condLabel);
+
+  var cmpRow = document.createElement('div');
+  cmpRow.className = 'cw-cmp-row';
+
+  var lowerBtn = document.createElement('button');
+  lowerBtn.className = 'cw-cmp-btn active';
+  lowerBtn.id = prefix + '-cmp-lower-' + cmdId;
+  lowerBtn.textContent = '< inférieure à';
+  lowerBtn.addEventListener('click', function() { cwSetCmp(cmdId, CW_CMP_LOWER, prefix); });
+  cmpRow.appendChild(lowerBtn);
+
+  var geBtn = document.createElement('button');
+  geBtn.className = 'cw-cmp-btn';
+  geBtn.id = prefix + '-cmp-ge-' + cmdId;
+  geBtn.textContent = '≥ supérieure ou égale à';
+  geBtn.addEventListener('click', function() { cwSetCmp(cmdId, CW_CMP_GREATER_OR_EQUAL, prefix); });
+  cmpRow.appendChild(geBtn);
+
+  form.appendChild(cmpRow);
+
+  var thrRow = document.createElement('div');
+  thrRow.className = 'cw-thr-row';
+  var thr = document.createElement('input');
+  thr.type = 'range';
+  thr.id = prefix + '-thr-' + cmdId;
+  thr.addEventListener('input', function() { cwUpdateThresholdDisplay(cmdId, prefix); });
+  thrRow.appendChild(thr);
+  var thrVal = document.createElement('span');
+  thrVal.className = 'cw-thr-val';
+  thrVal.id = prefix + '-thrval-' + cmdId;
+  thrRow.appendChild(thrVal);
+  form.appendChild(thrRow);
+
+  // Durée d'arrosage
+  var durLabel = document.createElement('div');
+  durLabel.className = 'cw-picker-label';
+  durLabel.textContent = 'Durée';
+  form.appendChild(durLabel);
+
+  var durPicker = document.createElement('div');
+  durPicker.className = 'cw-drum-picker';
+  cwBuildDrum(durPicker, prefix + '-durmin-' + cmdId, 15, 0, 1);
+  var sepMin = document.createElement('div');
+  sepMin.className = 'cw-drum-sep';
+  sepMin.textContent = 'min';
+  durPicker.appendChild(sepMin);
+  cwBuildDrum(durPicker, prefix + '-dursec-' + cmdId, 12, 0, 5);
+  var sepSec = document.createElement('div');
+  sepSec.className = 'cw-drum-sep';
+  sepSec.textContent = 's';
+  durPicker.appendChild(sepSec);
+  form.appendChild(durPicker);
+
+  // Repos entre deux arrosages
+  var restLabel = document.createElement('div');
+  restLabel.className = 'cw-picker-label';
+  restLabel.textContent = 'Repos après un arrosage';
+  form.appendChild(restLabel);
+
+  var restPicker = document.createElement('div');
+  restPicker.className = 'cw-drum-picker';
+  cwBuildDrum(restPicker, prefix + '-rest-' + cmdId,
+              CW_MAX_REST - CW_MIN_REST + 1, CW_MIN_REST, 1);
+  var restSep = document.createElement('div');
+  restSep.className = 'cw-drum-sep';
+  restSep.textContent = 'h';
+  restPicker.appendChild(restSep);
+  form.appendChild(restPicker);
+
+  // Plage horaire
+  var hourLabel = document.createElement('div');
+  hourLabel.className = 'cw-picker-label';
+  hourLabel.textContent = 'Plage horaire';
+  form.appendChild(hourLabel);
+
+  var hourPicker = document.createElement('div');
+  hourPicker.className = 'cw-drum-picker';
+  cwBuildDrum(hourPicker, prefix + '-start-' + cmdId, 24, 0, 1);
+  var hourSep = document.createElement('div');
+  hourSep.className = 'cw-drum-sep';
+  hourSep.textContent = 'h →';
+  hourPicker.appendChild(hourSep);
+  cwBuildDrum(hourPicker, prefix + '-end-' + cmdId, 24, 0, 1);
+  var hourEnd = document.createElement('div');
+  hourEnd.className = 'cw-drum-sep';
+  hourEnd.textContent = 'h';
+  hourPicker.appendChild(hourEnd);
+  form.appendChild(hourPicker);
+
+  // Actions
+  var actions = document.createElement('div');
+  actions.className = 'cw-actions';
+
+  var confirmBtn = document.createElement('button');
+  confirmBtn.className = 'cw-confirm-btn';
+  confirmBtn.textContent = 'Confirmer';
+  confirmBtn.addEventListener('click', function() { cwConfirmRule(cmdId, prefix); });
+  actions.appendChild(confirmBtn);
+
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'cw-cancel-btn';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.addEventListener('click', function() { cwToggleForm(cmdId, prefix, toggleId); });
+  actions.appendChild(cancelBtn);
+
+  form.appendChild(actions);
+  return form;
+}
+
+function cwSetCmp(cmdId, cmp, prefix) {
+  prefix = prefix || 'cw';
+  var form = document.getElementById(prefix + '-form-' + cmdId);
+  if (!form) return;
+  form.dataset.cmp = cmp;
+  var lowerBtn = document.getElementById(prefix + '-cmp-lower-' + cmdId);
+  var geBtn    = document.getElementById(prefix + '-cmp-ge-' + cmdId);
+  if (lowerBtn) lowerBtn.classList.toggle('active', cmp === CW_CMP_LOWER);
+  if (geBtn)    geBtn.classList.toggle('active', cmp === CW_CMP_GREATER_OR_EQUAL);
+}
+
+// Le seuil suit les bornes META du capteur sélectionné.
+function cwOnSensorChange(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  if (!select || !thr) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) return;
+
+  thr.min  = sensor.min;
+  thr.max  = sensor.max;
+  thr.step = sensor.step;
+
+  var suggested = (sensor.unit === '%') ? 40 : 25;
+  thr.value = Math.max(sensor.min, Math.min(sensor.max, suggested));
+
+  cwUpdateThresholdDisplay(cmdId, prefix);
+}
+
+function cwUpdateThresholdDisplay(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  var out    = document.getElementById(prefix + '-thrval-' + cmdId);
+  if (!select || !thr || !out) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) return;
+
+  out.textContent = cwFormatThreshold(sensor, thr.value) + ' ' + sensor.unit;
+}
+
+// ─── Affichage des règles ────────────────────────────────────────────
+function cwUpdateCards() {
+  CW_VALVES.forEach(function(valve) {
+    var ruleList = document.getElementById('cw-rules-' + valve.cmdId);
+    if (!ruleList) return;
+    ruleList.innerHTML = '';
+
+    var valveRules = cwRules.filter(function(r) { return r.cmdId === valve.cmdId; });
+
+    var countEl = document.getElementById('cw-count-' + valve.cmdId);
+    if (countEl) {
+      countEl.textContent = valveRules.length <= 1
+        ? valveRules.length + ' règle'
+        : valveRules.length + ' règles';
+    }
+
+    if (valveRules.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'cw-empty';
+      empty.textContent = 'Aucune règle conditionnelle';
+      ruleList.appendChild(empty);
+    } else {
+      valveRules.forEach(function(rule) {
+        ruleList.appendChild(cwBuildRuleLine(rule, ruleList));
+      });
+    }
+
+    // L'état vient de changer : on referme le formulaire s'il était ouvert.
+    var form   = document.getElementById('cw-form-' + valve.cmdId);
+    var toggle = document.getElementById('cw-toggle-' + valve.cmdId);
+    if (form)   form.classList.remove('open');
+    if (toggle) toggle.style.display = '';
+  });
+
+  // Miroir dans les cartes Famille, si la page en comporte : le bloc
+  // reste utilisable seul, la fonction étant simplement absente ailleurs.
+  if (typeof updateFamConditionalRules === 'function') updateFamConditionalRules();
+}
+
+function cwBuildRuleLine(rule, ruleList) {
+  var sensor = cwFindSensor(rule.sensorId);
+  var sensorLabel = sensor ? sensor.label : ('Capteur ' + rule.sensorId);
+  var unit        = sensor ? sensor.unit  : '';
+
+  var item = document.createElement('div');
+  item.className = 'cw-rule';
+
+  var info = document.createElement('div');
+  info.className = 'cw-rule-info';
+
+  var cond = document.createElement('span');
+  cond.className = 'cw-rule-cond';
+  cond.textContent = sensorLabel
+                   + (rule.cmp === CW_CMP_LOWER ? ' < ' : ' ≥ ')
+                   + cwFormatThreshold(sensor, rule.threshold) + ' ' + unit;
+  info.appendChild(cond);
+
+  var detail = document.createElement('span');
+  detail.className = 'cw-rule-detail';
+  // Même ordre que le formulaire : durée, repos, puis plage horaire.
+  detail.textContent = cwFormatDuration(rule.duration)
+                     + ' · repos ' + rule.restHours + ' h · '
+                     + String(rule.startHour).padStart(2, '0') + 'h → '
+                     + String(rule.endHour).padStart(2, '0') + 'h';
+  info.appendChild(detail);
+
+  item.appendChild(info);
+
+  var delBtn = document.createElement('button');
+  delBtn.className = 'cw-rule-del';
+  delBtn.textContent = '✕';
+  delBtn.addEventListener('click', function() {
+    var confirmDiv = document.createElement('div');
+    confirmDiv.className = 'cw-rule-confirm';
+
+    var text = document.createElement('span');
+    text.className = 'cw-rule-confirm-text';
+    text.textContent = 'Supprimer ?';
+    confirmDiv.appendChild(text);
+
+    var btns = document.createElement('div');
+    btns.className = 'cw-rule-confirm-btns';
+
+    var yesBtn = document.createElement('button');
+    yesBtn.className = 'cw-rule-confirm-yes';
+    yesBtn.textContent = 'Oui';
+    yesBtn.addEventListener('click', function() {
+      yesBtn.classList.add('confirmed');
+      yesBtn.disabled = true;
+      cwRemoveRule(rule);
+    });
+    btns.appendChild(yesBtn);
+
+    var noBtn = document.createElement('button');
+    noBtn.className = 'cw-rule-confirm-no';
+    noBtn.textContent = 'Non';
+    noBtn.addEventListener('click', function() {
+      ruleList.replaceChild(item, confirmDiv);
+    });
+    btns.appendChild(noBtn);
+
+    confirmDiv.appendChild(btns);
+    ruleList.replaceChild(confirmDiv, item);
+  });
+  item.appendChild(delBtn);
+
+  return item;
+}
+
+function cwToggleForm(cmdId, prefix, toggleId) {
+  prefix = prefix || 'cw';
+  var form   = document.getElementById(prefix + '-form-' + cmdId);
+  var toggle = document.getElementById(toggleId || (prefix + '-toggle-' + cmdId));
+  if (!form || !toggle) return;
+
+  if (form.classList.contains('open')) {
+    form.classList.remove('open');
+    toggle.style.display = '';
+  } else {
+    form.classList.add('open');
+    toggle.style.display = 'none';
+    cwSetCmp(cmdId, CW_CMP_LOWER, prefix);
+    cwOnSensorChange(cmdId, prefix);
+    setTimeout(function() {
+      cwSetDrum(prefix + '-start-' + cmdId, 8);
+      cwSetDrum(prefix + '-end-' + cmdId, 20);
+      cwSetDrum(prefix + '-rest-' + cmdId, 6);
+      cwSetDrum(prefix + '-durmin-' + cmdId, 5);
+      cwSetDrum(prefix + '-dursec-' + cmdId, 0);
+    }, 30);
+  }
+}
+
+// ─── Envoi des demandes (FromUser) ───────────────────────────────────
+// L'affichage n'est jamais modifié ici : on attend le prochain ToUser,
+// seule source de vérité.
+function cwConfirmRule(cmdId, prefix) {
+  prefix = prefix || 'cw';
+  var form   = document.getElementById(prefix + '-form-' + cmdId);
+  var select = document.getElementById(prefix + '-sensor-' + cmdId);
+  var thr    = document.getElementById(prefix + '-thr-' + cmdId);
+  if (!form || !select || !thr) return;
+
+  var sensor = cwFindSensor(parseInt(select.value, 10));
+  if (!sensor) {
+    cwShowError(cmdId, 'Capteur inconnu', prefix);
+    return;
+  }
+
+  var duration = cwGetDrum(prefix + '-durmin-' + cmdId) * 60
+               + cwGetDrum(prefix + '-dursec-' + cmdId);
+  if (duration < CW_MIN_DURATION) {
+    cwShowError(cmdId, 'Durée minimum : ' + CW_MIN_DURATION + ' seconde', prefix);
+    return;
+  }
+  if (duration > CW_MAX_DURATION) {
+    cwShowError(cmdId, 'Durée maximum : 15 minutes', prefix);
+    return;
+  }
+
+  var rule = {
+    op: 'add',
+    cmdId: cmdId,
+    sensorId: sensor.id,
+    cmp: parseInt(form.dataset.cmp, 10),
+    threshold: parseFloat(parseFloat(thr.value).toFixed(1)),
+    startHour: cwGetDrum(prefix + '-start-' + cmdId),
+    endHour: cwGetDrum(prefix + '-end-' + cmdId),
+    restHours: cwGetDrum(prefix + '-rest-' + cmdId),
+    duration: duration
+  };
+
+  if (cwRules.length >= CW_MAX_RULES) {
+    cwShowError(cmdId, 'Maximum ' + CW_MAX_RULES + ' règles atteint', prefix);
+    return;
+  }
+  for (var i = 0; i < cwRules.length; i++) {
+    if (cwSameRule(cwRules[i], rule)) {
+      cwShowError(cmdId, 'Cette règle existe déjà à l\'identique', prefix);
+      return;
+    }
+  }
+
+  if (!client || !client.connected) {
+    cwShowError(cmdId, 'MQTT non connecté', prefix);
+    return;
+  }
+
+  client.publish(CW_TOPIC_FROM_USER, JSON.stringify(rule), { qos: 1 });
+}
+
+// La règle est identifiée par son contenu complet : on renvoie tous ses
+// champs, tels qu'ils ont été reçus dans ToUser.
+function cwRemoveRule(rule) {
+  if (!client || !client.connected) return;
+
+  client.publish(CW_TOPIC_FROM_USER, JSON.stringify({
+    op: 'remove',
+    cmdId: rule.cmdId,
+    sensorId: rule.sensorId,
+    cmp: rule.cmp,
+    threshold: rule.threshold,
+    startHour: rule.startHour,
+    endHour: rule.endHour,
+    restHours: rule.restHours,
+    duration: rule.duration
+  }), { qos: 1 });
+}
+
+// ─── Réception de l'état (ToUser, retain) ────────────────────────────
+function cwHandleState(payload) {
+  try {
+    var data = JSON.parse(payload);
+    cwRules = data.rules || [];
+    if (cwBuilt) cwUpdateCards();
+  } catch (e) {
+    console.error('Erreur parsing Conditional ToUser:', e);
+  }
+}
+
+cwBuildCards();
+
+// ══════════════════════════════════════════════════════════════
+// FIN DU BLOC PORTABLE — JavaScript de l'arrosage conditionnel
+// ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+// Restauration du cache au chargement
+// ══════════════════════════════════════════════════════════════
+
+if (schema) {
+  waitingMsg.style.display = 'none';
+  buildFamilyCards();
+  buildCards();
+  buildGardenerCards();
+  Object.keys(lastValues).forEach(function(id) {
+    updateCard(lastValues[id]);
+    updateFamilyFromEntry(lastValues[id]);
+    updateGardenerValveState(lastValues[id]);
+  });
+}
+
+if (lastValues[34]) updateAcPowerStatus(lastValues[34]);
+
+// ══════════════════════════════════════════════════════════════
+// Connexion MQTT
+// ══════════════════════════════════════════════════════════════
+
+var clientId = 'serre-pwa-' + Math.random().toString(16).substr(2, 8);
+
+var client = mqtt.connect(MQTT_URL, {
+  username: MQTT_USER,
+  password: MQTT_PASS,
+  clientId: clientId,
+  protocolVersion: 5,
+  reconnectPeriod: 3000,
+  clean: true
+});
+
+client.on('connect', function() {
+  setMqttStatus('connected', 'Tel connecté au broker');
+  client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS,
+                    GARDENER_TOPIC_TO_USER, CW_TOPIC_TO_USER], { qos: 1 });
+});
+
+client.on('reconnect', function() {
+  setMqttStatus('connecting', 'Reconnexion…');
+});
+
+client.on('offline', function() {
+  setMqttStatus('offline', 'Hors ligne');
+});
+
+client.on('error', function(err) {
+  console.error('MQTT error:', err);
+  setMqttStatus('offline', 'Erreur connexion');
+});
+
+client.on('message', function(topic, message) {
+  var payload = message.toString().trim();
+
+  // ── Schéma ──
+  if (topic === TOPIC_SCHEMA) {
+    try {
+      schema = JSON.parse(payload);
+      console.log('Schéma reçu:', schema);
+      saveSchema();
+      waitingMsg.style.display = 'none';
+      buildFamilyCards();
+      buildCards();
+      buildGardenerCards();
+
+      Object.keys(lastValues).forEach(function(id) {
+        updateCard(lastValues[id]);
+        updateFamilyFromEntry(lastValues[id]);
+        updateGardenerValveState(lastValues[id]);
+      });
+    } catch (e) {
+      console.error('Erreur parsing schéma:', e);
+    }
+    return;
+  }
+
+  // ── Statut Waveshare (LWT) ──
+  if (topic === TOPIC_STATUS) {
+    if (payload === 'online') {
+      deviceDot.className = 'status-dot connected';
+      deviceText.textContent = 'Serre autonome en ligne';
+    } else {
+      deviceDot.className = 'status-dot offline';
+      deviceText.textContent = 'Serre autonome hors ligne';
+    }
+    return;
+  }
+
+  // ── Gardener (arrosage programmé) ──
+  if (topic === GARDENER_TOPIC_TO_USER) {
+    handleGardenerState(payload);
+    return;
+  }
+
+  // ── Conditional (arrosage conditionnel) ──
+  if (topic === CW_TOPIC_TO_USER) {
+    cwHandleState(payload);
+    return;
+  }
+
+  // ── Données capteurs ──
+  if (topic.startsWith('serre/data/')) {
+    var entry = parseCsvPayload(payload);
+    if (!entry) {
+      console.warn('CSV invalide:', payload);
+      return;
+    }
+
+    lastValues[entry.id] = entry;
+    saveValues();
+
+    if (entry.id === 34) updateAcPowerStatus(entry);
+
+    // Mémoriser le dernier arrosage
+    // (type 5 = Manuel, type 6 = Auto, type 7 = Conditionnel)
+    if ((entry.type === 5 || entry.type === 6 || entry.type === 7)
+        && entry.id >= 17 && entry.id <= 22) {
+      lastWatering[entry.id] = entry;
+      saveWatering();
+      updateLastWateringDisplay(entry.id);
+    }
+
+    updateFamilyFromEntry(entry);
+    if (cardsBuilt) {
+      updateCard(entry);
+      updateGardenerValveState(entry);
+    }
+    return;
+  }
+});
+</script>
+</body>
+</html>
