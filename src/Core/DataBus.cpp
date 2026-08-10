@@ -156,9 +156,12 @@ bool DataBus::validate(const BusItem& item)
 // Point d'entrée UNIQUE. Le producteur a rempli les champs métier
 // (type, id, valueKind, valueFloat/valueText). DataBus valide contre META,
 // horodate, distribue et, si commande, route via RELAYS[].
-void DataBus::publish(BusItem& item)
+//
+// Retourne false si la validation a échoué ou si la commande n'a pas pu être
+// routée — voir DataBus.h pour la sémantique complète.
+bool DataBus::publish(BusItem& item)
 {
-    if (!validate(item)) return;
+    if (!validate(item)) return false;
 
     TimeVClock t = VirtualClock::read();
     item.timestamp        = static_cast<uint32_t>(t.timestamp);
@@ -175,8 +178,11 @@ void DataBus::publish(BusItem& item)
             Console::warn(TAG, "Commande non routée : cmdId="
                           + String((uint8_t)item.id)
                           + " (absente de RELAYS[] ou manager non prêt)");
+            return false;
         }
     }
+
+    return true;
 }
 
 // ─── parseCommand() ──────────────────────────────────────────────────────────

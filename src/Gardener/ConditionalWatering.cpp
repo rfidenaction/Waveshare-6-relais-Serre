@@ -29,6 +29,10 @@ portMUX_TYPE ConditionalWatering::pendingMeasureMux   = portMUX_INITIALIZER_UNLO
 
 char          ConditionalWatering::conditionalMsgBuffer[MSG_BUFFER_SIZE] = {};
 volatile bool ConditionalWatering::conditionalMsgPending = false;
+portMUX_TYPE  ConditionalWatering::conditionalMsgMux = portMUX_INITIALIZER_UNLOCKED;
+char          ConditionalWatering::conditionalMsgWork[MSG_BUFFER_SIZE] = {};
+
+volatile bool ConditionalWatering::conditionalStatePublishPending = false;
 
 // ─── init() ──────────────────────────────────────────────────────────────────
 
@@ -82,15 +86,32 @@ void ConditionalWatering::onNewData(const BusItem& item)
 
 void ConditionalWatering::handle()
 {
-    // 1. Traiter le buffer MQTT entrant (FromUser) si présent. Indépendant de
-    //    l'horloge : l'utilisateur doit pouvoir configurer ses règles même
-    //    avant que VClock ne soit disponible.
-    if (conditionalMsgPending) {
-        conditionalMsgPending = false;
-        processConditionalMessage();
+    // 1. Publication d'état demandée depuis le thread esp_mqtt.
+    if (conditionalStatePublishPending) {
+        conditionalStatePublishPending = false;
+        publishConditionalState();
     }
 
-    // 2. Extraire les mesures reçues depuis le tick précédent.
+    // 2. Traiter le buffer MQTT entrant (FromUser) si présent. Indépendant de
+    //    l'horloge : l'utilisateur doit pouvoir configurer ses règles même
+    //    avant que VClock ne soit disponible.
+    //    La recopie sous portMUX est indispensable : le parsing ArduinoJson
+    //    est en zéro-copie et relit le buffer bien après la désérialisation.
+    bool hasMsg = false;
+
+    taskENTER_CRITICAL(&conditionalMsgMux);
+    if (conditionalMsgPending) {
+        memcpy(conditionalMsgWork, conditionalMsgBuffer, MSG_BUFFER_SIZE);
+        conditionalMsgPending = false;
+        hasMsg = true;
+    }
+    taskEXIT_CRITICAL(&conditionalMsgMux);
+
+    if (hasMsg) {
+        processConditionalMessage(conditionalMsgWork);
+    }
+
+    // 3. Extraire les mesures reçues depuis le tick précédent.
     PendingMeasure measures[MAX_PENDING_MEASURES];
     uint8_t measureCount;
 
@@ -104,7 +125,7 @@ void ConditionalWatering::handle()
 
     if (measureCount == 0) return;
 
-    // 3. Sans horloge, la plage horaire n'a pas de sens : mesures abandonnées.
+    // 4. Sans horloge, la plage horaire n'a pas de sens : mesures abandonnées.
     TimeVClock t = VirtualClock::read();
     if (!t.VClock_available) return;
 
@@ -112,7 +133,7 @@ void ConditionalWatering::handle()
     struct tm tmLocal;
     localtime_r(&ts, &tmLocal);
 
-    // 4. Évaluer les règles concernées par chaque mesure.
+    // 5. Évaluer les règles concernées par chaque mesure.
     for (uint8_t i = 0; i < measureCount; i++) {
         evaluateRulesForSensor(measures[i].sensorId, measures[i].value,
                                (uint32_t)t.timestamp, (uint8_t)tmLocal.tm_hour);
@@ -163,7 +184,18 @@ void ConditionalWatering::evaluateRulesForSensor(DataId sensorId, float value,
         item.id         = rule.cmdId;
         item.valueKind  = 0;
         item.valueFloat = (float)rule.duration;
-        DataBus::publish(item);
+
+        // Si la commande n'a pas pu être routée, aucun arrosage n'aura lieu :
+        // armer le repos condamnerait la règle au silence pendant restHours.
+        // Cas courant au boot, ValveManager n'acceptant rien avant
+        // VALVE_START_DELAY_MS. On retente donc à la prochaine mesure.
+        if (!DataBus::publish(item)) {
+            Console::warn(TAG, "Déclenchement non routé cmdId="
+                          + String((uint8_t)rule.cmdId)
+                          + " — repos non armé, nouvelle tentative à la"
+                            " prochaine mesure");
+            continue;
+        }
 
         conditionalRuleLastTrigger[i] = nowTs;
 
@@ -188,19 +220,31 @@ void ConditionalWatering::onConditionalMessage(const char* data, int len)
     if (len <= 0 || (size_t)len >= MSG_BUFFER_SIZE) {
         return;
     }
+    taskENTER_CRITICAL(&conditionalMsgMux);
     memcpy(conditionalMsgBuffer, data, len);
     conditionalMsgBuffer[len] = '\0';
     conditionalMsgPending = true;
+    taskEXIT_CRITICAL(&conditionalMsgMux);
+}
+
+// ─── requestStatePublish() — thread esp_mqtt ─────────────────────────────────
+// Ne publie pas : la publication parcourt conditionalRules[] et doit rester
+// dans le thread TaskManager. Voir handle().
+
+void ConditionalWatering::requestStatePublish()
+{
+    conditionalStatePublishPending = true;
 }
 
 // ─── processConditionalMessage() — thread TaskManager ────────────────────────
 // Parse le JSON FromUser et exécute l'opération add ou remove.
 // Publie l'état courant (ToUser) dans tous les cas.
+// msg est la copie de travail, jamais le buffer partagé avec le thread esp_mqtt.
 
-void ConditionalWatering::processConditionalMessage()
+void ConditionalWatering::processConditionalMessage(char* msg)
 {
     StaticJsonDocument<MSG_BUFFER_SIZE> doc;
-    DeserializationError err = deserializeJson(doc, conditionalMsgBuffer);
+    DeserializationError err = deserializeJson(doc, msg);
     if (err) {
         Console::warn(TAG, "JSON FromUser malformé : " + String(err.c_str()));
         publishConditionalState();
@@ -354,8 +398,14 @@ bool ConditionalWatering::addConditionalRule(const ConditionalRule& rule)
     conditionalRuleLastTrigger[conditionalRuleCount] = 0;
     conditionalRuleCount++;
 
+    // Sauvegarde impossible : l'écriture atomique garantit que
+    // /conditional.json est resté intact, donc on annule l'ajout en RAM. Sans
+    // cela la règle vivrait jusqu'au prochain reboot et serait publiée sur
+    // ToUser, laissant croire à l'utilisateur qu'elle est enregistrée.
     if (!saveConditionalRules()) {
-        Console::error(TAG, "Échec sauvegarde après ajout");
+        conditionalRuleCount--;
+        Console::error(TAG, "Échec sauvegarde — règle NON ajoutée");
+        return false;
     }
 
     Console::info(TAG, "Règle ajoutée : cmdId=" + String((uint8_t)rule.cmdId)
@@ -377,13 +427,26 @@ bool ConditionalWatering::removeConditionalRule(const ConditionalRule& rule)
         if (!sameConditionalRule(conditionalRules[i], rule)) continue;
 
         // Swap avec le dernier élément — les deux tableaux parallèles
-        // doivent être déplacés ensemble.
-        conditionalRules[i]           = conditionalRules[conditionalRuleCount - 1];
-        conditionalRuleLastTrigger[i] = conditionalRuleLastTrigger[conditionalRuleCount - 1];
+        // doivent être déplacés ensemble. La règle retirée est mémorisée pour
+        // pouvoir défaire l'opération si la sauvegarde échoue.
+        const uint8_t         lastIdx     = conditionalRuleCount - 1;
+        const ConditionalRule removedRule = conditionalRules[i];
+        const uint32_t        removedTrig = conditionalRuleLastTrigger[i];
+
+        conditionalRules[i]           = conditionalRules[lastIdx];
+        conditionalRuleLastTrigger[i] = conditionalRuleLastTrigger[lastIdx];
         conditionalRuleCount--;
 
+        // Même raisonnement que pour l'ajout : le fichier est intact, on
+        // restaure l'état d'avant le swap pour que RAM et disque concordent.
         if (!saveConditionalRules()) {
-            Console::error(TAG, "Échec sauvegarde après suppression");
+            conditionalRuleCount++;
+            conditionalRules[lastIdx]           = conditionalRules[i];
+            conditionalRuleLastTrigger[lastIdx] = conditionalRuleLastTrigger[i];
+            conditionalRules[i]                 = removedRule;
+            conditionalRuleLastTrigger[i]       = removedTrig;
+            Console::error(TAG, "Échec sauvegarde — règle NON supprimée");
+            return false;
         }
 
         Console::info(TAG, "Règle supprimée : cmdId=" + String((uint8_t)rule.cmdId)

@@ -16,10 +16,11 @@
 //   - init() appelé dans loopInit() après MqttManager::init()
 //   - handle() en tâche TaskManager période 1000 ms
 //   - onGardenerMessage() appelé par MqttManager depuis le thread esp_mqtt
-//   - publishGardenerWateringState() appelé par MqttManager sur MQTT_EVENT_CONNECTED
+//   - requestStatePublish() appelé par MqttManager sur MQTT_EVENT_CONNECTED
 #pragma once
 
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
 #include "Config/MetaDataModel.h"
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -56,10 +57,13 @@ public:
     // traitement dans handle() (thread TaskManager).
     static void onGardenerMessage(const char* data, int len);
 
-    // Sérialise l'état courant et publie via MqttManager (retain).
-    // Appelée depuis handle() après chaque add/remove, et depuis
-    // MqttManager::mqttEventHandler sur MQTT_EVENT_CONNECTED.
-    static void publishGardenerWateringState();
+    // Demande la publication de l'état courant (retain). Appelée depuis le
+    // thread esp_mqtt sur MQTT_EVENT_CONNECTED : la publication elle-même est
+    // différée au prochain handle(), pour que gardenerWateringSlots[] ne soit
+    // jamais parcouru depuis un autre thread que celui de TaskManager.
+    // Si le lien retombe avant que handle() n'ait publié, la demande est
+    // perdue mais le prochain MQTT_EVENT_CONNECTED la réarmera.
+    static void requestStatePublish();
 
 private:
     static constexpr uint8_t MAX_WATERING_SLOTS_PER_VALVE = 6;
@@ -70,14 +74,33 @@ private:
     static uint16_t gardenerLastMinute;
 
     // Buffer MQTT (thread esp_mqtt → thread TaskManager).
-    // Un seul writer (onGardenerMessage), un seul reader (handle).
+    // Un seul writer (onGardenerMessage), un seul reader (handle), les deux
+    // sous portMUX : handle() en prend une copie locale avant de parser, car
+    // ArduinoJson travaille en zéro-copie sur un buffer mutable et conserve
+    // des pointeurs dedans bien après la désérialisation — le thread esp_mqtt
+    // pourrait sinon réécrire le buffer entre deux lectures d'un même message.
     // Si un nouveau message arrive avant traitement, il écrase le précédent.
     static constexpr size_t MSG_BUFFER_SIZE = 256;
     static char          gardenerMsgBuffer[];
     static volatile bool gardenerMsgPending;
+    static portMUX_TYPE  gardenerMsgMux;
 
-    // Traitement du message bufferisé (appelé depuis handle).
-    static void processGardenerMessage();
+    // Copie de travail du message, appartenant exclusivement au thread
+    // TaskManager : remplie sous portMUX, puis parsée hors section critique.
+    // Statique et non locale à handle() pour ne pas charger la pile.
+    static char gardenerMsgWork[];
+
+    // Publication d'état demandée depuis le thread esp_mqtt, honorée au
+    // prochain handle().
+    static volatile bool gardenerStatePublishPending;
+
+    // Traitement d'un message déjà recopié hors du buffer partagé.
+    static void processGardenerMessage(char* msg);
+
+    // Sérialise l'état courant et publie via MqttManager (retain).
+    // Privée : parcourt gardenerWateringSlots[] sans verrou, donc réservée au
+    // thread TaskManager. Les autres threads passent par requestStatePublish().
+    static void publishGardenerWateringState();
 
     // Ajout/suppression avec validation complète + sauvegarde.
     static bool addGardenerWateringSlot(const GardenerWateringSlot& slot);

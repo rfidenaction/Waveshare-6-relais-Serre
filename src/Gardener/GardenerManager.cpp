@@ -23,6 +23,10 @@ uint16_t GardenerManager::gardenerLastMinute        = 0xFFFF;
 
 char          GardenerManager::gardenerMsgBuffer[MSG_BUFFER_SIZE] = {};
 volatile bool GardenerManager::gardenerMsgPending = false;
+portMUX_TYPE  GardenerManager::gardenerMsgMux = portMUX_INITIALIZER_UNLOCKED;
+char          GardenerManager::gardenerMsgWork[MSG_BUFFER_SIZE] = {};
+
+volatile bool GardenerManager::gardenerStatePublishPending = false;
 
 // ─── init() ──────────────────────────────────────────────────────────────────
 
@@ -37,27 +41,46 @@ void GardenerManager::init()
 
 void GardenerManager::handle()
 {
-    // 1. VClock disponible ? Sinon, ni scheduler ni traitement MQTT.
+    // 1. Publication d'état demandée depuis le thread esp_mqtt. Traitée avant
+    //    le test d'horloge : la sérialisation des créneaux n'en dépend pas, et
+    //    une UI qui se connecte doit recevoir l'état sans attendre VClock.
+    if (gardenerStatePublishPending) {
+        gardenerStatePublishPending = false;
+        publishGardenerWateringState();
+    }
+
+    // 2. VClock disponible ? Sinon, ni scheduler ni traitement MQTT.
     TimeVClock t = VirtualClock::read();
     if (!t.VClock_available) return;
 
-    // 2. Traiter le buffer MQTT entrant (FromUser) si présent.
+    // 3. Traiter le buffer MQTT entrant (FromUser) si présent.
+    //    La recopie sous portMUX est indispensable : le parsing ArduinoJson
+    //    est en zéro-copie et relit le buffer bien après la désérialisation.
+    bool hasMsg = false;
+
+    taskENTER_CRITICAL(&gardenerMsgMux);
     if (gardenerMsgPending) {
+        memcpy(gardenerMsgWork, gardenerMsgBuffer, MSG_BUFFER_SIZE);
         gardenerMsgPending = false;
-        processGardenerMessage();
+        hasMsg = true;
+    }
+    taskEXIT_CRITICAL(&gardenerMsgMux);
+
+    if (hasMsg) {
+        processGardenerMessage(gardenerMsgWork);
     }
 
-    // 3. Obtenir l'heure locale courante.
+    // 4. Obtenir l'heure locale courante.
     time_t ts = (time_t)t.timestamp;
     struct tm tmLocal;
     localtime_r(&ts, &tmLocal);
 
     uint16_t currentMinute = (uint16_t)(tmLocal.tm_hour * 60 + tmLocal.tm_min);
 
-    // 4. Même minute déjà traitée ? → rien à faire.
+    // 5. Même minute déjà traitée ? → rien à faire.
     if (currentMinute == gardenerLastMinute) return;
 
-    // 5. Parcourir les créneaux et déclencher ceux qui correspondent.
+    // 6. Parcourir les créneaux et déclencher ceux qui correspondent.
     for (uint8_t i = 0; i < gardenerWateringSlotCount; i++) {
         const GardenerWateringSlot& slot = gardenerWateringSlots[i];
         if ((uint16_t)(slot.hour * 60 + slot.minute) == currentMinute) {
@@ -74,7 +97,7 @@ void GardenerManager::handle()
         }
     }
 
-    // 6. Mémoriser la minute courante (anti-rebond).
+    // 7. Mémoriser la minute courante (anti-rebond).
     gardenerLastMinute = currentMinute;
 }
 
@@ -87,19 +110,32 @@ void GardenerManager::onGardenerMessage(const char* data, int len)
     if (len <= 0 || (size_t)len >= MSG_BUFFER_SIZE) {
         return;
     }
+    taskENTER_CRITICAL(&gardenerMsgMux);
     memcpy(gardenerMsgBuffer, data, len);
     gardenerMsgBuffer[len] = '\0';
     gardenerMsgPending = true;
+    taskEXIT_CRITICAL(&gardenerMsgMux);
+}
+
+// ─── requestStatePublish() — thread esp_mqtt ─────────────────────────────────
+// Ne publie pas : la publication parcourt gardenerWateringSlots[] et doit
+// rester dans le thread TaskManager. Voir handle().
+
+void GardenerManager::requestStatePublish()
+{
+    gardenerStatePublishPending = true;
 }
 
 // ─── processGardenerMessage() — thread TaskManager ───────────────────────────
 // Parse le JSON FromUser et exécute l'opération add ou remove.
 // Publie l'état courant (ToUser) dans tous les cas.
 
-void GardenerManager::processGardenerMessage()
+// msg est la copie de travail, jamais le buffer partagé avec le thread esp_mqtt.
+
+void GardenerManager::processGardenerMessage(char* msg)
 {
     StaticJsonDocument<256> doc;
-    DeserializationError err = deserializeJson(doc, gardenerMsgBuffer);
+    DeserializationError err = deserializeJson(doc, msg);
     if (err) {
         Console::warn(TAG, "JSON FromUser malformé : " + String(err.c_str()));
         publishGardenerWateringState();
@@ -265,8 +301,14 @@ bool GardenerManager::addGardenerWateringSlot(const GardenerWateringSlot& slot)
     // Ajout
     gardenerWateringSlots[gardenerWateringSlotCount++] = slot;
 
+    // Sauvegarde impossible : l'écriture atomique garantit que /gardener.json
+    // est resté intact, donc on annule l'ajout en RAM. Sans cela le créneau
+    // vivrait jusqu'au prochain reboot et serait publié sur ToUser, laissant
+    // croire à l'utilisateur qu'il est enregistré.
     if (!saveGardenerWateringSlots()) {
-        Console::error(TAG, "Échec sauvegarde après ajout");
+        gardenerWateringSlotCount--;
+        Console::error(TAG, "Échec sauvegarde — créneau NON ajouté");
+        return false;
     }
 
     Console::info(TAG, "Créneau ajouté : cmdId=" + String((uint8_t)slot.cmdId)
@@ -284,12 +326,22 @@ bool GardenerManager::removeGardenerWateringSlot(DataId cmdId, uint8_t hour, uin
             gardenerWateringSlots[i].hour   == hour  &&
             gardenerWateringSlots[i].minute == minute) {
 
-            // Swap avec le dernier élément
-            gardenerWateringSlots[i] = gardenerWateringSlots[gardenerWateringSlotCount - 1];
+            // Swap avec le dernier élément. Le créneau retiré est mémorisé
+            // pour pouvoir défaire l'opération si la sauvegarde échoue.
+            const uint8_t              lastIdx     = gardenerWateringSlotCount - 1;
+            const GardenerWateringSlot removedSlot = gardenerWateringSlots[i];
+
+            gardenerWateringSlots[i] = gardenerWateringSlots[lastIdx];
             gardenerWateringSlotCount--;
 
+            // Même raisonnement que pour l'ajout : le fichier est intact, on
+            // restaure l'état d'avant le swap pour que RAM et disque concordent.
             if (!saveGardenerWateringSlots()) {
-                Console::error(TAG, "Échec sauvegarde après suppression");
+                gardenerWateringSlotCount++;
+                gardenerWateringSlots[lastIdx] = gardenerWateringSlots[i];
+                gardenerWateringSlots[i]       = removedSlot;
+                Console::error(TAG, "Échec sauvegarde — créneau NON supprimé");
+                return false;
             }
 
             Console::info(TAG, "Créneau supprimé : cmdId=" + String((uint8_t)cmdId)

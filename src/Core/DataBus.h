@@ -79,7 +79,20 @@ public:
     // Les champs horloge (timestamp, VClock_available, VClock_reliable) sont
     // remplis ICI via VirtualClock::read(), puis le BusItem est distribué
     // vers mqttQueue, logQueue, WebServer et, si commande, routé via RELAYS[].
-    static void publish(BusItem& item);
+    //
+    // Retourne true si la donnée a été prise en charge de bout en bout :
+    // validation META réussie et, pour une commande, routage RELAYS[] accepté
+    // par le manager destinataire. Retourne false si la validation a échoué
+    // (rien n'a été distribué) ou si la commande n'a pas pu être routée — dans
+    // ce dernier cas la donnée A bien été distribuée (MQTT, log, web) mais
+    // aucun actionneur ne l'exécutera.
+    //
+    // Un routage accepté ne garantit pas l'exécution : le manager peut ensuite
+    // ignorer la commande (vanne déjà ouverte, par exemple).
+    //
+    // La valeur de retour peut être ignorée ; seuls les producteurs qui doivent
+    // savoir si l'action a été prise en charge la consultent.
+    static bool publish(BusItem& item);
 
     // Parse un CSV 7 champs de commande et remplit un BusItem.
     // Fonction PURE, aucun effet de bord. Valide les bornes via META.

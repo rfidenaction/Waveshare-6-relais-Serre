@@ -173,7 +173,7 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         );
         Console::info(TAG, "Abonné à " + String(GardenerManager::GARDENER_TOPIC_FROM_USER));
 
-        GardenerManager::publishGardenerWateringState();
+        GardenerManager::requestStatePublish();
 
         esp_mqtt_client_subscribe(
             (esp_mqtt_client_handle_t)mqttClient,
@@ -182,7 +182,7 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         Console::info(TAG, "Abonné à "
                      + String(ConditionalWatering::CONDITIONAL_TOPIC_FROM_USER));
 
-        ConditionalWatering::publishConditionalState();
+        ConditionalWatering::requestStatePublish();
 
         esp_mqtt_client_subscribe(
             (esp_mqtt_client_handle_t)mqttClient,

@@ -22,6 +22,11 @@
 // → ValveManager). Si la vanne est déjà ouverte, ValveManager ignore la
 // demande : le délai de repos démarre malgré tout, le travail étant fait.
 //
+// En revanche, si DataBus n'a pas pu router la commande (ValveManager pas
+// encore prêt avant VALVE_START_DELAY_MS, queue pleine), aucun arrosage n'aura
+// lieu : le délai de repos n'est alors PAS armé et la règle retentera à la
+// mesure suivante, au lieu de se taire pendant restHours.
+//
 // Le délai de repos vit en RAM seule et se perd au reboot (choix assumé).
 //
 // Une règle ne se modifie pas : elle s'identifie par son contenu complet, et
@@ -32,7 +37,7 @@
 //   - handle() en tâche TaskManager période CONDITIONAL_HANDLE_PERIOD_MS
 //   - onNewData() appelé par DataBus::distribute() (n'importe quel thread)
 //   - onConditionalMessage() appelé par MqttManager depuis le thread esp_mqtt
-//   - publishConditionalState() appelé par MqttManager sur MQTT_EVENT_CONNECTED
+//   - requestStatePublish() appelé par MqttManager sur MQTT_EVENT_CONNECTED
 #pragma once
 
 #include <Arduino.h>
@@ -89,8 +94,13 @@ public:
     // traitement dans handle() (thread TaskManager).
     static void onConditionalMessage(const char* data, int len);
 
-    // Sérialise l'état courant et publie via MqttManager (retain).
-    static void publishConditionalState();
+    // Demande la publication de l'état courant (retain). Appelée depuis le
+    // thread esp_mqtt sur MQTT_EVENT_CONNECTED : la publication elle-même est
+    // différée au prochain handle(), pour que conditionalRules[] ne soit
+    // jamais parcouru depuis un autre thread que celui de TaskManager.
+    // Si le lien retombe avant que handle() n'ait publié, la demande est
+    // perdue mais le prochain MQTT_EVENT_CONNECTED la réarmera.
+    static void requestStatePublish();
 
 private:
     static constexpr uint8_t MAX_CONDITIONAL_RULES = 16;
@@ -123,14 +133,33 @@ private:
     static portMUX_TYPE   pendingMeasureMux;
 
     // Buffer MQTT (thread esp_mqtt → thread TaskManager).
-    // Un seul writer (onConditionalMessage), un seul reader (handle).
+    // Un seul writer (onConditionalMessage), un seul reader (handle), les deux
+    // sous portMUX : handle() en prend une copie locale avant de parser, car
+    // ArduinoJson travaille en zéro-copie sur un buffer mutable et conserve
+    // des pointeurs dedans bien après la désérialisation — le thread esp_mqtt
+    // pourrait sinon réécrire le buffer entre deux lectures d'un même message.
     // Si un nouveau message arrive avant traitement, il écrase le précédent.
     static constexpr size_t MSG_BUFFER_SIZE = 384;
     static char          conditionalMsgBuffer[];
     static volatile bool conditionalMsgPending;
+    static portMUX_TYPE  conditionalMsgMux;
 
-    // Traitement du message bufferisé (appelé depuis handle).
-    static void processConditionalMessage();
+    // Copie de travail du message, appartenant exclusivement au thread
+    // TaskManager : remplie sous portMUX, puis parsée hors section critique.
+    // Statique et non locale à handle() pour ne pas charger la pile.
+    static char conditionalMsgWork[];
+
+    // Publication d'état demandée depuis le thread esp_mqtt, honorée au
+    // prochain handle().
+    static volatile bool conditionalStatePublishPending;
+
+    // Traitement d'un message déjà recopié hors du buffer partagé.
+    static void processConditionalMessage(char* msg);
+
+    // Sérialise l'état courant et publie via MqttManager (retain).
+    // Privée : parcourt conditionalRules[] sans verrou, donc réservée au
+    // thread TaskManager. Les autres threads passent par requestStatePublish().
+    static void publishConditionalState();
 
     // Évaluation des règles utilisant ce capteur, avec la valeur reçue.
     static void evaluateRulesForSensor(DataId sensorId, float value,
