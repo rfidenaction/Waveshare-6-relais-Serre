@@ -71,6 +71,11 @@ public:
     // Passe-plat : reçoit le JSON prêt de GardenerManager.
     static void publishGardenerWateringState(const char* payload, size_t len);
 
+    // Publication de l'état de l'arrosage conditionnel
+    // (retain sur serre/conditional/ToUser).
+    // Passe-plat : reçoit le JSON prêt de ConditionalWatering.
+    static void publishConditionalState(const char* payload, size_t len);
+
     // ─── Familles (noms utilisateur pour les 6 vannes/capteurs) ──────────
     static constexpr uint8_t FAMILY_COUNT    = 6;
     static constexpr uint8_t FAMILY_NAME_MAX = 24;

@@ -32,6 +32,7 @@
 #include "Actuators/ValveManager.h"
 
 #include "Gardener/GardenerManager.h"
+#include "Gardener/ConditionalWatering.h"
 
 #include "Storage/DataLogger.h"
 
@@ -168,6 +169,9 @@ static void loopInit()
     GardenerManager::init();
     Console::info("[Gardener] GardenerManager initialisé");
 
+    ConditionalWatering::init();
+    Console::info("[Conditional] ConditionalWatering initialisé");
+
     SmsManager::init();
     Console::info("[SMS] SmsManager initialisé");
 
@@ -271,6 +275,11 @@ static void loopInit()
     TaskManager::addTask(
         []() { GardenerManager::handle(); },
         GARDENER_HANDLE_PERIOD_MS
+    );
+
+    TaskManager::addTask(
+        []() { ConditionalWatering::handle(); },
+        CONDITIONAL_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(

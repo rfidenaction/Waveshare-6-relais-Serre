@@ -8,12 +8,14 @@
 //         xQueueSend(mqttQueue)      → MqttManager drain
 //         xQueueSend(logQueue)       → DataLogger drain (drop si plein)
 //         WebServer::updateLastData() → portMUX, accès direct
+//         ConditionalWatering::onNewData() → mémorisation, décision différée
 //     → si commande : routeCommand() via RELAYS[]
 
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
 #include "Config/IO-Config.h"
 #include "Web/WebServer.h"
+#include "Gardener/ConditionalWatering.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "DataBus";
@@ -70,6 +72,11 @@ void DataBus::distribute(const BusItem& item)
 
     // lastDataForWeb — mise à jour directe, protégée par portMUX dans WebServer
     WebServer::updateLastData(item);
+
+    // Arrosage conditionnel — mémorisation seule. La décision (et donc un
+    // éventuel publish) est différée au prochain handle() : jamais de publish
+    // imbriqué dans distribute().
+    ConditionalWatering::onNewData(item);
 }
 
 // ─── validate() ──────────────────────────────────────────────────────────────
@@ -86,7 +93,8 @@ bool DataBus::validate(const BusItem& item)
     const DataMeta& meta = getMeta(item.id);
 
     bool isCommand = (item.type == DataType::CommandManual ||
-                      item.type == DataType::CommandAuto);
+                      item.type == DataType::CommandAuto  ||
+                      item.type == DataType::CommandConditional);
 
     if (isCommand) {
         if (meta.type != DataType::CommandGeneric) {
@@ -160,7 +168,8 @@ void DataBus::publish(BusItem& item)
     distribute(item);
 
     if (item.type == DataType::CommandManual ||
-        item.type == DataType::CommandAuto) {
+        item.type == DataType::CommandAuto   ||
+        item.type == DataType::CommandConditional) {
         uint32_t durationMs = (uint32_t)(item.valueFloat * 1000.0f);
         if (!routeCommand(item.id, durationMs)) {
             Console::warn(TAG, "Commande non routée : cmdId="
@@ -214,7 +223,8 @@ CommandParseResult DataBus::parseCommand(
     long typeVal = strtol(f[3], &end, 10);
     if (end == f[3] || *end != '\0') return CommandParseResult::InvalidType;
     if (typeVal != (long)DataType::CommandManual &&
-        typeVal != (long)DataType::CommandAuto) {
+        typeVal != (long)DataType::CommandAuto   &&
+        typeVal != (long)DataType::CommandConditional) {
         return CommandParseResult::InvalidType;
     }
 

@@ -29,21 +29,24 @@
 //
 //     Power, Sensor, Actuator, System   → META ET records (entité = événement)
 //     CommandGeneric                    → META uniquement (jamais dans un record)
-//     CommandManual, CommandAuto        → records uniquement (jamais dans META)
+//     CommandManual, CommandAuto,
+//     CommandConditional                → records uniquement (jamais dans META)
 //
-//   Les records de commande portent l'origine (Manuelle/Auto) dans `record.type`
-//   et l'identité de la commande dans `record.id` (ex. CommandValve1). META.type
-//   de ces entités vaut CommandGeneric — pas d'origine figée côté description.
+//   Les records de commande portent l'origine (Manuelle/Auto/Conditionnelle)
+//   dans `record.type` et l'identité de la commande dans `record.id`
+//   (ex. CommandValve1). META.type de ces entités vaut CommandGeneric —
+//   pas d'origine figée côté description.
 // ═════════════════════════════════════════════════════════════════════════════
 
 enum class DataType : uint8_t {
-    Power          = 0,
-    Sensor         = 1,
-    Actuator       = 2,
-    System         = 3,
-    CommandGeneric = 4,
-    CommandManual  = 5,
-    CommandAuto    = 6
+    Power              = 0,
+    Sensor             = 1,
+    Actuator           = 2,
+    System             = 3,
+    CommandGeneric     = 4,
+    CommandManual      = 5,
+    CommandAuto        = 6,
+    CommandConditional = 7
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -249,17 +252,18 @@ inline int findMetaIndex(uint8_t idByte)
 }
 
 // Libellé canonique d'un DataType, y compris pour les types purement
-// « record » (CommandManual, CommandAuto) absents de META.
+// « record » (CommandManual, CommandAuto, CommandConditional) absents de META.
 inline const char* typeLabel(DataType t)
 {
     switch (t) {
-        case DataType::Power:          return "Alimentation";
-        case DataType::Sensor:         return "Capteur";
-        case DataType::Actuator:       return "Actionneur";
-        case DataType::System:         return "Système";
-        case DataType::CommandGeneric: return "Commande";
-        case DataType::CommandManual:  return "Commande manuelle";
-        case DataType::CommandAuto:    return "Commande automatique";
+        case DataType::Power:              return "Alimentation";
+        case DataType::Sensor:             return "Capteur";
+        case DataType::Actuator:           return "Actionneur";
+        case DataType::System:             return "Système";
+        case DataType::CommandGeneric:     return "Commande";
+        case DataType::CommandManual:      return "Commande manuelle";
+        case DataType::CommandAuto:        return "Commande automatique";
+        case DataType::CommandConditional: return "Commande conditionnelle";
     }
     return "?";
 }

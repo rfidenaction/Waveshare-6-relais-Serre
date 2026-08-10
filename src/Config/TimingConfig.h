@@ -259,6 +259,18 @@
 #define GARDENER_HANDLE_PERIOD_MS      1000
 
 // =============================================================================
+// ConditionalWatering — Arrosage conditionnel sur critère de capteur
+// =============================================================================
+/*
+ * Période d'appel de ConditionalWatering::handle() par TaskManager.
+ * Le module n'a pas de cadence propre : il réagit aux mesures poussées par
+ * DataBus. Cette période ne fixe donc que la latence entre l'arrivée d'une
+ * mesure et la décision, la décision ne pouvant pas être prise dans
+ * DataBus::distribute() (publish imbriqué).
+ */
+#define CONDITIONAL_HANDLE_PERIOD_MS   1000
+
+// =============================================================================
 // SoilSensorRS485 — Sondes de sol RS485 (Modbus RTU)
 // =============================================================================
 /*

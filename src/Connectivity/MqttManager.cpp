@@ -15,6 +15,7 @@
 #include "Core/DataBus.h"
 #include "Config/MetaDataModel.h"
 #include "Gardener/GardenerManager.h"
+#include "Gardener/ConditionalWatering.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -176,6 +177,15 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
 
         esp_mqtt_client_subscribe(
             (esp_mqtt_client_handle_t)mqttClient,
+            ConditionalWatering::CONDITIONAL_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à "
+                     + String(ConditionalWatering::CONDITIONAL_TOPIC_FROM_USER));
+
+        ConditionalWatering::publishConditionalState();
+
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
             "serre/families/rename", 1
         );
         Console::info(TAG, "Abonné à serre/families/rename");
@@ -213,13 +223,22 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         break;
 
     case MQTT_EVENT_DATA:
-        // Routage par topic : Gardener FromUser, Family rename, ou commande serre/cmd
+        // Routage par topic : Gardener FromUser, Conditional FromUser,
+        // Family rename, ou commande serre/cmd
         if (event->topic && event->topic_len > 0) {
             static const char GD_TOPIC[] = "serre/gardener/FromUser";
             static const int  GD_LEN     = sizeof(GD_TOPIC) - 1;
             if (event->topic_len == GD_LEN &&
                 memcmp(event->topic, GD_TOPIC, GD_LEN) == 0) {
                 GardenerManager::onGardenerMessage(event->data, event->data_len);
+                break;
+            }
+
+            static const char CW_TOPIC[] = "serre/conditional/FromUser";
+            static const int  CW_LEN     = sizeof(CW_TOPIC) - 1;
+            if (event->topic_len == CW_LEN &&
+                memcmp(event->topic, CW_TOPIC, CW_LEN) == 0) {
+                ConditionalWatering::onConditionalMessage(event->data, event->data_len);
                 break;
             }
 
@@ -347,11 +366,12 @@ String MqttManager::buildSchemaJson()
          "\"type\", \"id\", \"valueType\", \"value\"],\n";
 
     // Table DataType — énumère TOUS les types possibles (META + records),
-    // y compris ceux absents de META (CommandManual, CommandAuto). Libellés
-    // fournis par typeLabel() (MetaDataModel.h, source de vérité unique).
+    // y compris ceux absents de META (CommandManual, CommandAuto,
+    // CommandConditional). Libellés fournis par typeLabel()
+    // (MetaDataModel.h, source de vérité unique).
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
-    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandAuto; t++) {
+    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandConditional; t++) {
         if (!firstType) p += ",\n";
         firstType = false;
         p += "    {\"id\": "; p += t;
@@ -572,6 +592,32 @@ void MqttManager::publishGardenerWateringState(const char* payload, size_t len)
                      + " (" + String(len) + " octets)");
     } else {
         Console::error(TAG, "Échec publication Gardener state");
+    }
+}
+
+// =============================================================================
+// Publication de l'état de l'arrosage conditionnel
+// (retain sur serre/conditional/ToUser).
+// Passe-plat : reçoit le JSON prêt de ConditionalWatering.
+// =============================================================================
+void MqttManager::publishConditionalState(const char* payload, size_t len)
+{
+    if (!mqttClient || !mqttConnected) return;
+
+    int msgId = esp_mqtt_client_publish(
+        (esp_mqtt_client_handle_t)mqttClient,
+        ConditionalWatering::CONDITIONAL_TOPIC_TO_USER,
+        payload, len,
+        1,      // qos=1
+        true    // retain=true
+    );
+
+    if (msgId >= 0) {
+        Console::info(TAG, "Conditional state publié sur "
+                     + String(ConditionalWatering::CONDITIONAL_TOPIC_TO_USER)
+                     + " (" + String(len) + " octets)");
+    } else {
+        Console::error(TAG, "Échec publication Conditional state");
     }
 }
 

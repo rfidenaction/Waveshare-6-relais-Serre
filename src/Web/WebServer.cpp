@@ -451,7 +451,7 @@ static void buildBundleHeader(String& p)
 
     p += "  \"dataTypes\": [\n";
     bool firstType = true;
-    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandAuto; t++) {
+    for (uint8_t t = 0; t <= (uint8_t)DataType::CommandConditional; t++) {
         if (!firstType) p += ",\n";
         firstType = false;
         p += "    {\"id\": "; p += t;
