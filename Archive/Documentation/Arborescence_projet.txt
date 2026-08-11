@@ -1,0 +1,77 @@
+projet/
+└── src/
+    ├── main.cpp
+    │
+    ├── Actuators/
+    │   ├── ValveManager.h
+    │   └── ValveManager.cpp
+    │
+    ├── Config/
+    │   ├── Config.h                  // version, appareil, fuseau
+    │   ├── IO-Config.h               // broches + RELAYS[]
+    │   ├── MetaDataModel.h           // DataType/DataId, META[]
+    │   ├── NetworkConfig.h
+    │   └── TimingConfig.h
+    │
+    ├── Connectivity/
+    │   ├── BridgeManager.h
+    │   ├── BridgeManager.cpp
+    │   ├── NTPManager.h
+    │   ├── NTPManager.cpp
+    │   ├── MqttManager.h
+    │   ├── MqttManager.cpp
+    │   ├── SmsManager.h
+    │   ├── SmsManager.cpp            // SMS via LilyGo
+    │   ├── WifiManager.h
+    │   └── WifiManager.cpp           // STA + AP
+    │
+    ├── Core/
+    │   ├── DataBus.h
+    │   ├── DataBus.cpp               // bus asynchrone données/commandes
+    │   ├── EventManager.h
+    │   ├── EventManager.cpp
+    │   ├── RTCManager.h
+    │   ├── RTCManager.cpp
+    │   ├── SafeReboot.h
+    │   ├── SafeReboot.cpp
+    │   ├── TaskManager.h
+    │   ├── TaskManager.cpp           // tâches périodiques
+    │   ├── TaskManagerMonitor.h
+    │   ├── TaskManagerMonitor.cpp
+    │   ├── VirtualClock.h
+    │   └── VirtualClock.cpp
+    │
+    ├── Gardener/
+    │   ├── ConditionalWatering.h
+    │   ├── ConditionalWatering.cpp
+    │   ├── GardenerManager.h
+    │   └── GardenerManager.cpp       // arrosage automatique
+    │
+    ├── Sensors/
+    │   ├── AirSensorRS485.h
+    │   ├── AirSensorRS485.cpp
+    │   ├── SoilSensorRS485.h
+    │   ├── SoilSensorRS485.cpp
+    │   ├── SupplyVoltage.h
+    │   └── SupplyVoltage.cpp
+    │
+    ├── Storage/
+    │   ├── DataLogger.h
+    │   └── DataLogger.cpp            // logs CSV
+    │
+    ├── Utils/
+    │   ├── Console.h
+    │   └── Console.cpp
+    │
+    └── Web/
+        ├── WebServer.h
+        ├── WebServer.cpp
+        └── Pages/
+            ├── PagePrincipale.h
+            ├── PagePrincipale.cpp
+            ├── PageActuators.h
+            ├── PageActuators.cpp
+            ├── PageLogs.h
+            ├── PageLogs.cpp
+            ├── PageRS485.h
+            └── PageRS485.cpp

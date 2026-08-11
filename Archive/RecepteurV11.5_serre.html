@@ -1037,8 +1037,8 @@ function setMqttStatus(state, text) {
 var AC_POWER_STALE_MS = 65 * 60 * 1000;
 
 function updateAcPowerStatus(entry) {
-  var stale = deviceDot.classList.contains('offline') ||
-              (Date.now() - entry.receivedAt) > AC_POWER_STALE_MS;
+  var ageMs = Date.now() - entry.timestamp * 1000;
+  var stale = deviceDot.classList.contains('offline') || ageMs > AC_POWER_STALE_MS;
   acPowerStatus.classList.toggle('stale', stale);
 
   var connected = Math.round(entry.value) === 1;

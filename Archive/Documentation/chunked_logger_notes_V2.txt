@@ -1,0 +1,147 @@
+================================================================================
+   NOTE TECHNIQUE — Datalogging non bloquant LittleFS (double buffer + chunking)
+================================================================================
+
+Objet  : stratégie complète et production-ready pour datalogging continu sur ESP32-S3.
+Cible  : Waveshare ESP32-S3-Relay-6CH (Arduino-ESP32 + FreeRTOS + LittleFS).
+Statut : proposition de référence 2026 – à adapter à ton projet serre.
+
+Le code de référence sera fourni dans chunked_logger_production.ino (double buffer + rotation).
+
+================================================================================
+1. LE PROBLÈME
+================================================================================
+
+Sur un ESP32 qui loggue 24/7 (serre, capteurs, relais…), l’écriture LittleFS est l’opération la plus longue et la plus variable du système.  
+Un append peut durer 20-70 ms en nominal, mais atteindre 250-350 ms (voire plus) lors des opérations de copy-on-write, metadata compaction ou GC.
+
+Sans optimisation, ces pics bloquent la loop() ou les tâches critiques → acquisitions ratées, WiFi instable, watchdog, etc.
+
+Objectifs finaux :
+- Éviter d’user inutilement la flash
+- Limiter tout ralentissement perceptible à quelques dizaines de ms max
+- Zéro perte de données tant que la carte fonctionne
+- Pertes minimales et contrôlées en cas de plantage/power-loss
+
+================================================================================
+2. LES CINQ PRINCIPES (version production)
+================================================================================
+
+Principe 1 — Double buffering (ping-pong)
+------------------------------------------
+Deux buffers RAM identiques.  
+L’acquisition écrit toujours dans le buffer actif.  
+Dès que le buffer actif atteint le seuil ou le timeout, on swap les deux buffers.  
+Le buffer qui vient d’être rempli devient le buffer à flusher, l’autre redevient actif immédiatement.  
+→ Aucune perte pendant le drain.
+
+Principe 2 — Flush déclenché conditionnellement
+-----------------------------------------------
+Seuil de remplissage + timeout d’inactivité (ex. 30 secondes).  
+Le flush n’est jamais armé à chaque record.
+
+Principe 3 — Drain fractionné en chunks
+---------------------------------------
+Une fois le buffer à flusher sélectionné, on écrit par chunks de 512 octets maximum.  
+Entre chaque chunk on appelle `yield()` pour rendre la main au scheduler FreeRTOS.  
+Le drain complet d’un buffer de 4096-8192 octets reste étalé dans le temps.
+
+Principe 4 — Un seul flush() par buffer complet
+-----------------------------------------------
+`file.write()` par chunks → `yield()` après chaque chunk → **un seul** `file.flush()` (ou `file.sync()`) à la toute fin du buffer.  
+Ceci évite la pénalité copy-on-write décrite dans l’issue LittleFS #564.
+
+Principe 5 — Rotation de fichier
+---------------------------------
+Le fichier de log ne grossit jamais indéfiniment.  
+Rotation quotidienne (ou toutes les 24 h / par taille 1-2 Mo).  
+Chaque jour on ferme l’ancien fichier, on le renomme (`log_2026-04-27.csv`), on ouvre un nouveau fichier en append.  
+→ Performances constantes + usure maîtrisée.
+
+================================================================================
+3. CHRONOGRAMME — POURQUOI ÇA MARCHE
+================================================================================
+
+Cas sans optimisation (écriture monolithique) :
+   acquisition   |x x x x x x x x x x x x x x x x x x x x|
+   loop()        |o o o o o o o o o o o o o o o o o o o o|
+   flush flash   |                  ████████████████      |
+   autres tâches |o o o o o o o o o                o o o |
+
+Cas avec double buffer + chunking + yield + un seul flush :
+   acquisition   |x x x x x x x x x x x x x x x x x x x x|  (jamais interrompue)
+   loop()        |o o o o o o o o o o o o o o o o o o o o|
+   flush flash   |       █   █   █   █   █   █   █   █   |  (chunks + yield)
+                          ^                           ^
+                          swap buffer          un seul flush()
+   autres tâches |o o o o o o o o o o o o o o o o o o o o|
+
+Le drain est totalement transparent pour l’acquisition.
+
+================================================================================
+4. SCÉNARIO NUMÉRIQUE (exemple réaliste serre)
+================================================================================
+
+Hypothèses :
+  - Record CSV ≈ 60 octets
+  - Buffer = 8192 octets → ~136 records par buffer
+  - Chunk = 512 octets → 16 chunks par buffer
+  - Acquisition toutes les 10 secondes (très conservateur)
+  - Coût écriture : 30 ms/chunk nominal, pic 80 ms
+
+Phase remplissage : 136 records → ~22 minutes sans aucune écriture flash.  
+Phase drain : 16 chunks × 512 octets → ~16 appels à processFlush()  
+Durée totale drain ≈ 500-800 ms étalés sur ~160-300 ms de temps CPU (selon vitesse loop()).  
+Pire pause individuelle = 1 chunk ≈ 80 ms max.  
+Aucune perte grâce au double buffer.  
+En cas de plantage pendant drain → perte maximale = 1 buffer (8192 octets).
+
+================================================================================
+5. POINTS D’ATTENTION & BONNES PRATIQUES
+================================================================================
+
+5.1 Double buffering
+   - Consomme 2 × taille_buffer en RAM (16 Ko pour 8 Ko par buffer → largement OK sur ESP32-S3).
+   - Implémentation avec deux pointeurs + swap propre.
+
+5.2 Un seul flush() par buffer
+   - Évite la multiplication par 8 de la pénalité copy-on-write.
+   - LittleFS reste parfaitement crash-safe.
+
+5.3 Fichier ouvert en permanence
+   - Ouvert une seule fois au boot (ou à chaque rotation) en mode "a".
+   - Totalement sûr avec LittleFS (power-loss resilient).
+   - Plus performant que open/close répétés.
+
+5.4 Rotation de fichier
+   - Obligatoire pour garder des performances constantes.
+   - Exemple : rotation tous les jours à minuit ou quand fichier > 1,5 Mo.
+   - Conservation des 7-14 derniers jours possible.
+
+5.5 Concurrence FreeRTOS
+   - Idéalement : une seule tâche (loop() ou tâche dédiée) qui appelle `addRecord()` et `processFlush()`.
+   - Si plusieurs tâches loguent → queue FreeRTOS + tâche logger unique.
+
+5.6 Reprise après reboot
+   - LittleFS garantit l’intégrité du fichier.
+   - Au pire, perte du dernier buffer en cours de flush.
+
+================================================================================
+6. INTÉGRATION DANS UN VRAI PROJET SERRE
+================================================================================
+
+Ce design est prêt pour la production. Points à adapter :
+- Remplacer le buffer brut par ta structure de record CSV/struct.
+- Intégrer `addRecord()` dans tes fonctions d’acquisition existantes.
+- Appeler `processFlush()` régulièrement depuis loop() (ou depuis une tâche dédiée).
+- Implémenter la rotation (fonction `rotateLogFile()` appelée par RTC ou timer).
+- Ajouter des métriques : droppedRecords (devrait rester à 0), temps d’écriture moyen, LittleFS.usedBytes().
+- Conserver le format CSV existant pour compatibilité export/analyse.
+
+================================================================================
+7. RÉSUMÉ EN UNE PHRASE
+================================================================================
+
+Pour un datalogging 24/7 ultra-robuste sur ESP32-S3 + LittleFS : double buffering + chunking 512 octets avec yield() après chaque chunk + un seul flush() par buffer complet + rotation quotidienne de fichier → zéro perte en fonctionnement, ralentissements imperceptibles, usure minimale et performances stables dans le temps.
+
+================================================================================
