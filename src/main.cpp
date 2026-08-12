@@ -38,6 +38,7 @@
 
 #include "Web/WebServer.h"
 #include "Utils/Console.h"
+#include "Utils/BootStatus.h"
 
 // -----------------------------------------------------------------------------
 // Cycle de vie système : INIT → RUN
@@ -290,6 +291,11 @@ static void loopInit()
     TaskManager::addTask(
         []() { TaskManagerMonitor::checkSchedulerRegularity(); },
         TASKMON_CHECK_PERIOD_MS
+    );
+
+    TaskManager::addTask(
+        []() { BootStatus::handle(); },
+        BOOT_STATUS_PERIOD_MS
     );
 
     currentLoop = loopRun;

@@ -24,6 +24,9 @@ public:
     static void init();
     static void handle();   // à appeler régulièrement (TaskManager)
 
+    // true dès qu'une synchro NTP a réussi depuis le démarrage.
+    static bool hasEverSynced() { return _everSynced; }
+
 private:
     // ── Machine d'états NTP (non-bloquante) ──
     enum class NtpState : uint8_t { IDLE, WAITING };

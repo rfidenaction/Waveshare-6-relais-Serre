@@ -38,6 +38,26 @@
 #define SYSTEM_INIT_DELAY_MS   2500
 
 // =============================================================================
+// BootStatus — Verdict de démarrage
+// =============================================================================
+/*
+ * Instant où le démarrage est déclaré terminé et où le verdict est publié
+ * sur DataId::Boot ("Démarrage").
+ *
+ * Calé juste après la fin du premier tour complet des capteurs RS485
+ * (dernier capteur air interrogé à ~360 s), qui est le dernier événement
+ * de la séquence de démarrage.
+ */
+#define BOOT_VERDICT_DELAY_MS          361000UL
+
+/*
+ * Période d'appel de BootStatus::handle() par TaskManager.
+ * Simple comparaison de millis() avant l'échéance, retour immédiat après
+ * la publication du verdict.
+ */
+#define BOOT_STATUS_PERIOD_MS          5000
+
+// =============================================================================
 // EventManager
 // =============================================================================
 /*
