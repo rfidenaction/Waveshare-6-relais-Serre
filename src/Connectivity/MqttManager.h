@@ -61,6 +61,15 @@ public:
     static constexpr uint32_t WATCHDOG_GAP_THRESHOLD = 7;      // enqueues sans PUBACK
     static constexpr uint32_t WATCHDOG_SECONDS       = 3900;   // 65 min
 
+    // RETAINED_REFRESH_MS : période de republication des trois éléments à
+    //   durée de vie longue (schéma, programmation horaire, règles
+    //   conditionnelles). Le plan HiveMQ Cloud Serverless expire les messages
+    //   retenus au bout de 3 jours ; sur une installation stable, où plus rien
+    //   n'est publié spontanément, un téléphone neuf ne trouverait donc plus
+    //   ni schéma ni programmations. Valeur très en deçà des 72 h afin de
+    //   tolérer deux échéances manquées consécutives.
+    static constexpr uint32_t RETAINED_REFRESH_MS = 24UL * 3600UL * 1000UL;  // 24 h
+
     static void init();
     static void ensureMqttStarted();
     static bool isMqttConnected();
@@ -88,6 +97,11 @@ private:
     static volatile bool mqttConnected;
     static bool mqttStarted;
     static bool schemaPublished;
+
+    // Horodatage millis() de la dernière publication du schéma, réarmé par
+    // publishSchema() quelle que soit son origine (connexion, renommage de
+    // famille, échéance périodique). Sert d'échéance à RETAINED_REFRESH_MS.
+    static uint32_t lastSchemaPublishMs;
 
     static void mqttEventHandler(void* handlerArgs, const char* base, int32_t eventId, void* eventData);
     // serre/cmd (CSV 7 champs) : DataBus::parseCommand → DataBus::publish

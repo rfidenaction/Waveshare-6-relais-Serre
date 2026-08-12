@@ -32,6 +32,7 @@ void*         MqttManager::mqttClient      = nullptr;
 volatile bool MqttManager::mqttConnected   = false;
 bool          MqttManager::mqttStarted     = false;
 bool          MqttManager::schemaPublished = false;
+uint32_t      MqttManager::lastSchemaPublishMs = 0;
 
 void (*MqttManager::_onPublishSuccess)() = nullptr;
 
@@ -332,6 +333,10 @@ void MqttManager::publishSchema()
         1, true
     );
 
+    // Réarmé sur la tentative et non sur le succès : un échec ne doit pas
+    // provoquer une republication à chaque tour de handle().
+    lastSchemaPublishMs = millis();
+
     if (msgId >= 0) {
         Console::info(TAG, "Schéma publié sur " + String(MQTT_SCHEMA_TOPIC)
                      + " (" + String(json.length()) + " octets)");
@@ -473,6 +478,19 @@ void MqttManager::handle()
     }
 
     if (!mqttConnected) return;
+
+    // ─── Rafraîchissement périodique des messages retenus ────────────────
+    // Évalué uniquement une fois connecté : une coupure ne consomme donc pas
+    // l'échéance, la republication a lieu dès le retour du lien. Soustraction
+    // non signée, insensible au débordement de millis(). publishSchema()
+    // réarme l'échéance, un renommage de famille ou une reconnexion la
+    // repoussent donc d'autant.
+    if ((millis() - lastSchemaPublishMs) >= RETAINED_REFRESH_MS) {
+        Console::info(TAG, "Rafraîchissement des messages retenus (schéma + programmations)");
+        publishSchema();
+        GardenerManager::requestStatePublish();
+        ConditionalWatering::requestStatePublish();
+    }
 
     // ─── Slot in-flight : recharge si libre ──────────────────────────────
     // Pop un BusItem de DataBus::mqttQueue, formate en CSV et stocke dans le
