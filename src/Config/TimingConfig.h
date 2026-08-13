@@ -38,7 +38,7 @@
 #define SYSTEM_INIT_DELAY_MS   2500
 
 // =============================================================================
-// BootStatus — Verdict de démarrage
+// StatusReport — Verdict de démarrage et rapport périodique
 // =============================================================================
 /*
  * Instant où le démarrage est déclaré terminé et où le verdict est publié
@@ -51,11 +51,19 @@
 #define BOOT_VERDICT_DELAY_MS          361000UL
 
 /*
- * Période d'appel de BootStatus::handle() par TaskManager.
- * Simple comparaison de millis() avant l'échéance, retour immédiat après
- * la publication du verdict.
+ * Période d'appel de StatusReport::handle() par TaskManager.
+ * Une comparaison de millis() par appel, hors des deux échéances.
  */
-#define BOOT_STATUS_PERIOD_MS          5000
+#define STATUS_TASK_PERIOD_MS          5000
+
+/*
+ * Période du rapport publié sur DataId::Error ("Erreur") : nombre d'ERROR et
+ * de WARN de la fenêtre écoulée, plus le premier message de chaque catégorie.
+ *
+ * Le premier rapport part à l'instant du verdict de démarrage et couvre donc
+ * la séquence de boot ; les suivants couvrent une heure chacun.
+ */
+#define STATUS_REPORT_PERIOD_MS        3600000UL   // 1 h
 
 // =============================================================================
 // EventManager

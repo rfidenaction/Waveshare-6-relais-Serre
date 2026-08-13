@@ -4,7 +4,7 @@
 #include "Config/IO-Config.h"
 #include "Config/Config.h"
 #include "Utils/Console.h"
-#include "Utils/BootStatus.h"
+#include "Utils/StatusReport.h"
 
 #include <SPI.h>        // Requis avant RTClib sous PlatformIO (issue Adafruit BusIO)
 #include <Wire.h>
@@ -58,7 +58,7 @@ void RTCManager::init()
     // Vérification OSF (Oscillator Stop Flag)
     if (rtc.lostPower()) {
         Console::warn(TAG, "Pile HS ou RTC jamais configuré. En attente de NTP.");
-        BootStatus::note(TAG, "Pile HS ou RTC jamais configuré");
+        StatusReport::note(TAG, "Pile HS ou RTC jamais configuré");
     } else {
         // Lecture et affichage en heure locale
         time_t utcNow;

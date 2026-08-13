@@ -2,7 +2,7 @@
 // Renommage Logger → Console (portage Waveshare)
 // Sortie via printf (UART0/CH343 sur Waveshare ESP32-S3-Relay-6CH)
 #include "Console.h"
-#include "Utils/BootStatus.h"
+#include "Utils/StatusReport.h"
 
 Console::Level Console::_currentLevel = Console::Level::INFO;
 
@@ -37,9 +37,10 @@ void Console::trace(const String& tag, const String& message) { log(Level::TRACE
 // ---------- Implémentation centrale ----------
 
 void Console::log(Level level, const String& tag, const String& message) {
-    // Avant le filtre de niveau : le verdict de démarrage ne doit pas dépendre
-    // du réglage de verbosité de la console.
-    if (level == Level::ERROR) BootStatus::note(tag, message);
+    // Avant le filtre de niveau : les verdicts ne doivent pas dépendre du
+    // réglage de verbosité de la console.
+    if      (level == Level::ERROR) StatusReport::onConsoleError(tag, message);
+    else if (level == Level::WARN)  StatusReport::onConsoleWarn (tag, message);
 
     if (level > _currentLevel) return;
 
