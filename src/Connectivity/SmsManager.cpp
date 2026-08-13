@@ -39,9 +39,7 @@ void SmsManager::init()
 // =============================================================================
 void SmsManager::sendStartupSms()
 {
-    String message = "Bonjour, la Serre de Marie-Pierre est bien connectee"
-                     " - IP: " + WiFi.localIP().toString() +
-                     " - WiFi: " + String(WiFi.RSSI()) + " dBm";
+    String message = "Bonjour, la Serre de Marie-Pierre est bien connectee";
 
     alert(message);
     startupSmsSent = true;
@@ -108,7 +106,7 @@ void SmsManager::send(const char* number, const String& message)
     item.id        = DataId::SmsEvent;
     item.valueKind = 1;
     item.valueFloat = 0.0f;
-    String text = "Demande envoi vers " + String(number);
+    String text = "Demandé \"" + message + "\"";
     strncpy(item.valueText, text.c_str(), sizeof(item.valueText) - 1);
     item.valueText[sizeof(item.valueText) - 1] = '\0';
     DataBus::publish(item);

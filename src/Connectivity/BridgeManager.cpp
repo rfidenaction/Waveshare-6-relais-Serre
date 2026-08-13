@@ -172,14 +172,16 @@ void BridgeManager::handleSmsMachine()
         sendSmsPacket(smsQueue[0]);
         smsState = SmsState::WAIT_ACK;
 
-        logSmsEvent("SMS envoye tentative 1 vers " + smsQueue[0].number);
+        logSmsEvent("SMS envoye tentative 1 vers " + smsQueue[0].number,
+                    "Envoyé \"" + smsQueue[0].message + "\"");
         break;
 
     // ─── WAIT_ACK — attente non-bloquante de la confirmation ─────────────
     case SmsState::WAIT_ACK:
         // ACK reçu → succès
         if (ackReceived) {
-            logSmsEvent("SMS confirme par LilyGo vers " + smsQueue[0].number);
+            logSmsEvent("SMS confirme par LilyGo vers " + smsQueue[0].number,
+                        "Confirmé \"" + smsQueue[0].message + "\"");
             removeFrontSms();
             smsState = SmsState::IDLE;
             return;
@@ -198,14 +200,16 @@ void BridgeManager::handleSmsMachine()
 
             sendSmsPacket(smsQueue[0]);
 
-            logSmsEvent("SMS renvoye tentative 2 vers " + smsQueue[0].number);
+            logSmsEvent("SMS renvoye tentative 2 vers " + smsQueue[0].number,
+                        "Renvoyé \"" + smsQueue[0].message + "\"");
         } else {
             // Abandon définitif
             String reason = (smsAttempt >= 2) ? "2 tentatives sans reponse"
                                               : "LilyGo non disponible pour SMS";
 
             logSmsEvent("SMS abandonne vers " + smsQueue[0].number
-                       + " — " + reason);
+                       + " — " + reason,
+                        "Abandonné \"" + smsQueue[0].message + "\"");
             removeFrontSms();
             smsState = SmsState::IDLE;
         }
@@ -291,7 +295,8 @@ void BridgeManager::sendMqttKo()
 bool BridgeManager::queueSms(const String& number, const String& message)
 {
     if (smsCount >= SMS_QUEUE_SIZE) {
-        logSmsEvent("SMS rejete (file pleine) vers " + number);
+        logSmsEvent("SMS rejete (file pleine) vers " + number,
+                    "Rejeté \"" + message + "\"");
         return false;
     }
 
@@ -300,7 +305,8 @@ bool BridgeManager::queueSms(const String& number, const String& message)
     smsCount++;
 
     logSmsEvent("SMS mis en file vers " + number
-               + " (" + String(smsCount) + "/" + String(SMS_QUEUE_SIZE) + ")");
+               + " (" + String(smsCount) + "/" + String(SMS_QUEUE_SIZE) + ")",
+                "En file \"" + message + "\"");
     return true;
 }
 
@@ -325,16 +331,16 @@ void BridgeManager::removeFrontSms()
 // ACK, abandon) sont tracés sur le canal dédié DataId::SmsEvent pour
 // centraliser la visibilité cote telephone/MQTT.
 // =============================================================================
-void BridgeManager::logSmsEvent(const String& message)
+void BridgeManager::logSmsEvent(const String& consoleMessage, const String& uiMessage)
 {
-    Console::info(TAG, message);
+    Console::info(TAG, consoleMessage);
 
     BusItem item = {};
     item.type      = getMeta(DataId::SmsEvent).type;
     item.id        = DataId::SmsEvent;
     item.valueKind = 1;
     item.valueFloat = 0.0f;
-    strncpy(item.valueText, message.c_str(), sizeof(item.valueText) - 1);
+    strncpy(item.valueText, uiMessage.c_str(), sizeof(item.valueText) - 1);
     item.valueText[sizeof(item.valueText) - 1] = '\0';
     DataBus::publish(item);
 }

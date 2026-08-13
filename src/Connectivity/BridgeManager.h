@@ -134,5 +134,8 @@ private:
     static void sendSmsPacket(const SmsSlot& sms);          // Envoie SMS|number|text en UDP
     static void sendHeartbeat();                            // Envoie HB en UDP
     static void removeFrontSms();                           // Supprime le premier SMS de la queue
-    static void logSmsEvent(const String& message);         // Console + DataBus::publish(SmsEvent)
+    // Console reçoit consoleMessage (trace technique complète : numéro, rang de
+    // file, motif d'abandon). L'UI reçoit uiMessage via DataId::SmsEvent : un
+    // libellé court suivi du texte du SMS. Les deux canaux sont indépendants.
+    static void logSmsEvent(const String& consoleMessage, const String& uiMessage);
 };
