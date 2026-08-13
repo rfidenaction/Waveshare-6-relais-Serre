@@ -46,14 +46,12 @@ private:
         DataId  temperatureId;
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 6;
+    static constexpr uint8_t SENSOR_COUNT = 4;
     static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
         { 0x01, DataId::SoilMoisture1, DataId::SoilTemperature1 },
         { 0x02, DataId::SoilMoisture2, DataId::SoilTemperature2 },
         { 0x03, DataId::SoilMoisture3, DataId::SoilTemperature3 },
         { 0x04, DataId::SoilMoisture4, DataId::SoilTemperature4 },
-        { 0x05, DataId::SoilMoisture5, DataId::SoilTemperature5 },
-        { 0x06, DataId::SoilMoisture6, DataId::SoilTemperature6 },
     };
 
     static bool    _initialized;

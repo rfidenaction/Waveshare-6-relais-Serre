@@ -311,9 +311,9 @@
 /*
  * Période d'interrogation des sondes de sol RS485 (Modbus RTU).
  * Chaque appel interroge UN capteur en rotation (~100 ms bloquant max).
- * Cycle complet = période × nombre de capteurs (3).
- * 30 s × 3 = 1 min 30 s en mode test. En production, ajuster pour
- * un cycle d'une heure (période = 1200000 = 20 min).
+ * Cycle complet = période × nombre de capteurs (4).
+ * 30 s × 4 = 2 min en mode test. En production, ajuster pour
+ * un cycle d'une heure (période = 900000 = 15 min).
  */
 #define SOIL_RS485_HANDLE_PERIOD_MS    30000
 
