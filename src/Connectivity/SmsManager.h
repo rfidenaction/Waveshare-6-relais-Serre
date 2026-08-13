@@ -32,6 +32,19 @@
 #define SMS_TASKMON_COOLDOWN_MS         172800000UL  // 48 h entre deux SMS
 #define SMS_TASKMON_BEFORE_SENDING_MS   60000UL      // 1 min entre armement et envoi
 
+/*
+ * Plage de période au-delà de laquelle une dérive du scheduler arme un SMS.
+ *
+ * Ces deux bornes ne conditionnent QUE l'alerte SMS. Elles n'ont aucun effet
+ * sur la valeur publiée sur DataId::TaskMonPeriod, qui remonte toujours la
+ * pire période réellement mesurée sur l'heure écoulée, ni sur la trace console
+ * de TaskManagerMonitor, dont le seuil est écrit en dur.
+ *
+ * Les élargir réduit le nombre de SMS sans jamais dégrader l'affichage.
+ */
+#define SMS_TASKMON_MIN_PERIOD_MS       1500
+#define SMS_TASKMON_MAX_PERIOD_MS       2500
+
 // =============================================================================
 // (fin de la section politique d'alertes)
 // =============================================================================

@@ -82,8 +82,8 @@
  *
  * Le monitor est enregistré comme une tâche périodique normale auprès du
  * TaskManager. À chaque exécution, il mesure son propre delta temporel par
- * rapport à l'exécution précédente. Si ce delta sort de la plage acceptable,
- * c'est que le scheduler est ralenti ou bloqué par une autre tâche.
+ * rapport à l'exécution précédente. Cette valeur est aussi la référence à
+ * laquelle tout delta mesuré est comparé.
  *
  * Ce module ne dépend d'aucun module métier — c'est sa propre régularité
  * d'exécution qui sert de référence.
@@ -91,21 +91,23 @@
 #define TASKMON_CHECK_PERIOD_MS        2000
 
 /*
- * Fenêtre temporelle acceptable autour de TASKMON_CHECK_PERIOD_MS.
+ * Période de publication de la synthèse sur DataId::TaskMonPeriod : la pire
+ * période mesurée sur la fenêtre écoulée, c'est-à-dire l'échantillon dont
+ * l'écart à TASKMON_CHECK_PERIOD_MS est le plus grand.
  *
- * Si le delta réel entre deux exécutions de checkSchedulerRegularity() sort
- * de cette plage, une dérive est signalée (log + remontée).
+ * La publication est inconditionnelle : une fenêtre sans aucune dérive publie
+ * la période nominale. L'interface reste ainsi à jour et l'absence de mise à
+ * jour devient elle-même un signal.
  *
- * CONTRAINTE DE COHÉRENCE :
- *   TASKMON_CHECK_PERIOD_MS DOIT se trouver à l'intérieur de la plage
- *   [TASKMON_MIN_ACCEPTABLE_PERIOD_MS ; TASKMON_MAX_ACCEPTABLE_PERIOD_MS],
- *   sinon le monitor déclencherait des alertes en permanence par construction.
+ * La première synthèse part à BOOT_VERDICT_DELAY_MS et couvre donc la séquence
+ * de démarrage ; les suivantes couvrent une fenêtre chacune. Même cadence et
+ * même principe que le rapport périodique de StatusReport.
  */
-#define TASKMON_MIN_ACCEPTABLE_PERIOD_MS    1997
-#define TASKMON_MAX_ACCEPTABLE_PERIOD_MS    2003
+#define TASKMON_REPORT_PERIOD_MS       3600000UL   // 1 h
 
-// Note : les réglages du SMS d'alerte TaskMon (activation, grâce, cooldown)
-//        sont dans SmsManager.h, section "POLITIQUE D'ALERTES SMS".
+// Note : les réglages du SMS d'alerte TaskMon (activation, seuils de dérive,
+//        grâce, cooldown) sont dans SmsManager.h, section "POLITIQUE D'ALERTES
+//        SMS". Ces seuils ne conditionnent que le SMS, jamais l'affichage.
 
 // =============================================================================
 // WiFi
