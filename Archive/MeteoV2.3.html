@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Météo à Lons (64)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #1976d2;
+  color: white;
+  text-align: center;
+  margin: 0;
+  padding: 20px;
+}
+h1 {
+  padding: 16px 20px;
+  border-radius: 10px;
+  margin: 0 0 14px 0;
+  background: rgba(0,0,0,0.15);
+  font-size: 1.35em;
+}
+.card {
+  background: rgba(255,255,255,0.2);
+  margin: 10px auto;
+  max-width: 720px;
+  padding: 18px 20px;
+  border-radius: 15px;
+  text-align: left;
+}
+.toolbar {
+  margin: 0 auto 12px;
+  max-width: 720px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+<button, .link-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 1em;
+  cursor: pointer;
+  background: rgba(255,255,255,0.85);
+  color: #0d47a1;
+  font-weight: bold;
+  text-decoration: none;
+  display: inline-block;
+}
+button:disabled { opacity: 0.55; cursor: wait; }
+button.btn-small {
+  padding: 6px 12px;
+  font-size: 0.8em;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+.link-btn { background: rgba(255,255,255,0.25); color: white; }
+
+.headline {
+  font-size: 1.15em;
+  font-weight: bold;
+  line-height: 1.45;
+  margin: 0 0 12px 0;
+}
+.headline .detail {
+  display: block;
+  font-weight: normal;
+  opacity: 0.95;
+  margin-top: 6px;
+  font-size: 0.95em;
+}
+.headline .badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.updated {
+  font-size: 0.9em;
+  opacity: 0.85;
+  margin-top: 10px;
+  text-align: center;
+}
+.summary-actions {
+  text-align: center;
+  margin-top: 10px;
+}
+.summary-actions.left {
+  text-align: left;
+}
+.summary-actions .btn-small {
+  margin-top: 0;
+}
+/* Même style que l’onglet actif AROME (Maintenant / Prévision 24h) */
+a.arome-style-btn {
+  display: inline-block;
+  padding: 8px 14px;
+  font-size: 0.9em;
+  font-weight: bold;
+  font-family: Arial, sans-serif;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.85);
+  color: #0d47a1;
+  text-decoration: none;
+  margin: 0 8px 8px 0;
+}
+a.arome-style-btn:hover {
+  background: #fff;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: bold;
+  margin: 2px 4px 2px 0;
+  background: rgba(0,0,0,0.25);
+}
+.badge.green { background: #2e7d32; }
+.badge.yellow { background: #f9a825; color: #222; }
+.badge.orange { background: #ef6c00; }
+.badge.red { background: #c62828; }
+.badge.grey { background: rgba(0,0,0,0.35); }
+
+.seg {
+  display: inline-flex;
+  background: rgba(0,0,0,0.18);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+  margin: 0 0 10px;
+}
+.seg button {
+  padding: 8px 14px;
+  font-size: 0.9em;
+  background: transparent;
+  color: white;
+}
+.seg button.active {
+  background: rgba(255,255,255,0.85);
+  color: #0d47a1;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+.kv {
+  flex: 1 1 140px;
+  background: rgba(0,0,0,0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.kv .k { font-size: 0.8em; opacity: 0.8; }
+.kv .v { font-size: 1.1em; font-weight: bold; margin-top: 4px; }
+.kv.storm { background: rgba(239, 108, 0, 0.35); }
+.kv.hail { background: rgba(198, 40, 40, 0.45); }
+
+.forecast-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.12);
+}
+table.forecast {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+  min-width: 520px;
+}
+table.forecast th, table.forecast td {
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  text-align: center;
+  white-space: nowrap;
+}
+table.forecast th { opacity: 0.85; font-weight: normal; }
+table.forecast td.storm { background: rgba(239, 108, 0, 0.35); font-weight: bold; }
+table.forecast td.hail { background: rgba(198, 40, 40, 0.45); font-weight: bold; }
+table.forecast tr.now td { background: rgba(255,255,255,0.12); }
+
+#radarMap {
+  height: 360px;
+  width: 100%;
+  border-radius: 12px;
+  margin-top: 8px;
+  background: #0d47a1;
+}
+.radar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.radar-controls button { padding: 8px 12px; font-size: 0.9em; }
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.8em;
+}
+.legend .item {
+  background: rgba(0,0,0,0.15);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+.legend .swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.hint {
+  font-size: 0.85em;
+  margin-top: 8px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+.footer {
+  max-width: 720px;
+  margin: 20px auto 8px;
+  font-size: 0.8em;
+  opacity: 0.75;
+  line-height: 1.45;
+}
+a { color: #e3f2fd; }
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffc107;
+  margin-right: 6px;
+}
+.status-dot.ok { background: #4caf50; }
+.status-dot.err { background: #f44336; }
+.status-dot.busy { background: #ffc107; animation: pulse 1s infinite; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+</style>
+</head>
+<body>
+
+<h1>Météo à Lons (64)</h1>
+
+<!-- Synthèse AROME en tête -->
+<div class="card" id="summaryCard">
+  <div class="headline" id="lineNow">
+    <span class="badge grey">…</span> Chargement AROME (maintenant)…
+  </div>
+  <div class="headline" id="lineForecast">
+    <span class="badge grey">…</span> Chargement AROME (prévision)…
+  </div>
+  <div class="updated" id="updatedAgo">Mis à jour —</div>
+  <div class="summary-actions">
+    <button type="button" class="btn-small" id="btnRefresh">Actualiser météo</button>
+  </div>
+</div>
+
+<!-- Détail AROME -->
+<div class="card" id="aromeCard">
+  <div class="seg" role="tablist">
+    <button type="button" class="active" id="tabNow">Maintenant</button>
+    <button type="button" id="tabForecast">Prévision 24h</button>
+    <button type="button" id="tabBlue" title="Au-delà de 24 h — MeteoBlue">MeteoBlue</button>
+  </div>
+  <div id="aromeNowView">
+    <div class="row" id="aromeNowKpis"></div>
+  </div>
+  <div id="aromeForecastView" style="display:none;">
+    <div id="aromeForecastWindow" style="font-weight:bold;margin-bottom:10px;line-height:1.4;">
+      Fenêtre de prévision : —
+    </div>
+    <div class="row" id="aromeKpis"></div>
+    <div class="forecast-wrap">
+      <table class="forecast">
+        <thead>
+          <tr>
+            <th>Heure</th><th>T°C</th><th>Pluie</th><th>Nuages</th><th>Soleil</th><th>Temps</th><th>Rafales</th>
+          </tr>
+        </thead>
+        <tbody id="aromeBody"><tr><td colspan="7">—</td></tr></tbody>
+      </table>
+    </div>
+    <div class="hint">Orange = orage · rouge = grêle (codes modèle). Indicatif.</div>
+  </div>
+</div>
+
+<!-- Radar -->
+<div class="card">
+  <div id="radarInfo" style="font-weight:bold;">Radar…</div>
+  <div id="radarMap"></div>
+  <div class="radar-controls">
+    <button type="button" id="radarPrev">◀</button>
+    <button type="button" id="radarPlay">Lecture</button>
+    <button type="button" id="radarNext">▶</button>
+    <span id="radarFrameLabel" style="opacity:0.85;font-size:0.9em;"></span>
+  </div>
+  <div class="legend">
+    <div class="item"><span class="swatch" style="background:#01a0f6;"></span> faible</div>
+    <div class="item"><span class="swatch" style="background:#0cf224;"></span> modéré</div>
+    <div class="item"><span class="swatch" style="background:#f8f11a;"></span> fort</div>
+    <div class="item"><span class="swatch" style="background:#fb0807;"></span> très fort</div>
+    <div class="item"><span class="swatch" style="background:#c707f9;"></span> extrême</div>
+  </div>
+</div>
+
+<!-- Vigilance en bas -->
+<div class="card">
+  <div style="font-weight:bold;margin-bottom:10px;">Vigilance Météo-France</div>
+  <div>
+    <a class="arome-style-btn" href="https://vigilance.meteofrance.fr/fr" target="_blank" rel="noopener">Vigilance France</a>
+    <a class="arome-style-btn" href="https://vigilance.meteofrance.fr/fr/pyrenees-atlantiques" target="_blank" rel="noopener">Vigilance 64</a>
+  </div>
+</div>
+
+<div class="footer">
+  Sources : Open-Meteo AROME · RainViewer · Vigilance MF · MeteoBlue (lien).
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+(() => {
+  const LAT = 43.32;
+  const LON = -0.40;
+
+  const WMO = {
+    0: 'Clair', 1: 'Peu nuageux', 2: 'Nuageux', 3: 'Couvert',
+    45: 'Brouillard', 48: 'Brouillard givrant',
+    51: 'Bruine*', 53: 'Bruine', 55: 'Bruine+',
+    61: 'Pluie*', 63: 'Pluie', 65: 'Pluie+',
+    71: 'Neige*', 73: 'Neige', 75: 'Neige+',
+    80: 'Averses*', 81: 'Averses', 82: 'Averses+',
+    95: 'Orage', 96: 'Orage+grêle*', 99: 'Orage+grêle+'
+  };
+
+  const el = (id) => document.getElementById(id);
+  let lastRefreshAt = null;
+  let agoTimer = null;
+
+  function fmtTime(d, opt) {
+    try {
+      return new Date(d).toLocaleString('fr-FR', Object.assign({ timeZone: 'Europe/Paris' }, opt || {}));
+    } catch {
+      return String(d);
+    }
+  }
+
+  function fmtHour(iso) {
+    return fmtTime(iso, { weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function relativeAgo(fromMs) {
+    if (fromMs == null) return 'Mis à jour —';
+    const sec = Math.max(0, Math.floor((Date.now() - fromMs) / 1000));
+    if (sec < 60) return 'Mis à jour il y a ' + sec + ' s';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return 'Mis à jour il y a ' + min + ' min';
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    if (h < 48) return 'Mis à jour il y a ' + h + ' h' + (m ? ' ' + m + ' min' : '');
+    const d = Math.floor(h / 24);
+    return 'Mis à jour il y a ' + d + ' j';
+  }
+
+  function tickAgo() {
+    el('updatedAgo').textContent = relativeAgo(lastRefreshAt);
+  }
+
+  function stormBadge(code, scope) {
+    // scope: 'now' | 'forecast'
+    if (code === 96 || code === 99) {
+      return { cls: 'red', text: scope === 'now'
+        ? 'Grêle signalée à cette heure (modèle)'
+        : 'Grêle signalée par AROME (prévision)' };
+    }
+    if (code >= 95) {
+      return { cls: 'orange', text: scope === 'now'
+        ? 'Orage à cette heure (modèle)'
+        : 'Orage signalé par AROME (prévision)' };
+    }
+    return { cls: 'green', text: scope === 'now'
+      ? 'Pas d’orage fort à cette heure'
+      : 'Pas d’orage fort prévu par AROME' };
+  }
+
+  function maxStormCode(codes, from, to) {
+    let m = 0;
+    for (let i = from; i <= to && i < codes.length; i++) {
+      const c = codes[i] || 0;
+      if (c > m) m = c;
+    }
+    return m;
+  }
+
+  function nearestIndex(times) {
+    const now = Date.now();
+    let best = 0, bestDiff = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const d = Math.abs(new Date(times[i]).getTime() - now);
+      if (d < bestDiff) { bestDiff = d; best = i; }
+    }
+    return best;
+  }
+
+  function maxInRange(arr, from, to) {
+    let m = -Infinity;
+    for (let i = from; i <= to && i < arr.length; i++) {
+      const v = arr[i];
+      if (v != null && v > m) m = v;
+    }
+    return m === -Infinity ? null : m;
+  }
+
+  function minInRange(arr, from, to) {
+    let m = Infinity;
+    for (let i = from; i <= to && i < arr.length; i++) {
+      const v = arr[i];
+      if (v != null && v < m) m = v;
+    }
+    return m === Infinity ? null : m;
+  }
+
+  /** sunshine_duration Open-Meteo = secondes sur l'heure précédente */
+  function sunshineMin(sec) {
+    if (sec == null || Number.isNaN(sec)) return '—';
+    const m = Math.round(sec / 60);
+    return m + ' min';
+  }
+
+  function sunshineHours(sec) {
+    if (sec == null || Number.isNaN(sec)) return '—';
+    return (sec / 3600).toFixed(1) + ' h';
+  }
+
+  function setAromeView(view) {
+    const now = view === 'now';
+    el('aromeNowView').style.display = now ? 'block' : 'none';
+    el('aromeForecastView').style.display = now ? 'none' : 'block';
+    el('tabNow').classList.toggle('active', now);
+    el('tabForecast').classList.toggle('active', !now);
+  }
+  el('tabNow').addEventListener('click', () => setAromeView('now'));
+  el('tabForecast').addEventListener('click', () => setAromeView('forecast'));
+  el('tabBlue').addEventListener('click', () => {
+    window.open(
+      'https://www.meteoblue.com/fr/meteo/semaine/lons_france_2997628',
+      '_blank',
+      'noopener'
+    );
+  });
+
+  async function fetchArome() {
+    const params = new URLSearchParams({
+      latitude: String(LAT),
+      longitude: String(LON),
+      hourly: 'temperature_2m,precipitation,weather_code,wind_gusts_10m,cloud_cover,sunshine_duration',
+      forecast_days: '2',
+      timezone: 'Europe/Paris',
+      models: 'arome_france'
+    });
+    const r = await fetch('https://api.open-meteo.com/v1/meteofrance?' + params, { cache: 'no-store' });
+    if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
+    return r.json();
+  }
+
+  function renderArome(data) {
+    const h = data.hourly || {};
+    const times = h.time || [];
+    if (!times.length) throw new Error('Pas de données horaires');
+
+    const i0 = nearestIndex(times);
+    const iEnd = Math.min(times.length - 1, i0 + 24);
+    const codes = h.weather_code || [];
+    const code0 = codes[i0] || 0;
+    const codeWin = maxStormCode(codes, i0, iEnd);
+
+    const nowB = stormBadge(code0, 'now');
+    const fcB = stormBadge(codeWin, 'forecast');
+
+    el('lineNow').innerHTML =
+      '<span class="badge ' + nowB.cls + '">' + nowB.text + '</span>' +
+      '<span class="detail">' +
+      (h.temperature_2m?.[i0] ?? '—') + ' °C · ' + (WMO[code0] || code0) +
+      ' · ' + fmtHour(times[i0]) + '</span>';
+
+    el('lineForecast').innerHTML =
+      '<span class="badge ' + fcB.cls + '">' + fcB.text + '</span>' +
+      '<span class="detail">sur 24 h, jusqu’à ' +
+      fmtHour(times[iEnd]) + '</span>';
+
+    let tempsCls = '';
+    if (code0 === 96 || code0 === 99) tempsCls = ' hail';
+    else if (code0 >= 95) tempsCls = ' storm';
+
+    el('aromeNowKpis').innerHTML =
+      '<div class="kv"><div class="k">Température</div><div class="v">' + (h.temperature_2m?.[i0] ?? '—') + ' °C</div></div>' +
+      '<div class="kv' + tempsCls + '"><div class="k">Temps</div><div class="v">' + (WMO[code0] || code0) + '</div></div>' +
+      '<div class="kv"><div class="k">Pluie (h)</div><div class="v">' + (h.precipitation?.[i0] ?? '—') + ' mm</div></div>' +
+      '<div class="kv"><div class="k">Nuages</div><div class="v">' + (h.cloud_cover?.[i0] ?? '—') + ' %</div></div>' +
+      '<div class="kv"><div class="k">Soleil (h)</div><div class="v">' + sunshineMin(h.sunshine_duration?.[i0]) + '</div></div>' +
+      '<div class="kv"><div class="k">Rafales</div><div class="v">' + (h.wind_gusts_10m?.[i0] ?? '—') + ' km/h</div></div>';
+
+    const maxGust = maxInRange(h.wind_gusts_10m || [], i0, iEnd);
+    const sumRain = (h.precipitation || []).slice(i0, iEnd + 1).reduce((a, b) => a + (b || 0), 0);
+    const sumSunSec = (h.sunshine_duration || []).slice(i0, iEnd + 1).reduce((a, b) => a + (b || 0), 0);
+    const tMin = minInRange(h.temperature_2m || [], i0, iEnd);
+    const tMax = maxInRange(h.temperature_2m || [], i0, iEnd);
+
+    el('aromeForecastWindow').textContent =
+      'Fenêtre de prévision (24 h) : ' + fmtHour(times[i0]) + '  →  ' + fmtHour(times[iEnd]) +
+      '  · synthèse ci-dessous = total sur ces 24 h (heure locale Paris)';
+
+    el('aromeKpis').innerHTML =
+      '<div class="kv"><div class="k">T° min / max (24 h)</div><div class="v">' + (tMin ?? '—') + ' / ' + (tMax ?? '—') + ' °C</div></div>' +
+      '<div class="kv"><div class="k">Pluie cumulée (24 h)</div><div class="v">' + sumRain.toFixed(1) + ' mm</div></div>' +
+      '<div class="kv"><div class="k">Soleil cumulé (24 h)</div><div class="v">' + sunshineHours(sumSunSec) + '</div></div>' +
+      '<div class="kv"><div class="k">Rafales max (24 h)</div><div class="v">' + (maxGust ?? '—') + ' km/h</div></div>';
+
+    const rows = [];
+    for (let i = i0; i <= iEnd; i++) {
+      const code = codes[i];
+      const keep = ((i - i0) % 2 === 0) || code >= 95 || (h.precipitation?.[i] || 0) >= 1;
+      if (!keep && i !== iEnd) continue;
+      let cls = '';
+      if (code === 96 || code === 99) cls = 'hail';
+      else if (code >= 95) cls = 'storm';
+      rows.push(
+        '<tr' + (i === i0 ? ' class="now"' : '') + '>' +
+          '<td>' + fmtHour(times[i]) + (i === i0 ? ' ●' : '') + '</td>' +
+          '<td>' + (h.temperature_2m?.[i] ?? '—') + '</td>' +
+          '<td>' + (h.precipitation?.[i] ?? '—') + '</td>' +
+          '<td>' + (h.cloud_cover?.[i] ?? '—') + '%</td>' +
+          '<td>' + sunshineMin(h.sunshine_duration?.[i]) + '</td>' +
+          '<td class="' + cls + '">' + (WMO[code] || code) + '</td>' +
+          '<td>' + (h.wind_gusts_10m?.[i] ?? '—') + '</td>' +
+        '</tr>'
+      );
+    }
+    el('aromeBody').innerHTML = rows.join('');
+  }
+
+  /* Radar */
+  let map, radarLayer, radarFrames = [], radarHost = '', radarIndex = 0, radarTimer = null;
+
+  function ensureMap() {
+    if (map) return;
+    map = L.map('radarMap', { zoomControl: true }).setView([LAT, LON], 9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 12,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+    L.circleMarker([LAT, LON], {
+      radius: 7, color: '#fff', weight: 2, fillColor: '#ffeb3b', fillOpacity: 0.9
+    }).addTo(map).bindTooltip('Lons');
+    setTimeout(() => map.invalidateSize(), 100);
+  }
+
+  function showRadarFrame(i) {
+    if (!radarFrames.length) return;
+    radarIndex = (i + radarFrames.length) % radarFrames.length;
+    const frame = radarFrames[radarIndex];
+    const url = radarHost + frame.path + '/256/{z}/{x}/{y}/2/1_1.png';
+    if (radarLayer) map.removeLayer(radarLayer);
+    radarLayer = L.tileLayer(url, {
+      opacity: 0.7, maxNativeZoom: 7, maxZoom: 12, attribution: 'RainViewer'
+    }).addTo(map);
+    el('radarFrameLabel').textContent =
+      fmtTime(frame.time * 1000) + ' (' + (radarIndex + 1) + '/' + radarFrames.length + ')';
+    el('radarInfo').textContent =
+      'Radar Lons — image ' + (radarIndex + 1) + '/' + radarFrames.length;
+  }
+
+  async function fetchRadar() {
+    ensureMap();
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('RainViewer HTTP ' + r.status);
+    const data = await r.json();
+    radarHost = data.host;
+    const past = data.radar?.past || [];
+    const nowcast = data.radar?.nowcast || [];
+    radarFrames = past.concat(nowcast);
+    if (!radarFrames.length) throw new Error('Aucune frame radar');
+    showRadarFrame(Math.max(0, past.length - 1));
+  }
+
+  function stopPlay() {
+    if (radarTimer) {
+      clearInterval(radarTimer);
+      radarTimer = null;
+      el('radarPlay').textContent = 'Lecture';
+    }
+  }
+  el('radarPrev').addEventListener('click', () => { stopPlay(); showRadarFrame(radarIndex - 1); });
+  el('radarNext').addEventListener('click', () => { stopPlay(); showRadarFrame(radarIndex + 1); });
+  el('radarPlay').addEventListener('click', () => {
+    if (radarTimer) { stopPlay(); return; }
+    el('radarPlay').textContent = 'Pause';
+    radarTimer = setInterval(() => showRadarFrame(radarIndex + 1), 700);
+  });
+
+  async function refresh() {
+    el('btnRefresh').disabled = true;
+    let aromeOk = false, radarOk = false;
+
+    try {
+      renderArome(await fetchArome());
+      aromeOk = true;
+      lastRefreshAt = Date.now();
+      tickAgo();
+      if (agoTimer) clearInterval(agoTimer);
+      agoTimer = setInterval(tickAgo, 15000);
+    } catch (e) {
+      el('lineNow').innerHTML = '<span class="badge red">Échec AROME (maintenant)</span>';
+      el('lineForecast').innerHTML = '<span class="badge red">Échec AROME (prévision)</span>';
+      el('updatedAgo').textContent = 'Erreur : ' + e.message;
+    }
+
+    try {
+      await fetchRadar();
+      radarOk = true;
+    } catch (e) {
+      el('radarInfo').textContent = 'Échec radar — ' + e.message;
+    }
+
+    el('btnRefresh').disabled = false;
+    if (!aromeOk && !radarOk) {
+      el('updatedAgo').textContent = 'Échec de chargement';
+    }
+  }
+
+  el('btnRefresh').addEventListener('click', refresh);
+  ensureMap();
+  refresh();
+})();
+</script>
+</body>
+</html>
