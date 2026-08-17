@@ -13,6 +13,7 @@
 #include "Sensors/SoilSensorRS485.h"
 #include "Connectivity/WiFiManager.h"
 #include "Storage/DataLogger.h"
+#include "Storage/HistoryQuery.h"
 #include "Core/DataBus.h"
 #include "Config/MetaDataModel.h"
 #include "Utils/Console.h"
@@ -724,6 +725,11 @@ void WebServer::handleRS485Exit(AsyncWebServerRequest *request)
 
 void WebServer::handleLogsClear(AsyncWebServerRequest *request)
 {
+    // Un scan d'historique peut tenir un fichier journal ouvert en lecture.
+    // Supprimer un fichier dans cet état sort du domaine défini de littlefs :
+    // on referme d'abord.
+    HistoryQuery::abortScan();
+
     DataLogger::clearHistory();
     request->send(200, "text/plain", "Historique supprimé avec succès");
     Console::info(TAG, "Logs supprimés par l'utilisateur");

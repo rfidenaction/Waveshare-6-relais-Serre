@@ -85,6 +85,18 @@ public:
     // Passe-plat : reçoit le JSON prêt de ConditionalWatering.
     static void publishConditionalState(const char* payload, size_t len);
 
+    // Publication d'une réponse d'historique (serre/history/ToUser).
+    // Passe-plat : reçoit le JSON prêt de HistoryQuery.
+    //
+    // SANS retain, à la différence des trois autres passe-plats : une réponse
+    // d'historique est la réponse à une question posée à un instant donné, pas
+    // un état du système. Retenue, elle serait redélivrée périmée à chaque
+    // reconnexion d'un téléphone et afficherait un graphique obsolète.
+    //
+    // Emise par enqueue et non par publish : appelée depuis le thread
+    // TaskManager, qui pilote les vannes, elle ne doit pas attendre la socket.
+    static void publishHistory(const char* payload, size_t len);
+
     // ─── Familles (noms utilisateur pour les 6 vannes/capteurs) ──────────
     static constexpr uint8_t FAMILY_COUNT    = 6;
     static constexpr uint8_t FAMILY_NAME_MAX = 24;

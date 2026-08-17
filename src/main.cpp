@@ -36,6 +36,7 @@
 #include "Gardener/ConditionalWatering.h"
 
 #include "Storage/DataLogger.h"
+#include "Storage/HistoryQuery.h"   // Historique à la demande (serre/history/FromUser)
 
 #include "Web/WebServer.h"
 #include "Utils/Console.h"
@@ -129,6 +130,10 @@ static void loopInit()
     // DataLogger — logger SPIFFS pur
     DataLogger::init();
     Console::info("[DataLogger] OK");
+
+    // Historique à la demande — relit les journaux de DataLogger, donc initialisé
+    // juste après lui. N'écrit jamais sur la flash.
+    HistoryQuery::init();
 
     // Reconstruction lastDataForWeb depuis /datalog.csv
     WebServer::rebuildLastDataFromFlash();
@@ -280,6 +285,12 @@ static void loopInit()
     TaskManager::addTask(
         []() { OnDemandMeasure::handle(); },
         ONDEMAND_HANDLE_PERIOD_MS
+    );
+
+    // Historique à la demande — une opération élémentaire par appel
+    TaskManager::addTask(
+        []() { HistoryQuery::handle(); },
+        HISTORY_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(

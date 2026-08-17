@@ -419,6 +419,24 @@ void DataLogger::handle()
 }
 
 // -----------------------------------------------------------------------------
+// FLUSH NOW — écriture immédiate du buffer actif
+//
+// Même séquence que les étapes 4 et 5 de handle(), et que checkRotation() avant
+// de clôturer un fichier : swap + écriture, puis reprise d'un flush resté en
+// souffrance. Sans effet si le buffer est vide.
+// -----------------------------------------------------------------------------
+void DataLogger::flushNow()
+{
+    if (activeLen > 0) {
+        swapAndFlush();
+    }
+
+    if (flushLen > 0) {
+        writeFlushBuffer();
+    }
+}
+
+// -----------------------------------------------------------------------------
 // CLEAR HISTORY — supprime tous les fichiers log et réinitialise les buffers
 // -----------------------------------------------------------------------------
 void DataLogger::clearHistory()

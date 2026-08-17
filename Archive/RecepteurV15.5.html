@@ -193,6 +193,98 @@ h1 {
 .card-menu-btn:disabled {
   cursor: default;
 }
+.card-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+/* Bouton Annuler partagé (dépliant, programmations horaires et conditionnelles) */
+.cancel-btn {
+  padding: 12px 18px;
+  font-size: 1em;
+  background: transparent;
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cancel-btn:hover { background: rgba(255,255,255,0.1); }
+
+/* ── Panneau d'historique (dans le dépliant) ──
+   Pas de modale : le graphe s'ouvre dans la carte, sous les boutons, comme le
+   font déjà les formulaires .gd-form et .cw-form. Le fermer, c'est refermer le
+   dépliant. */
+.card-hist {
+  display: none;
+  margin-top: 14px;
+}
+.card-hist.open {
+  display: block;
+}
+
+.hist-msg {
+  padding: 14px 8px;
+  font-size: 0.9em;
+  color: rgba(255,255,255,0.85);
+}
+.hist-msg .spinner {
+  margin-right: 8px;
+}
+
+.hist-title {
+  font-size: 0.85em;
+  color: rgba(255,255,255,0.75);
+  margin-bottom: 6px;
+}
+
+/* Bandeau des réponses incomplètes : profondeur réellement couverte inférieure
+   à celle demandée (partial), ou liste plafonnée (truncated). */
+.hist-warn {
+  font-size: 0.8em;
+  color: #ffd28a;
+  margin-top: 6px;
+  font-style: italic;
+}
+
+/* Le SVG porte un viewBox et non des dimensions fixes : il s'adapte à la
+   largeur de la carte sans mesure JavaScript, donc sans dépendre du moment où
+   la carte devient visible. */
+.hist-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: rgba(0,0,0,0.12);
+  border-radius: 8px;
+}
+
+.hist-list {
+  background: rgba(0,0,0,0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  text-align: left;
+}
+.hist-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  font-size: 0.9em;
+}
+.hist-row:last-child {
+  border-bottom: none;
+}
+.hist-when {
+  color: rgba(255,255,255,0.7);
+  white-space: nowrap;
+}
+.hist-what {
+  text-align: right;
+  word-break: break-word;
+}
 
 /* ── Cartes vanne (interactives) ── */
 .valve-card {
@@ -805,16 +897,6 @@ h1 {
   cursor: pointer;
 }
 .gd-confirm-btn:active { filter: brightness(1.15); }
-.gd-cancel-btn {
-  padding: 12px 18px;
-  font-size: 1em;
-  background: transparent;
-  color: white;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.gd-cancel-btn:hover { background: rgba(255,255,255,0.1); }
 .gd-picker-label {
   font-size: 1.15em;
   font-weight: bold;
@@ -1092,16 +1174,6 @@ h1 {
   cursor: pointer;
 }
 .cw-confirm-btn:active { filter: brightness(1.15); }
-.cw-cancel-btn {
-  padding: 12px 18px;
-  font-size: 1em;
-  background: transparent;
-  color: white;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-radius: 8px;
-  cursor: pointer;
-}
-.cw-cancel-btn:hover { background: rgba(255,255,255,0.1); }
 /* ═══════════════ FIN DU BLOC PORTABLE — styles cw- ═══════════════ */
 
 /* ═══════════════ Chapitre Météo (MeteoV2.3, scoped) ═══════════════ */
@@ -1378,7 +1450,7 @@ h1 {
 
 <!-- Chapitre Météo (toujours visible, indépendant MQTT) -->
 <div id="meteoSection">
-  <div class="group-title collapsed" onclick="toggleGroup(this)">Météo</div>
+  <div class="group-title collapsed" onclick="toggleGroup(this)">MÉTÉO À LONS</div>
   <div class="group-content collapsed" id="meteoCards">
     <div class="meteo-inner">
       <div class="meteo-card" id="summaryCard">
@@ -1471,9 +1543,29 @@ const TOPIC_SCHEMA = 'serre/schema';
 const TOPIC_DATA   = 'serre/data/#';
 const TOPIC_STATUS = 'serre/status/waveshare';
 
-// Canal de requêtes vers la carte (mesure à la demande, et plus tard
-// historiques). Délibérément hors de serre/data/, capté ici en « # ».
+// Canal de requêtes vers la carte (mesure à la demande). Délibérément hors de
+// serre/data/, capté ici en « # ».
 const ONDEMAND_TOPIC_FROM_USER = 'serre/ondemand/FromUser';
+
+// Canal d'historique, distinct de celui de la mesure : une demande d'historique
+// ne déclenche aucune acquisition et ne passe par aucun module capteur.
+// La réponse n'est PAS retenue par le broker — un historique retenu serait
+// redélivré périmé à chaque reconnexion et afficherait un graphe faux.
+const HISTORY_TOPIC_FROM_USER = 'serre/history/FromUser';
+const HISTORY_TOPIC_TO_USER   = 'serre/history/ToUser';
+
+// Profondeurs proposées, en heures. La carte accepte 1 à 168 et choisit sa
+// granularité d'agrégation seule (15 min en deçà de 24 h, 1 h au-delà).
+const HISTORY_SPAN_24H = 24;
+const HISTORY_SPAN_7D  = 168;
+
+// Délai au-delà duquel on renonce à attendre une réponse. Généreux : la carte
+// lit sa flash par petits blocs pour ne jamais retarder un arrosage, et un
+// journal de développement volumineux peut demander plusieurs dizaines de
+// secondes. La carte répond de toute façon d'elle-même au bout d'une minute,
+// avec un drapeau « partiel » ; ce délai n'est qu'un filet de sécurité pour le
+// cas où la réponse se perdrait sur le réseau.
+const HISTORY_TIMEOUT_MS = 75000;
 
 // Durées d'arrosage proposées (secondes)
 const DURATION_CHOICES = [5, 10, 30, 60];
@@ -1877,7 +1969,12 @@ function buildCards() {
 // La liste des données mesurables vient du schéma (measurableIds), que la
 // carte construit depuis les déclarations de ses modules capteurs. Aucune
 // règle n'est écrite ici : si la carte ne sait pas mesurer une donnée, le
-// dépliant n'est pas créé.
+// bouton de mesure n'apparaît pas.
+//
+// Les deux boutons d'historique, eux, sont toujours présents : la profondeur
+// disponible ne dépend pas des capteurs mais du journal de la carte, qui reçoit
+// TOUTES les données du système. Une donnée non mesurable à la demande a donc
+// malgré tout un historique.
 // ══════════════════════════════════════════════════════════════
 function isMeasurable(id) {
   return !!(schema && schema.measurableIds
@@ -1891,7 +1988,22 @@ function isMeasurable(id) {
 // dérivé de la seule donnée visée.
 function closeAllCardMenus() {
   var open = document.querySelectorAll('.card-menu.open');
-  for (var i = 0; i < open.length; i++) open[i].classList.remove('open');
+  for (var i = 0; i < open.length; i++) {
+    open[i].classList.remove('open');
+
+    // Le panneau d'historique n'est pas conservé d'une ouverture à l'autre :
+    // rouvrir un dépliant sur un graphe vieux de plusieurs heures, sans que
+    // rien ne le signale, serait trompeur.
+    var panel = open[i].querySelector('.card-hist');
+    if (panel) {
+      panel.classList.remove('open');
+      panel.innerHTML = '';
+    }
+  }
+
+  // Une requête dont le panneau de destination vient de disparaître n'a plus
+  // d'objet : on cesse de l'attendre.
+  histClearPending();
 }
 
 function toggleCardMenu(menuEl) {
@@ -1902,15 +2014,21 @@ function toggleCardMenu(menuEl) {
   if (!wasOpen) menuEl.classList.add('open');
 }
 
+// Fermeture différée après une mesure : évite que le click synthétique du
+// navigateur atterrisse sur les boutons 5s/Arroser remontés sous le doigt. Le
+// minuteur est mémorisé pour qu'une demande d'historique enchaînée juste après
+// puisse l'annuler — sans quoi le dépliant se refermerait sur le graphe en
+// cours de chargement.
+var measureCloseTimer = null;
+
 // Demande une mesure immédiate. Fire-and-forget comme toutes les commandes de
 // cette interface : la carte publiera la nouvelle valeur sur serre/data/{id}
 // et l'affichage se fera par le chemin normal (updateCard + animation flash).
 // Sans retain : un message retenu serait redélivré à chaque reconnexion de la
 // carte et déclencherait une mesure fantôme.
 function requestMeasure(id) {
-  // Fermeture différée : évite que le click synthétique du navigateur
-  // atterrisse sur les boutons 5s/Arroser remontés sous le doigt.
-  setTimeout(closeAllCardMenus, 300);
+  if (measureCloseTimer) clearTimeout(measureCloseTimer);
+  measureCloseTimer = setTimeout(closeAllCardMenus, 300);
 
   if (!client || !client.connected) {
     console.warn('MQTT non connecté, demande de mesure ignorée');
@@ -1922,25 +2040,403 @@ function requestMeasure(id) {
                  { qos: 1 });
 }
 
-// Contenu du dépliant, identique dans les cartes de données et les cartes
-// famille : un seul endroit porte les libellés. Le premier bouton est celui de
-// la mesure, les deux historiques sont visibles mais inertes — ils seront
-// branchés sur serre/ondemand/ToUser quand ce canal existera.
-function cardMenuButtonsHtml() {
-  return '<button class="card-menu-btn selected">Mesurer immédiatement</button>' +
-         '<button class="card-menu-btn" disabled>Graphique 24 heures</button>' +
-         '<button class="card-menu-btn" disabled>Graphique 7 jours</button>';
+// ══════════════════════════════════════════════════════════════
+// Historiques 24 h et 7 jours
+//
+// Requête/réponse, sur le modèle de Gardener et Conditional : on publie une
+// demande sur .../FromUser et on ne dessine rien avant la réponse sur
+// .../ToUser. Contrairement à la mesure immédiate, dont le résultat revient par
+// le chemin normal serre/data/{id}, un historique n'a pas d'autre canal.
+//
+// La carte fait tout le travail d'agrégation. L'interface ne connaît ni la
+// granularité des tranches, ni la profondeur réellement disponible : elle lit
+// ce que la réponse annonce (nature, step, from, to, partial, truncated).
+//
+// Aucune bibliothèque de graphes : le SVG est écrit ici. C'est une centaine de
+// lignes, contre une dépendance CDN de plus qui casserait le fonctionnement
+// hors-ligne que le cache localStorage cherche justement à préserver.
+// ══════════════════════════════════════════════════════════════
+
+function findDataId(id) {
+  var found = null;
+  if (schema && schema.dataIds) {
+    schema.dataIds.forEach(function(d) { if (d.id === id) found = d; });
+  }
+  return found;
+}
+
+// Une seule requête à la fois, en écho de la carte qui n'a qu'un seul créneau
+// de scan : une seconde demande simultanée recevrait de toute façon un refus.
+var histPending = null;   // { rid, id, span, panel }
+var histTimer   = null;
+
+function histClearPending() {
+  if (histTimer) { clearTimeout(histTimer); histTimer = null; }
+  histPending = null;
+}
+
+function histShowMessage(panel, html) {
+  if (!panel) return;
+  panel.innerHTML = '<div class="hist-msg">' + html + '</div>';
+  panel.classList.add('open');
+}
+
+function histSpanLabel(span) {
+  if (span === HISTORY_SPAN_24H) return 'sur 24 heures';
+  if (span === HISTORY_SPAN_7D)  return 'sur 7 jours';
+  return 'sur ' + span + ' h';
+}
+
+function requestHistory(id, span, panel) {
+  if (measureCloseTimer) {
+    clearTimeout(measureCloseTimer);
+    measureCloseTimer = null;
+  }
+
+  if (!client || !client.connected) {
+    histShowMessage(panel, 'Téléphone hors ligne — historique indisponible.');
+    return;
+  }
+
+  histClearPending();
+
+  var rid = Math.random().toString(36).substr(2, 6);
+  histPending = { rid: rid, id: id, span: span, panel: panel };
+
+  histShowMessage(panel, '<span class="spinner"></span>Lecture de l\'historique '
+                        + histSpanLabel(span) + '…');
+
+  client.publish(HISTORY_TOPIC_FROM_USER,
+                 JSON.stringify({ op: 'history', id: id, span: span, rid: rid }),
+                 { qos: 1 });
+
+  // La carte répond d'elle-même au bout d'une minute, avec un drapeau
+  // « partiel », donc ce minuteur ne sert qu'au cas où la réponse se perdrait
+  // sur le réseau.
+  histTimer = setTimeout(function() {
+    if (!histPending) return;
+    histShowMessage(histPending.panel,
+                    'Pas de réponse de la serre. Réessayez.');
+    histClearPending();
+  }, HISTORY_TIMEOUT_MS);
+}
+
+function histErrorText(code) {
+  if (code === 'busy') {
+    return 'La serre lit déjà un historique. Réessayez dans un instant.';
+  }
+  if (code === 'noclock') {
+    return 'La serre n\'a pas encore l\'heure : historique impossible.';
+  }
+  if (code === 'badreq') {
+    return 'Demande invalide.';
+  }
+  return 'Demande refusée par la serre (' + escapeHtml(String(code)) + ').';
+}
+
+function histHandleResponse(payload) {
+  var res;
+  try {
+    res = JSON.parse(payload);
+  } catch (e) {
+    console.warn('Réponse d\'historique illisible:', e);
+    return;
+  }
+
+  // Le rid écarte une réponse destinée à un autre téléphone : le broker diffuse
+  // la réponse à tous les abonnés du topic.
+  if (!histPending || res.rid !== histPending.rid) return;
+
+  var panel = histPending.panel;
+  var id    = histPending.id;
+  var span  = histPending.span;
+  histClearPending();
+
+  if (res.error) {
+    histShowMessage(panel, histErrorText(res.error));
+    return;
+  }
+
+  if (!res.pts || !res.pts.length) {
+    histShowMessage(panel, 'Aucune donnée enregistrée sur cette période.');
+    return;
+  }
+
+  var di = findDataId(id);
+  if (res.nature === 'metrique') {
+    histRenderChart(panel, res, di, span);
+  } else {
+    histRenderList(panel, res, di, span);
+  }
+}
+
+// Libellé affiché : même correction d'adresse réelle que sur les cartes, pour
+// que le graphe porte le nom que l'utilisateur vient de toucher.
+function histLabel(di, res) {
+  if (!di) return 'Donnée ' + res.id;
+  var label = di.label;
+  if (di.id in AIR_SENSOR_REAL_ADDRESS) {
+    label = label.replace(/\s\d+$/, ' ' + AIR_SENSOR_REAL_ADDRESS[di.id]);
+  }
+  return label;
+}
+
+function histTitle(di, res, span) {
+  var t = histLabel(di, res) + ' — ' + histSpanLabel(span);
+
+  if (res.nature === 'metrique') {
+    if (di && di.unit) t += ' (' + di.unit + ')';
+    if (res.step >= 3600)  t += ', moyenne horaire';
+    else if (res.step > 0) t += ', moyenne ' + Math.round(res.step / 60) + ' min';
+  } else if (res.nature === 'etat') {
+    t += ', changements d\'état';
+  }
+
+  return t;
+}
+
+// Bandeau des réponses incomplètes.
+//
+// Aucun chiffre n'est avancé sur la profondeur réellement couverte. On pourrait
+// être tenté de la déduire du point le plus ancien reçu, mais ce serait faux :
+// la serre lit les fichiers du plus récent au plus ancien et chacun dans l'ordre
+// chronologique, donc une lecture écourtée laisse un trou au milieu du fichier
+// le plus ancien, pas une coupure nette. Mieux vaut signaler l'incertitude que
+// la chiffrer de travers.
+function histWarnHtml(res) {
+  var parts = [];
+
+  if (res.partial) {
+    parts.push('Lecture écourtée par la serre pour ne pas retarder les '
+               + 'arrosages : le début de la période est peut-être incomplet.');
+  }
+
+  if (res.truncated) {
+    parts.push('Réponse limitée aux relevés les plus récents.');
+  }
+
+  if (!parts.length) return '';
+  return '<div class="hist-warn">' + parts.join(' ') + '</div>';
+}
+
+function histPad2(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+// Graduation de l'axe des temps : heure seule sur 24 h, jour et mois au-delà.
+function histAxisTime(ts, span) {
+  var d = new Date(ts * 1000);
+  if (span <= HISTORY_SPAN_24H) {
+    return histPad2(d.getHours()) + 'h';
+  }
+  return histPad2(d.getDate()) + '/' + histPad2(d.getMonth() + 1);
+}
+
+function histStamp(ts) {
+  var d = new Date(ts * 1000);
+  return histPad2(d.getDate()) + '/' + histPad2(d.getMonth() + 1) + ' '
+       + histPad2(d.getHours()) + ':' + histPad2(d.getMinutes());
+}
+
+function histAxisValue(v) {
+  return (Math.abs(v) >= 100) ? String(Math.round(v)) : v.toFixed(1);
+}
+
+// ── Courbe (nature metrique) ──
+// Le SVG porte un viewBox et aucune dimension fixe : il se met à l'échelle de la
+// carte sans mesure JavaScript, donc sans dépendre du moment où celle-ci devient
+// visible, et sans avoir à redessiner sur rotation de l'écran. Les tailles de
+// police sont calibrées en conséquence : à la largeur d'un téléphone le facteur
+// est d'environ 0,6, donc 18 unités rendent une dizaine de pixels.
+function histRenderChart(panel, res, di, span) {
+  var pts = res.pts;
+
+  var W = 600, H = 260;
+  var ML = 64, MR = 14, MT = 16, MB = 40;
+  var plotW = W - ML - MR;
+  var plotH = H - MT - MB;
+
+  var spanSec = span * 3600;
+  if (spanSec <= 0) return;
+
+  var vMin = pts[0][1], vMax = pts[0][1];
+  var i;
+  for (i = 1; i < pts.length; i++) {
+    if (pts[i][1] < vMin) vMin = pts[i][1];
+    if (pts[i][1] > vMax) vMax = pts[i][1];
+  }
+
+  // Série plate : fenêtre artificielle, sinon division par zéro et courbe
+  // collée sur un bord.
+  if (vMax - vMin < 0.001) {
+    vMin -= 1;
+    vMax += 1;
+  } else {
+    var pad = (vMax - vMin) * 0.08;
+    vMin -= pad;
+    vMax += pad;
+  }
+
+  function sx(dt) { return ML + (dt / spanSec) * plotW; }
+  function sy(v)  { return MT + plotH - ((v - vMin) / (vMax - vMin)) * plotH; }
+
+  var svg = [];
+  svg.push('<svg class="hist-chart" viewBox="0 0 ' + W + ' ' + H + '" '
+           + 'xmlns="http://www.w3.org/2000/svg">');
+
+  // Grille et graduations verticales
+  var yTicks = 4, g, v, y;
+  for (g = 0; g <= yTicks; g++) {
+    v = vMin + (vMax - vMin) * (g / yTicks);
+    y = sy(v);
+    svg.push('<line x1="' + ML + '" y1="' + y.toFixed(1)
+             + '" x2="' + (W - MR) + '" y2="' + y.toFixed(1)
+             + '" stroke="rgba(255,255,255,0.18)" stroke-width="1.5"/>');
+    svg.push('<text x="' + (ML - 8) + '" y="' + (y + 6).toFixed(1)
+             + '" text-anchor="end" font-size="18" '
+             + 'fill="rgba(255,255,255,0.75)">' + histAxisValue(v) + '</text>');
+  }
+
+  // Graduations horizontales
+  var xTicks = (span <= HISTORY_SPAN_24H) ? 4 : 3, dt, x;
+  for (g = 0; g <= xTicks; g++) {
+    dt = spanSec * (g / xTicks);
+    x  = sx(dt);
+    svg.push('<line x1="' + x.toFixed(1) + '" y1="' + MT
+             + '" x2="' + x.toFixed(1) + '" y2="' + (MT + plotH)
+             + '" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>');
+    svg.push('<text x="' + x.toFixed(1) + '" y="' + (H - 12)
+             + '" text-anchor="middle" font-size="18" '
+             + 'fill="rgba(255,255,255,0.75)">'
+             + histAxisTime(res.from + dt, span) + '</text>');
+  }
+
+  // Courbe. Une tranche sans mesure n'est pas émise par la carte : le segment
+  // enjambe alors le trou, ce qui vaut mieux qu'une interruption trompeuse.
+  var line = [];
+  for (i = 0; i < pts.length; i++) {
+    line.push(sx(pts[i][0]).toFixed(1) + ',' + sy(pts[i][1]).toFixed(1));
+  }
+  svg.push('<polyline fill="none" stroke="#ffffff" stroke-width="3" '
+           + 'stroke-linejoin="round" stroke-linecap="round" points="'
+           + line.join(' ') + '"/>');
+
+  // Points marqués seulement quand ils sont assez peu nombreux pour se
+  // distinguer : en production une journée ne compte que 24 mesures.
+  if (pts.length <= 40) {
+    for (i = 0; i < pts.length; i++) {
+      svg.push('<circle cx="' + sx(pts[i][0]).toFixed(1)
+               + '" cy="' + sy(pts[i][1]).toFixed(1)
+               + '" r="4" fill="#ffffff"/>');
+    }
+  }
+
+  svg.push('</svg>');
+
+  var last = pts[pts.length - 1];
+
+  panel.innerHTML =
+      '<div class="hist-title">' + escapeHtml(histTitle(di, res, span)) + '</div>'
+    + svg.join('')
+    + '<div class="hist-title" style="margin-top:6px">'
+    + escapeHtml(pts.length + ' point' + (pts.length > 1 ? 's' : '')
+                 + ' — dernier relevé ' + histStamp(res.from + last[0])
+                 + ' à ' + histAxisValue(last[1])
+                 + (di && di.unit ? ' ' + di.unit : ''))
+    + '</div>'
+    + histWarnHtml(res);
+
+  panel.classList.add('open');
+}
+
+// ── Liste (natures etat et texte) ──
+// Les points arrivent du plus récent au plus ancien, la carte les trie déjà.
+function histRenderList(panel, res, di, span) {
+  var pts  = res.pts;
+  var rows = [];
+
+  pts.forEach(function(p) {
+    var text;
+    if (res.nature === 'etat') {
+      text = String(p[1]);
+      if (di && di.states) {
+        di.states.forEach(function(s) { if (s.value === p[1]) text = s.label; });
+      }
+    } else {
+      text = String(p[1]);
+    }
+
+    rows.push('<div class="hist-row">'
+              + '<span class="hist-when">'
+              + escapeHtml(histStamp(res.from + p[0])) + '</span>'
+              + '<span class="hist-what">' + escapeHtml(text) + '</span>'
+              + '</div>');
+  });
+
+  panel.innerHTML =
+      '<div class="hist-title">' + escapeHtml(histTitle(di, res, span)) + '</div>'
+    + '<div class="hist-list">' + rows.join('') + '</div>'
+    + histWarnHtml(res);
+
+  panel.classList.add('open');
+}
+
+// ── Dépliant ──
+// Contenu identique dans les cartes de données et les cartes famille : un seul
+// endroit porte les libellés. Le panneau de résultat est inclus ici pour la même
+// raison. Le bouton de mesure est conditionnel, les deux historiques ne le sont
+// pas : toute donnée journalisée a un historique, y compris celles que la carte
+// ne sait pas mesurer à la demande (Erreur, Démarrage, vannes, WiFi).
+function cardMenuContentHtml(withMeasure) {
+  var html = '';
+
+  if (withMeasure) {
+    html += '<button class="card-menu-btn hist-btn-measure selected">'
+          + 'Mesurer immédiatement</button>';
+  }
+
+  html += '<button class="card-menu-btn hist-btn-24h">Graphique 24 heures</button>'
+        + '<button class="card-menu-btn hist-btn-7d">Graphique 7 jours</button>'
+        + '<div class="card-hist"></div>'
+        + '<div class="card-menu-actions">'
+        + '<button type="button" class="cancel-btn hist-btn-cancel">Annuler</button>'
+        + '</div>';
+
+  return html;
 }
 
 function buildCardMenuHtml(di) {
-  if (!isMeasurable(di.id)) return '';
+  return '<div class="card-menu">'
+       + cardMenuContentHtml(isMeasurable(di.id))
+       + '</div>';
+}
 
-  return '<div class="card-menu">' + cardMenuButtonsHtml() + '</div>';
+// targetIdFn plutôt qu'un identifiant : dans une carte famille, un même
+// dépliant sert les trois valeurs et la cible est celle du dernier appui.
+function bindHistButtons(menu, targetIdFn) {
+  var panel = menu.querySelector('.card-hist');
+
+  [{ sel: '.hist-btn-24h', span: HISTORY_SPAN_24H },
+   { sel: '.hist-btn-7d',  span: HISTORY_SPAN_7D }].forEach(function(b) {
+    var btn = menu.querySelector(b.sel);
+    if (!btn) return;
+
+    bindPressAction(btn, function() {
+      var id = targetIdFn();
+      if (id === null || id === undefined) return;
+      requestHistory(id, b.span, panel);
+    });
+  });
+}
+
+function bindCardMenuCancel(menu) {
+  var cancelBtn = menu.querySelector('.hist-btn-cancel');
+  if (!cancelBtn) return;
+
+  bindPressAction(cancelBtn, function() { closeAllCardMenus(); });
 }
 
 function bindCardMenu(card, di) {
-  if (!isMeasurable(di.id)) return;
-
   var menu = card.querySelector('.card-menu');
   if (!menu) return;
 
@@ -1950,10 +2446,13 @@ function bindCardMenu(card, di) {
     bindPressAction(valueEl, function() { toggleCardMenu(menu); });
   }
 
-  var measureBtn = menu.querySelector('.card-menu-btn');
+  var measureBtn = menu.querySelector('.hist-btn-measure');
   if (measureBtn) {
     bindPressAction(measureBtn, function() { requestMeasure(di.id); });
   }
+
+  bindHistButtons(menu, function() { return di.id; });
+  bindCardMenuCancel(menu);
 }
 
 // Carte de données (affichage simple, comportement existant)
@@ -2045,7 +2544,7 @@ function bindPressAction(el, handler) {
   });
 }
 
-var NO_OS_COPY_SEL = '.action-btn, .duration-btn, .fam-water-btn, .fam-dur-btn, .card-menu-btn, .value, .timestamp, .card-label, .valve-state, .valve-label, .valve-timestamp, .fam-sensor-val, .fam-valve-state';
+var NO_OS_COPY_SEL = '.action-btn, .duration-btn, .fam-water-btn, .fam-dur-btn, .card-menu-btn, .cancel-btn, .value, .timestamp, .card-label, .valve-state, .valve-label, .valve-timestamp, .fam-sensor-val, .fam-valve-state, .hist-row, .hist-title';
 
 document.addEventListener('contextmenu', function(e) {
   var t = e.target;
@@ -2349,17 +2848,20 @@ function buildFamilyCards() {
     var famMenu = document.createElement('div');
     famMenu.className = 'card-menu';
     famMenu.id = 'fam-menu-' + fam.id;
-    famMenu.innerHTML = cardMenuButtonsHtml();
+    famMenu.innerHTML = cardMenuContentHtml(true);
     card.appendChild(famMenu);
 
     var famTargetId = null;
 
-    var famMeasureBtn = famMenu.querySelector('.card-menu-btn');
+    var famMeasureBtn = famMenu.querySelector('.hist-btn-measure');
     if (famMeasureBtn) {
       bindPressAction(famMeasureBtn, function() {
         if (famTargetId !== null) requestMeasure(famTargetId);
       });
     }
+
+    bindHistButtons(famMenu, function() { return famTargetId; });
+    bindCardMenuCancel(famMenu);
 
     [{ prefix: 'fam-moist-', id: fam.moistureId },
      { prefix: 'fam-temp-',  id: fam.temperatureId },
@@ -2529,7 +3031,7 @@ function buildFamilyCards() {
     fgActions.appendChild(fgConfirmBtn);
 
     var fgCancelBtn = document.createElement('button');
-    fgCancelBtn.className = 'gd-cancel-btn';
+    fgCancelBtn.className = 'cancel-btn';
     fgCancelBtn.textContent = 'Annuler';
     fgCancelBtn.addEventListener('click', function() {
       toggleFgForm(fam.cmdId);
@@ -3182,7 +3684,7 @@ function buildGardenerCards() {
     actions.appendChild(confirmBtn);
 
     var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'gd-cancel-btn';
+    cancelBtn.className = 'cancel-btn';
     cancelBtn.textContent = 'Annuler';
     cancelBtn.addEventListener('click', function() {
       toggleGardenerForm(valve.cmdId);
@@ -3745,7 +4247,7 @@ function cwBuildForm(cmdId, prefix, toggleId) {
   actions.appendChild(confirmBtn);
 
   var cancelBtn = document.createElement('button');
-  cancelBtn.className = 'cw-cancel-btn';
+  cancelBtn.className = 'cancel-btn';
   cancelBtn.textContent = 'Annuler';
   cancelBtn.addEventListener('click', function() { cwToggleForm(cmdId, prefix, toggleId); });
   actions.appendChild(cancelBtn);
@@ -4054,7 +4556,8 @@ var client = mqtt.connect(MQTT_URL, {
 client.on('connect', function() {
   setMqttStatus('connected', 'Tel connecté au broker');
   client.subscribe([TOPIC_SCHEMA, TOPIC_DATA, TOPIC_STATUS,
-                    GARDENER_TOPIC_TO_USER, CW_TOPIC_TO_USER], { qos: 1 });
+                    GARDENER_TOPIC_TO_USER, CW_TOPIC_TO_USER,
+                    HISTORY_TOPIC_TO_USER], { qos: 1 });
 });
 
 client.on('reconnect', function() {
@@ -4121,6 +4624,12 @@ client.on('message', function(topic, message) {
   // ── Conditional (arrosage conditionnel) ──
   if (topic === CW_TOPIC_TO_USER) {
     cwHandleState(payload);
+    return;
+  }
+
+  // ── Historique (réponse à une demande de graphique ou de liste) ──
+  if (topic === HISTORY_TOPIC_TO_USER) {
+    histHandleResponse(payload);
     return;
   }
 

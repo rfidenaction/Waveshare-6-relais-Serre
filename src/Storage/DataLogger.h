@@ -63,6 +63,16 @@ public:
 
     static void clearHistory();
 
+    // Écrit immédiatement sur la flash ce qui attend dans le buffer actif.
+    //
+    // Le buffer n'est normalement vidé qu'au seuil de 14 records, donc en
+    // production, à une vingtaine de records par heure, il peut retenir près
+    // d'une heure de mesures. Un lecteur du journal ne les verrait pas.
+    //
+    // Reprend exactement la séquence que checkRotation() applique déjà avant de
+    // clôturer un fichier ; n'ajoute aucun chemin d'écriture nouveau.
+    static void flushNow();
+
     // Statistiques d'utilisation de la flash (programme + LittleFS).
     static FlashUsageStats getFlashUsageStats();
 

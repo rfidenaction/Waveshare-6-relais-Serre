@@ -17,6 +17,7 @@
 #include "Gardener/GardenerManager.h"
 #include "Gardener/ConditionalWatering.h"
 #include "Sensors/OnDemandMeasure.h"
+#include "Storage/HistoryQuery.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -199,6 +200,13 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         Console::info(TAG, "Abonné à "
                      + String(OnDemandMeasure::ONDEMAND_TOPIC_FROM_USER));
 
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            HistoryQuery::HISTORY_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à "
+                     + String(HistoryQuery::HISTORY_TOPIC_FROM_USER));
+
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -279,6 +287,24 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
                     break;
                 }
                 OnDemandMeasure::onRequest(event->data, event->data_len);
+                break;
+            }
+
+            static const char HIST_TOPIC[] = "serre/history/FromUser";
+            static const int  HIST_LEN     = sizeof(HIST_TOPIC) - 1;
+            if (event->topic_len == HIST_LEN &&
+                memcmp(event->topic, HIST_TOPIC, HIST_LEN) == 0) {
+                // Même garde que pour la mesure à la demande : une demande
+                // d'historique est un appui, pas un état. Un message retenu sur
+                // ce topic serait redélivré à chaque abonnement, donc à chaque
+                // reconnexion de la carte, et lancerait un scan de la flash que
+                // personne n'a demandé.
+                if (event->retain) {
+                    Console::warn(TAG, "Demande d'historique retenue ignorée sur "
+                                       + String(HIST_TOPIC));
+                    break;
+                }
+                HistoryQuery::onRequest(event->data, event->data_len);
                 break;
             }
         }
@@ -678,6 +704,42 @@ void MqttManager::publishConditionalState(const char* payload, size_t len)
                      + " (" + String(len) + " octets)");
     } else {
         Console::error(TAG, "Échec publication Conditional state");
+    }
+}
+
+// =============================================================================
+// Publication d'une réponse d'historique (serre/history/ToUser).
+// Passe-plat : reçoit le JSON prêt de HistoryQuery.
+//
+// retain=false : voir MqttManager.h. Une réponse périmée redélivrée à chaque
+// reconnexion afficherait un graphique faux.
+//
+// enqueue et non publish, à la différence des trois autres passe-plats :
+// esp_mqtt_client_publish écrit sur la socket dans le thread appelant et peut
+// donc y bloquer jusqu'à network_timeout_ms sur un lien dégradé. Or ce
+// passe-plat est appelé depuis le thread TaskManager, celui qui pilote les
+// vannes. enqueue se contente de déposer le message dans l'outbox, que le
+// thread esp_mqtt écoulera. Un historique peut attendre ; un arrosage non.
+// =============================================================================
+void MqttManager::publishHistory(const char* payload, size_t len)
+{
+    if (!mqttClient || !mqttConnected) return;
+
+    int msgId = esp_mqtt_client_enqueue(
+        (esp_mqtt_client_handle_t)mqttClient,
+        HistoryQuery::HISTORY_TOPIC_TO_USER,
+        payload, len,
+        1,      // qos=1
+        false,  // retain=false
+        true    // store=true (requis pour que enqueue accepte)
+    );
+
+    if (msgId >= 0) {
+        Console::info(TAG, "Historique publié sur "
+                     + String(HistoryQuery::HISTORY_TOPIC_TO_USER)
+                     + " (" + String(len) + " octets)");
+    } else {
+        Console::error(TAG, "Échec publication historique");
     }
 }
 

@@ -355,6 +355,41 @@
 #define ONDEMAND_HANDLE_PERIOD_MS      200
 
 // =============================================================================
+// HistoryQuery — historique à la demande (graphiques 24 h et 7 jours)
+// =============================================================================
+/*
+ * Période d'avancement du scan. La tâche retourne immédiatement s'il n'y a rien
+ * en cours, et exécute au plus UNE opération élémentaire par appel : ouverture
+ * d'un fichier, ou lecture d'un bloc de 4 Ko. Le coût par tick est donc de
+ * quelques millisecondes, soit le même profil que MqttManager et OnDemandMeasure
+ * déjà à 200 ms — aucun régime nouveau n'est introduit dans le scheduler.
+ *
+ * Cette valeur fixe le débit de lecture : 4 Ko par 200 ms, soit 20 Ko/s. En
+ * production (journal d'une douzaine de kilo-octets par jour) une demande 7 j
+ * lit moins de 100 Ko et répond en environ 5 s, une demande 24 h en 1 à 2 s.
+ *
+ * L'accélérer réduirait la latence perçue mais augmenterait d'autant la charge
+ * prise sur le temps du scheduler pendant le scan. L'arrosage passe avant le
+ * confort d'affichage : cette période est délibérément conservatrice.
+ */
+#define HISTORY_HANDLE_PERIOD_MS       200
+
+/*
+ * Échéance au-delà de laquelle un scan est abandonné. La réponse part avec ce
+ * qui a été collecté et le drapeau "partial" ; l'interface l'affiche.
+ *
+ * Au débit ci-dessus, une minute couvre environ 1,2 Mo de journal. C'est très
+ * au-delà des besoins de production, et volontairement en deçà de ce qu'exige
+ * un journal de développement (plusieurs mégaoctets pour 7 jours au rythme de
+ * 30 s) : au banc, une demande 7 j renvoie donc les journées les plus récentes,
+ * les fichiers étant parcourus du plus récent au plus ancien.
+ *
+ * Ce garde-fou est aussi le filet de sécurité de dernier recours : quoi qu'il
+ * arrive à la machine à états, elle revient au repos au bout de cette durée.
+ */
+#define HISTORY_SCAN_DEADLINE_MS       60000UL
+
+// =============================================================================
 // Réservé – extensions futures
 // =============================================================================
 // Stockage / maintenance
