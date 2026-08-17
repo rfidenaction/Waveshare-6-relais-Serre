@@ -57,41 +57,102 @@ void SoilSensorRS485::handle()
     if (_maintenanceMode) return;
     if (millis() < SOIL_RS485_START_DELAY_MS) return;
 
-    const SensorDescriptor& sensor = SENSORS[_currentSensor];
+    readAndPublish(SENSORS[_currentSensor]);
 
+    _currentSensor = (_currentSensor + 1) % SENSOR_COUNT;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// readAndPublish — transaction + publication de la paire humidité/température
+//
+// Chemin unique de publication du module, partagé par l'acquisition périodique
+// (handle) et la mesure à la demande (measureNow). Les deux origines sont donc
+// indiscernables en aval : même validation META, même horodatage VirtualClock,
+// même écriture CSV, même publication MQTT.
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SoilSensorRS485::readAndPublish(const SensorDescriptor& sensor)
+{
     float moisture    = 0.0f;
     float temperature = 0.0f;
 
-    if (readSensor(sensor.address, moisture, temperature)) {
-
-        if (moisture == 0.0f && temperature == 0.0f) {
-            Console::warn(TAG, "Capteur @" + String(sensor.address)
-                              + " : valeurs 0/0 suspectes — publication ignorée");
-        } else {
-            BusItem item = {};
-
-            item.type       = getMeta(sensor.moistureId).type;
-            item.id         = sensor.moistureId;
-            item.valueKind  = 0;
-            item.valueFloat = moisture;
-            DataBus::publish(item);
-
-            item.type       = getMeta(sensor.temperatureId).type;
-            item.id         = sensor.temperatureId;
-            item.valueKind  = 0;
-            item.valueFloat = temperature;
-            DataBus::publish(item);
-
-            Console::info(TAG, "Capteur @" + String(sensor.address)
-                              + " — Humidité : " + String(moisture, 1) + " %"
-                              + "  |  Température : " + String(temperature, 1) + " °C");
-        }
-    } else {
+    if (!readSensor(sensor.address, moisture, temperature)) {
         Console::warn(TAG, "Pas de réponse du capteur sol (adresse "
                            + String(sensor.address) + ")");
+        return false;
     }
 
-    _currentSensor = (_currentSensor + 1) % SENSOR_COUNT;
+    if (moisture == 0.0f && temperature == 0.0f) {
+        Console::warn(TAG, "Capteur @" + String(sensor.address)
+                          + " : valeurs 0/0 suspectes — publication ignorée");
+        return false;
+    }
+
+    BusItem item = {};
+
+    item.type       = getMeta(sensor.moistureId).type;
+    item.id         = sensor.moistureId;
+    item.valueKind  = 0;
+    item.valueFloat = moisture;
+    DataBus::publish(item);
+
+    item.type       = getMeta(sensor.temperatureId).type;
+    item.id         = sensor.temperatureId;
+    item.valueKind  = 0;
+    item.valueFloat = temperature;
+    DataBus::publish(item);
+
+    Console::info(TAG, "Capteur @" + String(sensor.address)
+                      + " — Humidité : " + String(moisture, 1) + " %"
+                      + "  |  Température : " + String(temperature, 1) + " °C");
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
+//
+// measurableCount / measurableAt projettent SENSORS[] sous forme de liste
+// plate de DataId. Rien n'est écrit à la main : ajouter un capteur dans
+// SENSORS[] suffit à l'exposer ici, donc au routage de OnDemandMeasure et à la
+// liste publiée dans le schéma MQTT.
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint8_t SoilSensorRS485::measurableCount()
+{
+    return SENSOR_COUNT * 2;
+}
+
+DataId SoilSensorRS485::measurableAt(uint8_t index)
+{
+    if (index >= SENSOR_COUNT * 2) index = 0;   // garde : index hors bornes
+
+    const SensorDescriptor& sensor = SENSORS[index / 2];
+    return (index % 2 == 0) ? sensor.moistureId : sensor.temperatureId;
+}
+
+bool SoilSensorRS485::measureNow(DataId id)
+{
+    if (!_initialized) return false;
+
+    if (_maintenanceMode) {
+        Console::warn(TAG, "Mesure à la demande refusée — mode maintenance actif");
+        return false;
+    }
+
+    if (millis() < SOIL_RS485_START_DELAY_MS) {
+        Console::warn(TAG, "Mesure à la demande refusée — délai de démarrage "
+                           "du bus RS485 non écoulé");
+        return false;
+    }
+
+    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+        if (SENSORS[i].moistureId == id || SENSORS[i].temperatureId == id) {
+            return readAndPublish(SENSORS[i]);
+        }
+    }
+
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

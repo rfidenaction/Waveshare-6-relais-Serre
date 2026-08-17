@@ -28,6 +28,7 @@
 #include "Sensors/SupplyVoltage.h"     // Tension alim via Analog Input 8CH (B) RS485
 #include "Sensors/SoilSensorRS485.h"   // Sondes de sol RS485 Modbus RTU
 #include "Sensors/AirSensorRS485.h"    // Capteurs air RS485 Modbus RTU (Ebyte KTH2-R)
+#include "Sensors/OnDemandMeasure.h"   // Mesure à la demande (serre/ondemand/FromUser)
 
 #include "Actuators/ValveManager.h"
 
@@ -151,6 +152,11 @@ static void loopInit()
     AirSensorRS485::init();
     Console::info("[AirRS485] AirSensorRS485 initialisé");
 
+    // Mesure à la demande — doit venir APRÈS les trois modules capteurs :
+    // init() les interroge pour construire sa vue id → propriétaire.
+    OnDemandMeasure::init();
+    Console::info("[OnDemand] OnDemandMeasure initialisé");
+
     // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
     // à LOW dès setup() par initAllRelayPinsSafe(). La construction
     // des slots depuis RELAYS[], la création de la queue FreeRTOS et la
@@ -266,6 +272,14 @@ static void loopInit()
     TaskManager::addTask(
         []() { AirSensorRS485::handle(); },
         AIR_RS485_HANDLE_PERIOD_MS
+    );
+
+    // Mesure à la demande — exécute dans CE thread la mesure demandée par
+    // MQTT, donc jamais en concurrence avec les trois tâches capteurs
+    // ci-dessus sur Serial1.
+    TaskManager::addTask(
+        []() { OnDemandMeasure::handle(); },
+        ONDEMAND_HANDLE_PERIOD_MS
     );
 
     TaskManager::addTask(

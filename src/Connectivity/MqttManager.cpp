@@ -16,6 +16,7 @@
 #include "Config/MetaDataModel.h"
 #include "Gardener/GardenerManager.h"
 #include "Gardener/ConditionalWatering.h"
+#include "Sensors/OnDemandMeasure.h"
 #include "Utils/Console.h"
 
 #include "mqtt_client.h"
@@ -191,6 +192,13 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         );
         Console::info(TAG, "Abonné à serre/families/rename");
 
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            OnDemandMeasure::ONDEMAND_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à "
+                     + String(OnDemandMeasure::ONDEMAND_TOPIC_FROM_USER));
+
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -248,6 +256,29 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
             if (event->topic_len == FAM_LEN &&
                 memcmp(event->topic, FAM_TOPIC, FAM_LEN) == 0) {
                 handleFamilyRename(event->data, event->data_len);
+                break;
+            }
+
+            static const char OND_TOPIC[] = "serre/ondemand/FromUser";
+            static const int  OND_LEN     = sizeof(OND_TOPIC) - 1;
+            if (event->topic_len == OND_LEN &&
+                memcmp(event->topic, OND_TOPIC, OND_LEN) == 0) {
+                // Une demande de mesure n'a de sens qu'au moment où elle est
+                // émise : c'est un appui, pas un état. Un message retenu sur ce
+                // topic serait redélivré par le broker à CHAQUE abonnement,
+                // donc à chaque reconnexion de la carte, et déclencherait une
+                // lecture que personne n'a demandée — avec tous ses effets
+                // normaux, dont l'alerte secteur sur AcPower.
+                //
+                // L'interface publie sans retain, mais le garde est côté carte :
+                // il protège quel que soit l'émetteur (client tiers, publication
+                // manuelle depuis une console MQTT).
+                if (event->retain) {
+                    Console::warn(TAG, "Demande de mesure retenue ignorée sur "
+                                       + String(OND_TOPIC));
+                    break;
+                }
+                OnDemandMeasure::onRequest(event->data, event->data_len);
                 break;
             }
         }
@@ -433,6 +464,17 @@ String MqttManager::buildSchemaJson()
         p += "\"";
         p += jsonEscape(familyNames[i]);
         p += "\"";
+    }
+    p += "],\n";
+
+    // Données que la carte sait mesurer à la demande. Liste déclarée par les
+    // modules producteurs et agrégée par OnDemandMeasure — l'interface n'a donc
+    // aucune règle à coder en dur pour savoir sur quelles valeurs proposer une
+    // nouvelle mesure.
+    p += "  \"measurableIds\": [";
+    for (uint8_t i = 0; i < OnDemandMeasure::measurableCount(); i++) {
+        if (i > 0) p += ", ";
+        p += (uint8_t)OnDemandMeasure::measurableAt(i);
     }
     p += "]\n";
 

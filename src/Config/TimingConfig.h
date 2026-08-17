@@ -339,6 +339,22 @@
 #define AIR_RS485_HANDLE_PERIOD_MS     30000
 
 // =============================================================================
+// OnDemandMeasure — mesure à la demande
+// =============================================================================
+/*
+ * Période de vidage du slot de demande.
+ * Ne rythme aucune acquisition : la tâche retourne immédiatement s'il n'y a
+ * pas de demande en attente. Cette valeur ne fixe donc qu'une latence
+ * maximale entre la réception MQTT et l'exécution de la mesure, négligeable
+ * devant l'aller-retour réseau via Cat-M (1 à 3 s).
+ *
+ * Aucun délai de démarrage ici : chaque module producteur applique déjà le
+ * sien (SOIL_RS485_START_DELAY_MS, AIR_RS485_START_DELAY_MS) et refuse une
+ * mesure à la demande tant qu'il n'est pas écoulé.
+ */
+#define ONDEMAND_HANDLE_PERIOD_MS      200
+
+// =============================================================================
 // Réservé – extensions futures
 // =============================================================================
 // Stockage / maintenance

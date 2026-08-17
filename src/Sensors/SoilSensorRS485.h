@@ -37,6 +37,33 @@ public:
     // Retourne true si l'écho de confirmation est correct.
     static bool setAddress(uint8_t currentAddr, uint8_t newAddr);
 
+    // ─── Mesure à la demande ─────────────────────────────────────────────
+    // Ce module déclare les DataId qu'il produit ; il ne les reçoit d'aucune
+    // table extérieure. La liste est dérivée de SENSORS[], seule source de
+    // vérité de l'appartenance id ↔ adresse Modbus. OnDemandMeasure
+    // l'interroge au démarrage pour construire sa vue id → propriétaire,
+    // comme ValveManager se construit depuis RELAYS[].
+    //
+    // Conséquence : brancher les sondes 5 et 6 se limite à deux lignes dans
+    // SENSORS[] et SENSOR_COUNT à 6. Le routage et la liste publiée sur MQTT
+    // suivent au prochain démarrage, sans autre modification.
+
+    // Nombre de DataId produits (2 par capteur : humidité + température).
+    static uint8_t measurableCount();
+
+    // DataId numéro `index`, avec index < measurableCount().
+    static DataId measurableAt(uint8_t index);
+
+    // Interroge immédiatement le capteur portant cet id et publie la paire
+    // humidité + température sur DataBus — même chemin que handle(), donc
+    // même validation, même horodatage, même journalisation CSV.
+    // La rotation _currentSensor n'est pas touchée : le cycle périodique
+    // suit son cours indépendamment.
+    // Appelée depuis le thread TaskManager uniquement (bus RS485 partagé).
+    // Retourne false si l'id est inconnu du module, si le bus est indisponible
+    // (mode maintenance, délai de démarrage) ou si le capteur n'a pas répondu.
+    static bool measureNow(DataId id);
+
 private:
     static constexpr const char* TAG = "RS485";
 
@@ -57,6 +84,11 @@ private:
     static bool    _initialized;
     static bool    _maintenanceMode;
     static uint8_t _currentSensor;
+
+    // Interroge le capteur décrit par `sensor` et publie la paire sur DataBus.
+    // Chemin commun à l'acquisition périodique et à la mesure à la demande :
+    // un seul endroit décide de ce qui est publié et de ce qui est rejeté.
+    static bool readAndPublish(const SensorDescriptor& sensor);
 
     static bool readSensor(uint8_t address, float& moisture, float& temperature);
     static void drainRxBuffer();

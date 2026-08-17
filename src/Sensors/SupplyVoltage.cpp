@@ -53,6 +53,22 @@ void SupplyVoltage::handle()
     if (SoilSensorRS485::isMaintenanceMode()) return;
     if (millis() < SOIL_RS485_START_DELAY_MS) return;
 
+    readAndPublish();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// readAndPublish — transaction Modbus + publication des deux canaux
+//
+// Chemin unique de publication du module, partagé par l'acquisition périodique
+// (handle) et la mesure à la demande (measureNow). Les deux origines sont donc
+// indiscernables en aval : même validation META, même horodatage VirtualClock,
+// même écriture CSV, même publication MQTT — et même passage par la détection
+// de front qui déclenche l'alerte SMS secteur. Toute lecture réelle déclenche
+// ce qui est prévu, quelle que soit son origine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SupplyVoltage::readAndPublish()
+{
     // ── Purge buffer RX ──────────────────────────────────────────────────
     while (Serial1.available()) {
         Serial1.read();
@@ -90,7 +106,7 @@ void SupplyVoltage::handle()
         Console::warn(TAG, "Pas de réponse de la carte Analog Input (adresse "
                            + String(DEVICE_ADDRESS) + ") — reçu "
                            + String(idx) + "/" + String(RESPONSE_LENGTH) + " octets");
-        return;
+        return false;
     }
 
     // ── Validation CRC ───────────────────────────────────────────────────
@@ -100,13 +116,13 @@ void SupplyVoltage::handle()
     if (rxCrc != calcCrc) {
         Console::warn(TAG, "CRC invalide — reçu 0x" + String(rxCrc, HEX)
                            + ", calculé 0x" + String(calcCrc, HEX));
-        return;
+        return false;
     }
 
     // ── Validation en-tête ───────────────────────────────────────────────
     if (response[0] != DEVICE_ADDRESS) {
         Console::warn(TAG, "Adresse inattendue : " + String(response[0]));
-        return;
+        return false;
     }
 
     if (response[1] != MODBUS_FN_READ_INPUT) {
@@ -115,12 +131,12 @@ void SupplyVoltage::handle()
         } else {
             Console::warn(TAG, "Code fonction inattendu : 0x" + String(response[1], HEX));
         }
-        return;
+        return false;
     }
 
     if (response[2] != REG_COUNT * 2) {
         Console::warn(TAG, "Byte count inattendu : " + String(response[2]));
-        return;
+        return false;
     }
 
     // ── Décodage canal 1 — tension d'alimentation ─────────────────────
@@ -168,6 +184,45 @@ void SupplyVoltage::handle()
         }
         lastAcPower = acPower;
     }
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
+//
+// Les deux ids sont écrits ici : un seul appareil physique sur le bus, une
+// seule transaction, deux canaux. OnDemandMeasure les récupère au démarrage
+// pour construire sa vue id → propriétaire.
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint8_t SupplyVoltage::measurableCount()
+{
+    return 2;
+}
+
+DataId SupplyVoltage::measurableAt(uint8_t index)
+{
+    return (index == 1) ? DataId::AcPower : DataId::SupplyVoltage;
+}
+
+bool SupplyVoltage::measureNow(DataId id)
+{
+    if (id != DataId::SupplyVoltage && id != DataId::AcPower) return false;
+
+    if (SoilSensorRS485::isMaintenanceMode()) {
+        Console::warn(TAG, "Mesure à la demande refusée — mode maintenance actif");
+        return false;
+    }
+
+    if (millis() < SOIL_RS485_START_DELAY_MS) {
+        Console::warn(TAG, "Mesure à la demande refusée — délai de démarrage "
+                           "du bus RS485 non écoulé");
+        return false;
+    }
+
+    // Une transaction livre les deux canaux : demander l'un publie les deux.
+    return readAndPublish();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
