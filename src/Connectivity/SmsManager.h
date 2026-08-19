@@ -42,8 +42,8 @@
  *
  * Les élargir réduit le nombre de SMS sans jamais dégrader l'affichage.
  */
-#define SMS_TASKMON_MIN_PERIOD_MS       1500
-#define SMS_TASKMON_MAX_PERIOD_MS       2500
+#define SMS_TASKMON_MIN_PERIOD_MS       1400
+#define SMS_TASKMON_MAX_PERIOD_MS       2600
 
 // -----------------------------------------------------------------------------
 // Alerte : température excessive du boîtier (InboxSensorRS485)
