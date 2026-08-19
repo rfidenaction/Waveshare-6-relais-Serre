@@ -42,10 +42,12 @@ public:
     static bool measureNow(DataId id);
 
 private:
-    // Transaction Modbus + décodage des deux canaux + publication.
-    // Chemin commun à l'acquisition périodique et à la mesure à la demande :
-    // un seul endroit décide de ce qui est publié et de ce qui est rejeté.
-    static bool readAndPublish();
+    // Transaction Modbus pure : lecture des deux canaux, décodage, pas de
+    // publication ni d'effet de bord. Retourne true si la carte a répondu.
+    static bool readHardware(float& voltage, float& acPower);
+
+    // Publication des deux valeurs sur DataBus (SupplyVoltage + AcPower).
+    static void publishValues(float voltage, float acPower);
 
     static uint16_t crc16(const uint8_t* data, size_t len);
 };

@@ -28,6 +28,7 @@
 #include "Sensors/SupplyVoltage.h"     // Tension alim via Analog Input 8CH (B) RS485
 #include "Sensors/SoilSensorRS485.h"   // Sondes de sol RS485 Modbus RTU
 #include "Sensors/AirSensorRS485.h"    // Capteurs air RS485 Modbus RTU (Ebyte KTH2-R)
+#include "Sensors/InboxSensorRS485.h"  // Capteur air boîtier RS485 (Ebyte KTH2-R, adresse 15)
 #include "Sensors/OnDemandMeasure.h"   // Mesure à la demande (serre/ondemand/FromUser)
 
 #include "Actuators/ValveManager.h"
@@ -157,7 +158,10 @@ static void loopInit()
     AirSensorRS485::init();
     Console::info("[AirRS485] AirSensorRS485 initialisé");
 
-    // Mesure à la demande — doit venir APRÈS les trois modules capteurs :
+    InboxSensorRS485::init();
+    Console::info("[InboxRS485] InboxSensorRS485 initialisé");
+
+    // Mesure à la demande — doit venir APRÈS les quatre modules capteurs :
     // init() les interroge pour construire sa vue id → propriétaire.
     OnDemandMeasure::init();
     Console::info("[OnDemand] OnDemandMeasure initialisé");
@@ -220,7 +224,8 @@ static void loopInit()
         EVENT_MANAGER_PERIOD_MS
     );
 
-    // DataLogger — période 30 s (plus sur le chemin critique)
+    // DataLogger — drain de la logQueue DataBus, un record par appel : la
+    // période est courte pour lisser la sérialisation, pas pour journaliser vite.
     TaskManager::addTask(
         []() { DataLogger::handle(); },
         DATALOGGER_HANDLE_PERIOD_MS
@@ -232,7 +237,9 @@ static void loopInit()
         200
     );
 
-    // WiFi status → DataBus
+    // WiFi status → DataBus. Le décalage de phase sert ici de première
+    // publication : sans lui, la période horaire laisserait l'état WiFi absent
+    // du journal pendant l'heure suivant chaque démarrage.
     TaskManager::addTask(
         []() {
             BusItem item = {};
@@ -256,7 +263,8 @@ static void loopInit()
                             ? (float)WiFi.RSSI() : -100.0f;
             DataBus::publish(item);
         },
-        WIFI_STATUS_UPDATE_INTERVAL_MS
+        WIFI_STATUS_UPDATE_INTERVAL_MS,
+        WIFI_STATUS_PHASE_OFFSET_MS
     );
 
     TaskManager::addTask(
@@ -264,23 +272,42 @@ static void loopInit()
         2000
     );
 
+    // Les quatre tâches suivantes se partagent Serial1. Leurs décalages de phase
+    // les empêchent de tomber dans la même passe de boucle, où leurs
+    // transactions Modbus bloquantes s'additionneraient (voir TimingConfig.h,
+    // section « TaskManager — décalage de phase »).
     TaskManager::addTask(
         []() { SupplyVoltage::handle(); },
-        30000
+        SUPPLY_VOLTAGE_HANDLE_PERIOD_MS,
+        SUPPLY_VOLTAGE_PHASE_OFFSET_MS
     );
 
+    // Capteurs RS485 à mesure de température : chaque famille interroge UN
+    // capteur par appel, en rotation. La période de la tâche est donc la cadence
+    // plancher divisée par l'effectif de la famille, de sorte que chaque capteur
+    // soit lu à cette cadence et pas plus vite (auto-échauffement). Ajouter ou
+    // retirer un capteur dans SENSORS[] ajuste la période sans rien changer ici.
     TaskManager::addTask(
         []() { SoilSensorRS485::handle(); },
-        SOIL_RS485_HANDLE_PERIOD_MS
+        RS485_TEMP_READ_PERIOD_MS / SoilSensorRS485::sensorCount(),
+        SOIL_RS485_PHASE_OFFSET_MS
     );
 
     TaskManager::addTask(
         []() { AirSensorRS485::handle(); },
-        AIR_RS485_HANDLE_PERIOD_MS
+        RS485_TEMP_READ_PERIOD_MS / AirSensorRS485::sensorCount(),
+        AIR_RS485_PHASE_OFFSET_MS
+    );
+
+    // Un seul capteur boîtier, pas de rotation : pas de division.
+    TaskManager::addTask(
+        []() { InboxSensorRS485::handle(); },
+        RS485_TEMP_READ_PERIOD_MS,
+        INBOX_RS485_PHASE_OFFSET_MS
     );
 
     // Mesure à la demande — exécute dans CE thread la mesure demandée par
-    // MQTT, donc jamais en concurrence avec les trois tâches capteurs
+    // MQTT, donc jamais en concurrence avec les quatre tâches capteurs
     // ci-dessus sur Serial1.
     TaskManager::addTask(
         []() { OnDemandMeasure::handle(); },

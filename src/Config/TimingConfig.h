@@ -38,15 +38,66 @@
 #define SYSTEM_INIT_DELAY_MS   2500
 
 // =============================================================================
+// TaskManager — décalage de phase
+// =============================================================================
+/*
+ * TaskManager::handle() exécute dans la MÊME passe de boucle toutes les tâches
+ * échues : leurs durées s'additionnent dans cette passe. Or les périodes des
+ * quatre tâches du bus RS485 sont harmoniques (30, 75, 150 et 300 s) et toutes
+ * comptées depuis le démarrage, si bien qu'elles tombaient ensemble toutes les
+ * 300 secondes — quatre transactions Modbus bloquantes enchaînées, que
+ * TaskManagerMonitor mesure comme une dérive du scheduler.
+ *
+ * Le remède est de décaler l'origine de chaque grille d'un multiple de ce pas.
+ * Le décalage se conserve : chaque tâche repart de sa propre dernière
+ * exécution.
+ */
+#define TASK_PHASE_STEP_MS             5000UL      // 5 s entre deux tâches
+
+/*
+ * Rangs attribués. Deux tâches ne peuvent tomber dans la même passe que si
+ * l'écart de leurs décalages est un multiple du PGCD de leurs périodes ; les
+ * dix paires ont été vérifiées, aucune ne remplit cette condition.
+ *
+ *   tension alim  30 s   → 1  (5 s)
+ *   sondes sol    75 s   → 2  (10 s)
+ *   capteurs air  150 s  → 3  (15 s)
+ *   capteur boît. 300 s  → 4  (20 s)
+ *   état WiFi     1 h    → 5  (4 min + 25 s)
+ *
+ * Le rang WiFi ajoute VCLOCK_START_DELAY_MS : la première publication doit
+ * arriver après la bascule VClock, sinon l'UI garde un horodatage millis()
+ * jusqu'au tick suivant, une heure plus tard. Le +25 s conserve un écart
+ * non multiple des PGCD RS485 (paires revérifiées avec 265 s).
+ *
+ * handle() avance chaque échéance d'un nombre entier de périodes, pas de
+ * l'horloge murale : l'origine de la grille survit même si deux tâches dues
+ * partent dans la même passe, et un retard (démarrage inclus) se résorbe en
+ * un seul appel. Une collision ponctuelle reste possible si la boucle a plus
+ * de 5 s de retard ; elle ne recolle plus les origines.
+ *
+ * La vérification des paires ci-dessus dépend des périodes du moment : changer
+ * l'effectif d'une famille de capteurs change sa période, et il faut refaire
+ * le calcul. Une coïncidence retrouvée ne coûte qu'une passe plus lourde, elle
+ * ne casse rien.
+ */
+#define SUPPLY_VOLTAGE_PHASE_OFFSET_MS (1 * TASK_PHASE_STEP_MS)
+#define SOIL_RS485_PHASE_OFFSET_MS     (2 * TASK_PHASE_STEP_MS)
+#define AIR_RS485_PHASE_OFFSET_MS      (3 * TASK_PHASE_STEP_MS)
+#define INBOX_RS485_PHASE_OFFSET_MS    (4 * TASK_PHASE_STEP_MS)
+#define WIFI_STATUS_PHASE_OFFSET_MS    (VCLOCK_START_DELAY_MS + 5 * TASK_PHASE_STEP_MS)
+
+// =============================================================================
 // StatusReport — Verdict de démarrage et rapport périodique
 // =============================================================================
 /*
  * Instant où le démarrage est déclaré terminé et où le verdict est publié
  * sur DataId::Boot ("Démarrage").
  *
- * Calé juste après la fin du premier tour complet des capteurs RS485
- * (dernier capteur air interrogé à ~360 s), qui est le dernier événement
- * de la séquence de démarrage.
+ * Calé juste après la première interrogation d'un capteur air (~315–320 s,
+ * une fois le bus RS485 ouvert à 285 s). On n'attend plus le tour complet
+ * des capteurs : à 5 min par capteur, cela retarderait le verdict sans
+ * le rendre plus significatif.
  */
 #define BOOT_VERDICT_DELAY_MS          361000UL
 
@@ -118,11 +169,21 @@
 #define WIFI_HANDLE_PERIOD_MS          250
 
 /*
- * Période d'enregistrement des informations WiFi (RSSI, état).
- * Utilisé pour le suivi long terme, pas pour la réactivité immédiate.
+ * Période de publication des informations WiFi (état STA, état AP, RSSI).
+ * Suivi long terme, pas réactivité immédiate : la reconnexion est l'affaire de
+ * WiFiManager, appelé lui toutes les WIFI_HANDLE_PERIOD_MS.
+ *
+ * Conséquence assumée : l'état publié est un instantané horaire. Une coupure
+ * WiFi brève entre deux publications ne laisse pas de trace dans le journal.
+ *
+ * Contrairement aux modules capteurs, cette tâche ne porte aucune logique de
+ * première publication : c'est son décalage de phase qui la lui donne.
+ * WIFI_STATUS_PHASE_OFFSET_MS place ce premier tick après VClock (4 min +
+ * 25 s après l'enregistrement des tâches). Sans lui, l'état WiFi serait
+ * absent du journal pendant l'heure suivant chaque reboot ; trop tôt, l'UI
+ * garderait un timestamp millis() jusqu'au tick suivant.
  */
-//  #define WIFI_STATUS_LOG_INTERVAL_MS    60000
-#define WIFI_STATUS_UPDATE_INTERVAL_MS 30000UL
+#define WIFI_STATUS_UPDATE_INTERVAL_MS 3600000UL   // 1 h
 
 // =============================================================================
 // ValveManager — Démarrage différé du pilote des électrovannes
@@ -245,11 +306,13 @@
 #define DATALOGGER_ROTATION_MINUTE     45
 
 /*
- * Durée de rétention des fichiers log, en jours (~14 mois).
- * Les fichiers plus anciens sont supprimés automatiquement à chaque rotation.
- * À ~5 Ko/jour en production, 425 jours ≈ 2,1 Mo sur une partition de 8 Mo.
+ * Durée de rétention des fichiers log, en jours (une année civile, y compris
+ * bissextile). Les fichiers plus anciens sont supprimés à chaque rotation.
+ * Volume typique : 5 à 18 Ko/jour. 8 Mo de partition LittleFS tiennent
+ * au moins un an ; 366 jours reste en deçà du remplissage, contrairement
+ * à une rétention plus longue qui pourrait saturer la flash avant d'effacer.
  */
-#define DATALOGGER_RETENTION_DAYS      425
+#define DATALOGGER_RETENTION_DAYS      366
 
 // =============================================================================
 // SafeReboot — Reboot préventif automatique
@@ -301,6 +364,54 @@
 #define CONDITIONAL_HANDLE_PERIOD_MS   1000
 
 // =============================================================================
+// SupplyVoltage — Tension d'alimentation et détection secteur (RS485)
+// =============================================================================
+/*
+ * Période de lecture matérielle de la carte Waveshare Analog Input 8CH (B).
+ * Chaque appel effectue une seule transaction Modbus sur Serial1 (~200 ms max).
+ *
+ * Cette cadence rapide sert uniquement à la détection de front secteur
+ * (alerte SMS). La publication sur DataBus est découplée et suit son propre
+ * rythme (voir SUPPLY_VOLTAGE_PUBLISH_PERIOD_MS ci-dessous).
+ */
+#define SUPPLY_VOLTAGE_HANDLE_PERIOD_MS   30000
+
+/*
+ * Période de publication de SupplyVoltage et AcPower sur DataBus (battement).
+ *
+ * La première publication a lieu dès la première lecture réussie (pour que
+ * la donnée soit visible à l'interface dès le boot) et pose le point de
+ * départ du battement. Les suivantes sont espacées de cette période, sans
+ * jamais être recalées. En supplément, un front secteur (coupure ou retour)
+ * déclenche une publication extra, soumise au même cooldown d'une heure que
+ * le SMS (SmsManager.h), sans recaler le battement horaire. La mesure à la
+ * demande n'est pas concernée.
+ */
+#define SUPPLY_VOLTAGE_PUBLISH_PERIOD_MS  3600000UL   // 1 h
+
+// =============================================================================
+// Capteurs RS485 mesurant une température — cadence de lecture commune
+// =============================================================================
+/*
+ * Cadence de lecture de CHAQUE capteur mesurant une température : sondes de
+ * sol, capteurs air, capteur boîtier.
+ *
+ * C'est un plancher matériel, pas un réglage de confort. Interrogé plus
+ * souvent, l'élément de mesure s'échauffe et la température lue dérive. Cette
+ * valeur ne doit pas être diminuée.
+ *
+ * Chaque famille interroge UN capteur par appel, en rotation : la période de
+ * sa tâche est donc cette cadence divisée par son effectif. La division est
+ * faite à l'enregistrement de la tâche, dans main.cpp, à partir du
+ * sensorCount() du module. Ajouter ou retirer un capteur ne touche donc aucun
+ * timing — chaque capteur reste lu à cette cadence quel que soit l'effectif.
+ *
+ * La carte Analog Input 8CH (SupplyVoltage) n'est pas concernée : elle ne
+ * mesure aucune température et garde sa cadence rapide de détection secteur.
+ */
+#define RS485_TEMP_READ_PERIOD_MS      300000UL    // 5 min par capteur
+
+// =============================================================================
 // SoilSensorRS485 — Sondes de sol RS485 (Modbus RTU)
 // =============================================================================
 /*
@@ -311,13 +422,19 @@
 #define SOIL_RS485_START_DELAY_MS      285000UL    // 4 min 45 s
 
 /*
- * Période d'interrogation des sondes de sol RS485 (Modbus RTU).
- * Chaque appel interroge UN capteur en rotation (~100 ms bloquant max).
- * Cycle complet = période × nombre de capteurs (4).
- * 30 s × 4 = 2 min en mode test. En production, ajuster pour
- * un cycle d'une heure (période = 900000 = 15 min).
+ * Période de publication de chaque sonde de sol sur DataBus.
+ *
+ * La lecture, elle, tourne à RS485_TEMP_READ_PERIOD_MS : la sonde est lue bien
+ * plus souvent qu'elle n'est publiée. Cette cadence rapide sert l'arrosage
+ * conditionnel, qui doit rester réactif.
+ *
+ * Le battement est propre à chaque sonde et posé à sa première lecture réussie,
+ * jamais recalé ensuite. La rotation étale donc naturellement les publications
+ * des sondes dans l'heure. En supplément, une mesure qui déclenche un arrosage
+ * conditionnel est publiée immédiatement par ConditionalWatering, sans affecter
+ * le battement.
  */
-#define SOIL_RS485_HANDLE_PERIOD_MS    30000
+#define SOIL_RS485_PUBLISH_PERIOD_MS   3600000UL   // 1 h
 
 // =============================================================================
 // AirSensorRS485 — Capteurs air RS485 (Ebyte KTH2-R)
@@ -330,13 +447,33 @@
 #define AIR_RS485_START_DELAY_MS       285000UL    // 4 min 45 s
 
 /*
- * Période d'interrogation des capteurs air RS485 (Modbus RTU).
- * Chaque appel interroge UN capteur en rotation (~100 ms bloquant max).
- * Cycle complet = période × nombre de capteurs (3).
- * Identique à SOIL_RS485_HANDLE_PERIOD_MS ; les tâches TaskManager
- * s'exécutent de façon séquentielle, aucun risque de collision sur le bus.
+ * Période de publication de chaque capteur air sur DataBus.
+ * Même principe que SOIL_RS485_PUBLISH_PERIOD_MS : battement par capteur, posé
+ * à sa première lecture réussie, la lecture restant cadencée par
+ * RS485_TEMP_READ_PERIOD_MS.
  */
-#define AIR_RS485_HANDLE_PERIOD_MS     30000
+#define AIR_RS485_PUBLISH_PERIOD_MS    3600000UL   // 1 h
+
+// =============================================================================
+// InboxSensorRS485 — Capteur air boîtier (Ebyte KTH2-R, adresse 15)
+// =============================================================================
+/*
+ * Délai avant la première interrogation du capteur boîtier.
+ * Identique aux autres capteurs RS485 : même bus, même prérequis de
+ * stabilisation.
+ */
+#define INBOX_RS485_START_DELAY_MS     285000UL    // 4 min 45 s
+
+/*
+ * Période de publication de AirTemperature1 et AirHumidity1 sur DataBus.
+ *
+ * La première publication a lieu dès la première lecture réussie et pose
+ * le point de départ du battement. Les suivantes sont espacées de cette
+ * période, sans jamais être recalées. En supplément, toute détection de
+ * température excessive déclenche une publication immédiate sans affecter
+ * le battement horaire.
+ */
+#define INBOX_RS485_PUBLISH_PERIOD_MS  3600000UL   // 1 h
 
 // =============================================================================
 // OnDemandMeasure — mesure à la demande

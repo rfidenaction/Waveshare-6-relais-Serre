@@ -7,7 +7,7 @@
 // de DataLogger, seule mémoire longue du système.
 //
 // ─── Pourquoi relire la flash plutôt que tenir un historique en RAM ─────────
-//   Le journal contient déjà 425 jours de données, au format CSV 7 champs
+//   Le journal contient déjà 366 jours de données, au format CSV 7 champs
 //   identique au payload MQTT. Un tampon RAM parallèle serait une seconde
 //   source de vérité, perdue à chaque reboot, et incapable de servir les
 //   valeurs texte. La relecture ne coûte que du temps, et le temps est la

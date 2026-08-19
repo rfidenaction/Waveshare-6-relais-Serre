@@ -47,7 +47,7 @@ public:
     static constexpr const char* ONDEMAND_TOPIC_FROM_USER = "serre/ondemand/FromUser";
 
     // Interroge les modules producteurs et construit la vue id → propriétaire.
-    // À appeler après les init() des trois modules capteurs.
+    // À appeler après les init() des quatre modules capteurs.
     static void init();
 
     // Exécute la demande en attente. Tâche TaskManager.

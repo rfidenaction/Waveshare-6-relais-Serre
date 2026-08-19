@@ -5,7 +5,7 @@
 //   Interface → serre/ondemand/FromUser → MqttManager (thread esp_mqtt)
 //     → OnDemandMeasure::onRequest : valide, pose l'id dans le slot, rend la main
 //     → OnDemandMeasure::handle    : (thread TaskManager) dispatch vers le module
-//     → SoilSensorRS485 | AirSensorRS485 | SupplyVoltage :: measureNow
+//     → SoilSensorRS485 | AirSensorRS485 | InboxSensorRS485 | SupplyVoltage :: measureNow
 //     → DataBus::publish           : chemin normal (CSV, MQTT, page web)
 //     → serre/data/{id}            : l'interface se met à jour d'elle-même
 
@@ -13,6 +13,7 @@
 #include "Sensors/SupplyVoltage.h"
 #include "Sensors/SoilSensorRS485.h"
 #include "Sensors/AirSensorRS485.h"
+#include "Sensors/InboxSensorRS485.h"
 #include "Utils/Console.h"
 
 #include <ArduinoJson.h>
@@ -66,6 +67,10 @@ void OnDemandMeasure::buildSlotsFromSensors()
     collect(AirSensorRS485::measurableCount(),
             &AirSensorRS485::measurableAt,
             &AirSensorRS485::measureNow);
+
+    collect(InboxSensorRS485::measurableCount(),
+            &InboxSensorRS485::measurableAt,
+            &InboxSensorRS485::measureNow);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

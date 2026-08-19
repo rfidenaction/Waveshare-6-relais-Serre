@@ -45,6 +45,20 @@
 #define SMS_TASKMON_MIN_PERIOD_MS       1500
 #define SMS_TASKMON_MAX_PERIOD_MS       2500
 
+// -----------------------------------------------------------------------------
+// Alerte : température excessive du boîtier (InboxSensorRS485)
+// -----------------------------------------------------------------------------
+#define SMS_INBOX_TEMP_ENABLED          true
+#define SMS_INBOX_TEMP_THRESHOLD        50.0f        // °C — seuil d'alerte (montée)
+#define SMS_INBOX_TEMP_CLEAR_OFFSET     5.0f         // °C — fin d'alerte à (seuil − offset)
+#define SMS_INBOX_TEMP_COOLDOWN_MS      86400000UL   // 24 h entre deux SMS (alerte et fin d'alerte ont chacun leur cooldown)
+
+// -----------------------------------------------------------------------------
+// Alerte : coupure / retour secteur 220 V (SupplyVoltage)
+// -----------------------------------------------------------------------------
+#define SMS_AC_POWER_ENABLED            true
+#define SMS_AC_POWER_COOLDOWN_MS        3600000UL    // 1 h entre deux SMS (alerte et fin d'alerte ont chacun leur cooldown)
+
 // =============================================================================
 // (fin de la section politique d'alertes)
 // =============================================================================

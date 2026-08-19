@@ -44,22 +44,52 @@ void ConditionalWatering::init()
 }
 
 // ─── onNewData() — thread du producteur ──────────────────────────────────────
-// Appelée par DataBus::distribute() pour CHAQUE donnée publiée. Doit rester
-// minimale : filtrage, puis mémorisation de la mesure sous portMUX.
+// Appelée par DataBus::distribute() pour CHAQUE donnée publiée. Écarte ce qui
+// n'est pas une mesure de capteur numérique, puis délègue.
+
+void ConditionalWatering::onNewData(const BusItem& item)
+{
+    if (item.type != DataType::Sensor)  return;
+    if (item.valueKind != 0)            return;
+
+    offerMeasure(item.id, item.valueFloat);
+}
+
+// ─── offerMeasure() — thread du producteur ───────────────────────────────────
+// Entrée unique des mesures, qu'elles viennent du bus (via onNewData) ou
+// directement d'un module capteur qui a lu sans publier. Doit rester minimale :
+// filtrage, puis mémorisation de la mesure sous portMUX.
+//
+// Les contrôles META reproduisent ceux de DataBus::validate(). Sans eux, la
+// voie directe accepterait ce que le bus rejette : une trame corrompue de CRC
+// valide pourrait ouvrir une vanne, puis la publication de la mesure serait
+// refusée pour dépassement de bornes — l'action orpheline que ce module a
+// précisément pour rôle d'interdire.
 //
 // Le parcours de conditionalRules[] se fait sans verrou alors que handle()
 // peut modifier le tableau. C'est sans conséquence : au pire on mémorise une
 // mesure qui ne servira à personne, ou on en ignore une, à un tick près.
 
-void ConditionalWatering::onNewData(const BusItem& item)
+void ConditionalWatering::offerMeasure(DataId sensorId, float value)
 {
-    if (conditionalRuleCount == 0)      return;
-    if (item.type != DataType::Sensor)  return;
-    if (item.valueKind != 0)            return;
+    if (conditionalRuleCount == 0)         return;
+    if (!isValidId((uint8_t)sensorId))     return;
+
+    const DataMeta& meta = getMeta(sensorId);
+    if (meta.type   != DataType::Sensor)     return;
+    if (meta.nature != DataNature::metrique) return;
+
+    if (value < meta.min || value > meta.max) {
+        Console::warn(TAG, "Mesure écartée — " + String(meta.label)
+                      + " = " + String(value, 1) + " " + String(meta.unit)
+                      + " hors bornes META [" + String(meta.min, 1)
+                      + ", " + String(meta.max, 1) + "]");
+        return;
+    }
 
     bool sensorUsed = false;
     for (uint8_t i = 0; i < conditionalRuleCount; i++) {
-        if (conditionalRules[i].sensorId == item.id) { sensorUsed = true; break; }
+        if (conditionalRules[i].sensorId == sensorId) { sensorUsed = true; break; }
     }
     if (!sensorUsed) return;
 
@@ -67,15 +97,15 @@ void ConditionalWatering::onNewData(const BusItem& item)
 
     bool stored = false;
     for (uint8_t i = 0; i < pendingMeasureCount; i++) {
-        if (pendingMeasures[i].sensorId == item.id) {
-            pendingMeasures[i].value = item.valueFloat;
+        if (pendingMeasures[i].sensorId == sensorId) {
+            pendingMeasures[i].value = value;
             stored = true;
             break;
         }
     }
     if (!stored && pendingMeasureCount < MAX_PENDING_MEASURES) {
-        pendingMeasures[pendingMeasureCount].sensorId = item.id;
-        pendingMeasures[pendingMeasureCount].value    = item.valueFloat;
+        pendingMeasures[pendingMeasureCount].sensorId = sensorId;
+        pendingMeasures[pendingMeasureCount].value    = value;
         pendingMeasureCount++;
     }
 
@@ -142,10 +172,16 @@ void ConditionalWatering::handle()
 
 // ─── evaluateRulesForSensor() ────────────────────────────────────────────────
 // Trois filtres successifs : plage horaire, condition, délai de repos.
+//
+// Au premier déclenchement effectif, la mesure qui a décidé est publiée à son
+// tour (voir ConditionalWatering.h, « pas d'action orpheline »). Une seule fois
+// par appel : deux règles peuvent partager le même capteur.
 
 void ConditionalWatering::evaluateRulesForSensor(DataId sensorId, float value,
                                                  uint32_t nowTs, uint8_t localHour)
 {
+    bool measurePublished = false;
+
     for (uint8_t i = 0; i < conditionalRuleCount; i++) {
         const ConditionalRule& rule = conditionalRules[i];
         if (rule.sensorId != sensorId) continue;
@@ -208,6 +244,19 @@ void ConditionalWatering::evaluateRulesForSensor(DataId sensorId, float value,
                       + String(rule.threshold, 1)
                       + " — durée " + String(rule.duration)
                       + " s, repos " + String(rule.restHours) + " h");
+
+        // Publication de la mesure qui a décidé. Le repos est déjà armé, donc
+        // la réévaluation que cette publication provoque (distribute →
+        // onNewData → tick suivant) sera écartée par le filtre de repos.
+        if (!measurePublished) {
+            BusItem measure = {};
+            measure.type       = getMeta(sensorId).type;
+            measure.id         = sensorId;
+            measure.valueKind  = 0;
+            measure.valueFloat = value;
+            DataBus::publish(measure);
+            measurePublished = true;
+        }
     }
 }
 

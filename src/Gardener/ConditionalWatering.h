@@ -6,12 +6,20 @@
 // plage horaire (heure locale, franchissement de minuit autorisé), un délai
 // de repos en heures et une durée d'arrosage. 16 règles au maximum.
 //
-// Ce module ne cadence RIEN : c'est l'arrivée d'une mesure sur le bus qui
-// déclenche l'évaluation. DataBus::distribute() appelle onNewData(), qui se
-// contente de mémoriser la mesure ; la décision est prise au tick suivant de
-// handle(), dans le thread TaskManager. Cette indirection est indispensable :
-// décider dans onNewData() reviendrait à appeler DataBus::publish() depuis
-// l'intérieur de DataBus::distribute().
+// Ce module ne cadence RIEN : c'est l'arrivée d'une mesure qui déclenche
+// l'évaluation. Une mesure arrive par deux voies, qui aboutissent toutes deux
+// à offerMeasure() :
+//   - onNewData(), appelé par DataBus::distribute() pour toute donnée publiée ;
+//   - offerMeasure(), appelé directement par un module capteur qui vient de
+//     lire sans publier, sa cadence de lecture étant plus rapide que sa
+//     cadence de journalisation.
+// Les deux voies subissent les mêmes filtres, si bien qu'une mesure évaluable
+// est toujours une mesure publiable.
+//
+// La mesure reçue n'est que mémorisée ; la décision est prise au tick suivant
+// de handle(), dans le thread TaskManager. Cette indirection est
+// indispensable : décider dans onNewData() reviendrait à appeler
+// DataBus::publish() depuis l'intérieur de DataBus::distribute().
 //
 // Comme on ne décide que sur une mesure qui vient d'être produite, aucun
 // contrôle de fraîcheur n'est nécessaire.
@@ -21,6 +29,13 @@
 // horodatage, distribution mqttQueue/logQueue/WebServer, routage via RELAYS[]
 // → ValveManager). Si la vanne est déjà ouverte, ValveManager ignore la
 // demande : le délai de repos démarre malgré tout, le travail étant fait.
+//
+// Pas d'action orpheline : la mesure qui a servi à décider est publiée elle
+// aussi, juste après la commande. Un déclenchement reste donc lisible dans le
+// journal avec la valeur qui l'a provoqué, même quand le capteur ne publie
+// qu'une fois par heure. Une seule publication par capteur et par tick, même
+// si plusieurs règles se déclenchent sur lui. Rien n'est publié quand aucune
+// action n'a lieu : condition fausse, repos en cours, ou commande non routée.
 //
 // En revanche, si DataBus n'a pas pu router la commande (ValveManager pas
 // encore prêt avant VALVE_START_DELAY_MS, queue pleine), aucun arrosage n'aura
@@ -36,6 +51,7 @@
 //   - init() appelé dans loopInit() après MqttManager::init()
 //   - handle() en tâche TaskManager période CONDITIONAL_HANDLE_PERIOD_MS
 //   - onNewData() appelé par DataBus::distribute() (n'importe quel thread)
+//   - offerMeasure() appelé par les modules capteurs (thread TaskManager)
 //   - onConditionalMessage() appelé par MqttManager depuis le thread esp_mqtt
 //   - requestStatePublish() appelé par MqttManager sur MQTT_EVENT_CONNECTED
 #pragma once
@@ -86,8 +102,18 @@ public:
     static void handle();
 
     // Réception d'une donnée du bus. Appelée par DataBus::distribute() depuis
-    // le thread du producteur — se contente de mémoriser les mesures utiles.
+    // le thread du producteur — filtre ce qui n'est pas une mesure de capteur
+    // numérique, puis délègue à offerMeasure().
     static void onNewData(const BusItem& item);
+
+    // Réception d'une mesure non publiée, offerte par le module capteur qui
+    // vient de la lire. Permet d'évaluer les règles à la cadence de lecture
+    // alors que la journalisation reste horaire.
+    //
+    // Se contente de mémoriser la mesure ; aucune décision, aucune I/O.
+    // Les mesures invalides au sens de META sont écartées ici, exactement
+    // comme DataBus les rejetterait : ce qui est évaluable est publiable.
+    static void offerMeasure(DataId sensorId, float value);
 
     // Réception d'un message MQTT sur serre/conditional/FromUser.
     // Appelée depuis le thread esp_mqtt — bufferise le message brut pour
@@ -117,7 +143,7 @@ private:
     static uint32_t conditionalRuleLastTrigger[];
 
     // ─── Mesures en attente d'évaluation ─────────────────────────────────
-    // Écrites par onNewData() (thread producteur), lues et vidées par
+    // Écrites par offerMeasure() (thread producteur), lues et vidées par
     // handle() (thread TaskManager). Protégées par portMUX, comme
     // lastDataForWeb. Une seule entrée par capteur : une mesure plus récente
     // écrase la précédente si le tick n'est pas encore passé.
@@ -126,7 +152,10 @@ private:
         float  value;
     };
 
-    static constexpr uint8_t MAX_PENDING_MEASURES = 8;
+    // Aligné sur MAX_CONDITIONAL_RULES : autant de capteurs distincts peuvent
+    // être référencés par les règles, donc arriver dans le même tick. Au-delà
+    // de cette borne, une mesure serait écartée sans trace.
+    static constexpr uint8_t MAX_PENDING_MEASURES = 16;
 
     static PendingMeasure pendingMeasures[];
     static uint8_t        pendingMeasureCount;

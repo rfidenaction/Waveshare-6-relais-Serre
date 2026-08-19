@@ -9,6 +9,7 @@
 #include "Config/IO-Config.h"          // RS485_TX_PIN, RS485_RX_PIN
 #include "Config/TimingConfig.h"       // SOIL_RS485_START_DELAY_MS
 #include "Core/DataBus.h"
+#include "Gardener/ConditionalWatering.h"
 #include "Utils/Console.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,6 +31,9 @@ bool     SoilSensorRS485::_initialized      = false;
 bool     SoilSensorRS485::_maintenanceMode = false;
 uint8_t  SoilSensorRS485::_currentSensor   = 0;
 
+unsigned long SoilSensorRS485::_lastPublishMs[SENSOR_COUNT]    = {};
+bool          SoilSensorRS485::_firstPublishDone[SENSOR_COUNT] = {};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // init — ouverture de Serial1 sur le port RS485 isolé
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +52,17 @@ void SoilSensorRS485::init()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// handle — interrogation périodique du capteur
+// handle — interrogation périodique, publication découplée
+//
+// Chaque appel :
+//   1. Lecture d'UNE sonde (rotation)
+//   2. Mesures offertes à l'arrosage conditionnel
+//   3. Première lecture réussie de cette sonde → publication + départ du battement
+//   4. Battement horaire de cette sonde → publication périodique (jamais recalé)
+//   5. Sinon : valeurs lues, pas de publication
+//
+// La rotation avance avant la lecture : une sonde muette ne bloque pas le tour
+// des autres.
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SoilSensorRS485::handle()
@@ -57,24 +71,51 @@ void SoilSensorRS485::handle()
     if (_maintenanceMode) return;
     if (millis() < SOIL_RS485_START_DELAY_MS) return;
 
-    readAndPublish(SENSORS[_currentSensor]);
-
+    const uint8_t index = _currentSensor;
     _currentSensor = (_currentSensor + 1) % SENSOR_COUNT;
+
+    float moisture    = 0.0f;
+    float temperature = 0.0f;
+
+    if (!readOne(SENSORS[index], moisture, temperature)) return;
+
+    // L'arrosage conditionnel travaille à la cadence de lecture, sans attendre
+    // la publication horaire. Sans effet si aucune règle ne cite ces id.
+    ConditionalWatering::offerMeasure(SENSORS[index].moistureId,    moisture);
+    ConditionalWatering::offerMeasure(SENSORS[index].temperatureId, temperature);
+
+    bool shouldPublish = false;
+
+    if (!_firstPublishDone[index]) {
+        _firstPublishDone[index] = true;
+        _lastPublishMs[index]    = millis();
+        shouldPublish            = true;
+    }
+
+    if (_firstPublishDone[index] &&
+        (millis() - _lastPublishMs[index] >= SOIL_RS485_PUBLISH_PERIOD_MS)) {
+        _lastPublishMs[index] = millis();
+        shouldPublish         = true;
+    }
+
+    if (shouldPublish) {
+        publishValues(SENSORS[index], moisture, temperature);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// readAndPublish — transaction + publication de la paire humidité/température
+// readOne — transaction Modbus + contrôle de vraisemblance, sans publication
 //
-// Chemin unique de publication du module, partagé par l'acquisition périodique
-// (handle) et la mesure à la demande (measureNow). Les deux origines sont donc
-// indiscernables en aval : même validation META, même horodatage VirtualClock,
-// même écriture CSV, même publication MQTT.
+// Chemin unique de lecture du module, partagé par l'acquisition périodique
+// (handle) et la mesure à la demande (measureNow) : un seul endroit décide de
+// ce qui est rejeté.
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool SoilSensorRS485::readAndPublish(const SensorDescriptor& sensor)
+bool SoilSensorRS485::readOne(const SensorDescriptor& sensor,
+                              float& moisture, float& temperature)
 {
-    float moisture    = 0.0f;
-    float temperature = 0.0f;
+    moisture    = 0.0f;
+    temperature = 0.0f;
 
     if (!readSensor(sensor.address, moisture, temperature)) {
         Console::warn(TAG, "Pas de réponse du capteur sol (adresse "
@@ -84,10 +125,28 @@ bool SoilSensorRS485::readAndPublish(const SensorDescriptor& sensor)
 
     if (moisture == 0.0f && temperature == 0.0f) {
         Console::warn(TAG, "Capteur @" + String(sensor.address)
-                          + " : valeurs 0/0 suspectes — publication ignorée");
+                          + " : valeurs 0/0 suspectes — lecture ignorée");
         return false;
     }
 
+    Console::info(TAG, "Capteur @" + String(sensor.address)
+                      + " — Humidité : " + String(moisture, 1) + " %"
+                      + "  |  Température : " + String(temperature, 1) + " °C");
+
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// publishValues — publication de la paire humidité/température sur DataBus
+//
+// Chemin unique de publication du module. Les deux origines sont donc
+// indiscernables en aval : même validation META, même horodatage VirtualClock,
+// même écriture CSV, même publication MQTT.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SoilSensorRS485::publishValues(const SensorDescriptor& sensor,
+                                    float moisture, float temperature)
+{
     BusItem item = {};
 
     item.type       = getMeta(sensor.moistureId).type;
@@ -102,11 +161,9 @@ bool SoilSensorRS485::readAndPublish(const SensorDescriptor& sensor)
     item.valueFloat = temperature;
     DataBus::publish(item);
 
-    Console::info(TAG, "Capteur @" + String(sensor.address)
+    Console::info(TAG, "Publication — Capteur @" + String(sensor.address)
                       + " — Humidité : " + String(moisture, 1) + " %"
                       + "  |  Température : " + String(temperature, 1) + " °C");
-
-    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,7 +205,13 @@ bool SoilSensorRS485::measureNow(DataId id)
 
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
         if (SENSORS[i].moistureId == id || SENSORS[i].temperatureId == id) {
-            return readAndPublish(SENSORS[i]);
+            float moisture    = 0.0f;
+            float temperature = 0.0f;
+
+            if (!readOne(SENSORS[i], moisture, temperature)) return false;
+
+            publishValues(SENSORS[i], moisture, temperature);
+            return true;
         }
     }
 

@@ -2,9 +2,20 @@
 // Lecture des sondes de sol ZTS-3000-TR-WS-N01 (Liyuan Electronic)
 // via RS485 Modbus RTU sur Serial1 (UART1 isolé, direction auto hardware).
 //
-// 6 capteurs sur le bus, interrogés en rotation (un par appel de handle()).
-// Chaque capteur fournit humidité sol (%) et température sol (°C),
-// publiés sur DataBus après validation.
+// Les capteurs sur le bus sont interrogés en rotation, un par appel de
+// handle(). Chaque capteur fournit humidité sol (%) et température sol (°C).
+//
+// Architecture lecture / publication :
+//   La lecture tourne vite — chaque sonde est lue à RS485_TEMP_READ_PERIOD_MS,
+//   cadence plancher imposée par l'auto-échauffement de l'élément de mesure —
+//   pour que l'arrosage conditionnel reste réactif. Chaque lecture est offerte
+//   à ConditionalWatering.
+//   La publication sur DataBus est découplée :
+//     - à la première lecture réussie de chaque sonde
+//     - toutes les heures (SOIL_RS485_PUBLISH_PERIOD_MS, battement par sonde)
+//     - à la demande depuis l'UI (measureNow)
+//     - immédiatement si la mesure déclenche un arrosage conditionnel
+//       (publication faite par ConditionalWatering, pas par ce module)
 #pragma once
 
 #include <Arduino.h>
@@ -14,11 +25,19 @@ class SoilSensorRS485 {
 public:
     static void init();
 
-    // Interroge UN capteur (rotation) et publie sur DataBus.
-    // Appelé périodiquement par TaskManager (SOIL_RS485_HANDLE_PERIOD_MS).
+    // Interroge UN capteur (rotation), offre ses mesures à l'arrosage
+    // conditionnel, et publie sur DataBus si le battement de ce capteur est
+    // échu.
+    // Appelé périodiquement par TaskManager, à RS485_TEMP_READ_PERIOD_MS
+    // divisé par sensorCount() : chaque sonde est ainsi lue à la cadence
+    // plancher, quel que soit l'effectif.
     // Bloquant ~100 ms max (timeout Modbus).
     // Inactif si _maintenanceMode est true.
     static void handle();
+
+    // Effectif de la famille, d'où main.cpp déduit la période de la tâche.
+    // constexpr : la division est faite à la compilation.
+    static constexpr uint8_t sensorCount() { return SENSOR_COUNT; }
 
     // ─── Mode maintenance (programmation d'adresse via page web) ─────────
     // Quand actif, handle() est inhibé et Serial1 est réservé aux
@@ -74,6 +93,9 @@ private:
     };
 
     static constexpr uint8_t SENSOR_COUNT = 4;
+    static_assert(SENSOR_COUNT > 0,
+                  "SENSOR_COUNT divise RS485_TEMP_READ_PERIOD_MS dans main.cpp");
+
     static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
         { 0x01, DataId::SoilMoisture1, DataId::SoilTemperature1 },
         { 0x02, DataId::SoilMoisture2, DataId::SoilTemperature2 },
@@ -85,10 +107,24 @@ private:
     static bool    _maintenanceMode;
     static uint8_t _currentSensor;
 
-    // Interroge le capteur décrit par `sensor` et publie la paire sur DataBus.
-    // Chemin commun à l'acquisition périodique et à la mesure à la demande :
-    // un seul endroit décide de ce qui est publié et de ce qui est rejeté.
-    static bool readAndPublish(const SensorDescriptor& sensor);
+    // Battement de publication, propre à chaque sonde et posé à sa première
+    // lecture réussie, jamais recalé ensuite. La rotation étale donc les
+    // publications des sondes dans l'heure sans qu'aucun décalage soit calculé.
+    static unsigned long _lastPublishMs[SENSOR_COUNT];
+    static bool          _firstPublishDone[SENSOR_COUNT];
+
+    // Interroge le capteur décrit par `sensor` : transaction Modbus et contrôle
+    // de vraisemblance, sans rien publier. Chemin de lecture commun à
+    // l'acquisition périodique et à la mesure à la demande — un seul endroit
+    // décide de ce qui est rejeté.
+    static bool readOne(const SensorDescriptor& sensor,
+                        float& moisture, float& temperature);
+
+    // Publie la paire humidité + température sur DataBus. Chemin de publication
+    // commun aux deux origines : même validation META, même horodatage
+    // VirtualClock, même écriture CSV, même publication MQTT.
+    static void publishValues(const SensorDescriptor& sensor,
+                              float moisture, float temperature);
 
     static bool readSensor(uint8_t address, float& moisture, float& temperature);
     static void drainRxBuffer();
