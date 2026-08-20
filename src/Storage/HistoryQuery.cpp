@@ -20,6 +20,10 @@ volatile uint8_t HistoryQuery::requestedId    = 0;
 volatile uint8_t HistoryQuery::requestedSpanH = 0;
 char             HistoryQuery::requestedRid[RID_MAX + 1] = {};
 
+volatile bool HistoryQuery::archiveClearPending = false;
+volatile HistoryQuery::ArchiveClearStatus HistoryQuery::archiveClearStatus =
+    HistoryQuery::ArchiveClearStatus::Idle;
+
 volatile HistoryQuery::State HistoryQuery::state = HistoryQuery::State::Idle;
 
 uint32_t   HistoryQuery::scanStartMs = 0;
@@ -70,6 +74,8 @@ void HistoryQuery::init()
     requestedId     = 0;
     requestedSpanH  = 0;
     requestedRid[0] = '\0';
+    archiveClearPending = false;
+    archiveClearStatus  = ArchiveClearStatus::Idle;
 
     Console::info(TAG, "Historique à la demande prêt — demandes sur "
                       + String(HISTORY_TOPIC_FROM_USER)
@@ -83,17 +89,25 @@ bool HistoryQuery::isScanning()
 }
 
 // =============================================================================
-// Abandon d'un scan. Referme le handle de lecture : c'est tout l'objet de cette
-// fonction, un fichier supprimé alors qu'un handle le tient ouvert sortant du
-// domaine défini de littlefs.
+// Demande web de suppression. Le thread appelant ne touche à aucun handle :
+// handle() annulera le scan puis supprimera une archive par tick.
 // =============================================================================
-void HistoryQuery::abortScan()
+bool HistoryQuery::requestArchiveClear()
 {
-    if (state == State::Idle && !requestPending) return;
+    ArchiveClearStatus current = archiveClearStatus;
+    if (current == ArchiveClearStatus::Pending ||
+        current == ArchiveClearStatus::Running) {
+        return false;
+    }
 
-    Console::warn(TAG, "Scan d'historique interrompu");
-    resetScan();
-    requestPending = false;
+    archiveClearStatus  = ArchiveClearStatus::Pending;
+    archiveClearPending = true;
+    return true;
+}
+
+HistoryQuery::ArchiveClearStatus HistoryQuery::getArchiveClearStatus()
+{
+    return archiveClearStatus;
 }
 
 // =============================================================================
@@ -174,8 +188,11 @@ void HistoryQuery::onRequest(const char* data, int len)
     // Slot unique. Refuser explicitement plutôt que d'empiler évite qu'un appui
     // répété sur le bouton mette la carte en file d'attente de travail flash,
     // et donne à l'interface une réponse au lieu d'un silence.
-    if (state != State::Idle || requestPending) {
-        Console::info(TAG, "Demande d'historique refusée : scan déjà en cours");
+    ArchiveClearStatus clearStatus = archiveClearStatus;
+    if (clearStatus == ArchiveClearStatus::Pending ||
+        clearStatus == ArchiveClearStatus::Running ||
+        state != State::Idle || requestPending) {
+        Console::info(TAG, "Demande d'historique refusée : stockage occupé");
         publishError(rid, (uint8_t)idIn, (uint8_t)spanIn, "busy");
         return;
     }
@@ -194,6 +211,39 @@ void HistoryQuery::onRequest(const char* data, int len)
 // =============================================================================
 void HistoryQuery::handle()
 {
+    // ─── Priorité à une suppression demandée depuis l'interface web ───────
+    if (archiveClearPending) {
+        archiveClearPending = false;
+
+        if (state != State::Idle || requestPending) {
+            Console::warn(TAG, "Scan d'historique annulé pour supprimer les archives");
+        }
+        resetScan();
+        requestPending = false;
+
+        if (!DataLogger::prepareArchiveClear()) {
+            archiveClearStatus = ArchiveClearStatus::Failed;
+            return;
+        }
+
+        archiveClearStatus = ArchiveClearStatus::Running;
+        return;
+    }
+
+    // Une seule suppression par tick : l'arrosage reste prioritaire même avec
+    // une année complète de fichiers à effacer.
+    if (archiveClearStatus == ArchiveClearStatus::Running) {
+        DataLogger::ArchiveClearStepResult result =
+            DataLogger::clearArchivedHistoryStep();
+
+        if (result == DataLogger::ArchiveClearStepResult::Complete) {
+            archiveClearStatus = ArchiveClearStatus::Success;
+        } else if (result == DataLogger::ArchiveClearStepResult::Error) {
+            archiveClearStatus = ArchiveClearStatus::Failed;
+        }
+        return;
+    }
+
     // ─── Prise en charge d'une nouvelle demande ──────────────────────────
     if (state == State::Idle) {
         if (!requestPending) return;

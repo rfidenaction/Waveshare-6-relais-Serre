@@ -47,6 +47,7 @@ private:
     static void handleLogs(AsyncWebServerRequest *request);
     static void handleLogsDownload(AsyncWebServerRequest *request);
     static void handleLogsClear(AsyncWebServerRequest *request);
+    static void handleLogsClearStatus(AsyncWebServerRequest *request);
 
     static void handleActuators(AsyncWebServerRequest *request);
 

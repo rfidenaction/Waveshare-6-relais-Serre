@@ -437,50 +437,67 @@ void DataLogger::flushNow()
 }
 
 // -----------------------------------------------------------------------------
-// CLEAR HISTORY — supprime tous les fichiers log et réinitialise les buffers
+// SUPPRESSION DES ARCHIVES
+//
+// Le fichier de la période courante reste ouvert en écriture. Les données déjà
+// journalisées dans ce fichier et les buffers de DataLogger sont conservés.
 // -----------------------------------------------------------------------------
-void DataLogger::clearHistory()
+bool DataLogger::prepareArchiveClear()
 {
-    Console::info(TAG, "Suppression de l'historique...");
-
-    closeFile();
-
-    // Supprimer tous les fichiers log_*.csv
-    File root = LittleFS.open("/");
-    if (root) {
-        // Collecter les noms d'abord (éviter modification pendant itération)
-        String toDelete[64];
-        size_t count = 0;
-
-        File f = root.openNextFile();
-        while (f && count < 64) {
-            String name = String(f.name());
-            f.close();
-
-            const char* p = name.c_str();
-            if (p[0] == '/') p++;
-            if (strncmp(p, "log_", 4) == 0 && strstr(p, ".csv") != nullptr) {
-                toDelete[count++] = name.startsWith("/") ? name : ("/" + name);
-            }
-
-            f = root.openNextFile();
-        }
-        root.close();
-
-        for (size_t i = 0; i < count; i++) {
-            if (LittleFS.remove(toDelete[i])) {
-                Console::info(TAG, "Supprimé : " + toDelete[i]);
-            }
-        }
+    ensureFileOpen();
+    if (!logFileOpen || logFilePath[0] == '\0') {
+        Console::error(TAG, "Suppression des archives impossible : fichier courant inconnu");
+        return false;
     }
 
-    pendingHead  = 0;
-    pendingCount = 0;
-    activeLen    = 0;
-    activeCount  = 0;
-    flushLen     = 0;
+    Console::info(TAG, "Suppression des archives — fichier conservé : "
+                       + String(logFilePath));
+    return true;
+}
 
-    Console::info(TAG, "Buffers réinitialisés. Historique vidé.");
+DataLogger::ArchiveClearStepResult DataLogger::clearArchivedHistoryStep()
+{
+    // Une rotation peut fermer l'ancien fichier entre deux étapes. Rouvrir le
+    // fichier courant actualise alors le chemin à préserver.
+    ensureFileOpen();
+    if (!logFileOpen || logFilePath[0] == '\0') {
+        Console::error(TAG, "Suppression des archives interrompue : fichier courant fermé");
+        return ArchiveClearStepResult::Error;
+    }
+
+    File root = LittleFS.open("/");
+    if (!root) {
+        Console::error(TAG, "Suppression des archives : racine LittleFS inaccessible");
+        return ArchiveClearStepResult::Error;
+    }
+
+    File f = root.openNextFile();
+    while (f) {
+        String name = String(f.name());
+        f.close();
+
+        String fullPath = name.startsWith("/") ? name : ("/" + name);
+        const char* p = fullPath.c_str() + 1;
+        bool isLogFile = strncmp(p, "log_", 4) == 0 && fullPath.endsWith(".csv");
+
+        if (isLogFile && fullPath != String(logFilePath)) {
+            root.close();
+
+            if (!LittleFS.remove(fullPath)) {
+                Console::error(TAG, "Échec suppression : " + fullPath);
+                return ArchiveClearStepResult::Error;
+            }
+
+            Console::info(TAG, "Archive supprimée : " + fullPath);
+            return ArchiveClearStepResult::Deleted;
+        }
+
+        f = root.openNextFile();
+    }
+
+    root.close();
+    Console::info(TAG, "Suppression des archives terminée");
+    return ArchiveClearStepResult::Complete;
 }
 
 // -----------------------------------------------------------------------------

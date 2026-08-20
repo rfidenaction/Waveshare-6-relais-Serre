@@ -268,6 +268,7 @@ void WebServer::init()
 
     server.on("/logs/download", HTTP_GET, handleLogsDownload);
     server.on("/logs/clear", HTTP_POST, handleLogsClear);
+    server.on("/logs/clear/status", HTTP_GET, handleLogsClearStatus);
     server.on("/logs", HTTP_GET, handleLogs);
 
     server.on("/actuators", HTTP_GET, handleActuators);
@@ -725,14 +726,29 @@ void WebServer::handleRS485Exit(AsyncWebServerRequest *request)
 
 void WebServer::handleLogsClear(AsyncWebServerRequest *request)
 {
-    // Un scan d'historique peut tenir un fichier journal ouvert en lecture.
-    // Supprimer un fichier dans cet état sort du domaine défini de littlefs :
-    // on referme d'abord.
-    HistoryQuery::abortScan();
+    if (!HistoryQuery::requestArchiveClear()) {
+        request->send(409, "application/json", "{\"status\":\"busy\"}");
+        return;
+    }
 
-    DataLogger::clearHistory();
-    request->send(200, "text/plain", "Historique supprimé avec succès");
-    Console::info(TAG, "Logs supprimés par l'utilisateur");
+    request->send(202, "application/json", "{\"status\":\"pending\"}");
+    Console::info(TAG, "Suppression des archives demandée par l'utilisateur");
+}
+
+void WebServer::handleLogsClearStatus(AsyncWebServerRequest *request)
+{
+    const char* status = "idle";
+
+    switch (HistoryQuery::getArchiveClearStatus()) {
+        case HistoryQuery::ArchiveClearStatus::Idle:    status = "idle";    break;
+        case HistoryQuery::ArchiveClearStatus::Pending: status = "pending"; break;
+        case HistoryQuery::ArchiveClearStatus::Running: status = "running"; break;
+        case HistoryQuery::ArchiveClearStatus::Success: status = "success"; break;
+        case HistoryQuery::ArchiveClearStatus::Failed:  status = "failed";  break;
+    }
+
+    request->send(200, "application/json",
+                  String("{\"status\":\"") + status + "\"}");
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

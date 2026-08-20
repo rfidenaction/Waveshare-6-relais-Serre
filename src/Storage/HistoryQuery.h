@@ -50,10 +50,10 @@
 //   et ne pas le faire seeker. C'est la seule condition de sûreté.
 //
 // ─── Découplage des threads ─────────────────────────────────────────────────
-//   Même principe qu'OnDemandMeasure : onRequest() tourne dans le thread
-//   esp_mqtt et se limite à valider puis poser la demande dans un slot ;
-//   handle() exécute dans le thread TaskManager. Aucun mutex n'est nécessaire,
-//   l'exclusion est obtenue par construction.
+//   Même principe qu'OnDemandMeasure : onRequest() et la demande web de
+//   suppression se limitent à poser un drapeau ; handle() exécute les
+//   opérations sur les fichiers dans le thread TaskManager. Aucun handle
+//   LittleFS n'est donc fermé depuis un thread extérieur.
 #pragma once
 
 #include <Arduino.h>
@@ -62,6 +62,14 @@
 
 class HistoryQuery {
 public:
+    enum class ArchiveClearStatus : uint8_t {
+        Idle,
+        Pending,
+        Running,
+        Success,
+        Failed
+    };
+
     // Convention FromUser/ToUser de Gardener, Conditional et OnDemand.
     // Canal distinct de serre/ondemand/ : une demande d'historique ne déclenche
     // aucune acquisition et ne passe par aucun module capteur, elle n'a donc
@@ -88,10 +96,10 @@ public:
     // Un scan est en cours (fichier possiblement ouvert).
     static bool isScanning();
 
-    // Abandonne un scan en cours et referme le fichier. À appeler avant toute
-    // suppression de fichier journal : effacer un fichier qu'un handle tient
-    // ouvert sort du domaine défini de littlefs.
-    static void abortScan();
+    // Demande depuis le serveur web l'annulation du scan éventuel puis la
+    // suppression progressive des archives. Toute l'I/O est faite par handle().
+    static bool requestArchiveClear();
+    static ArchiveClearStatus getArchiveClearStatus();
 
 private:
     static constexpr const char* TAG = "History";
@@ -169,6 +177,12 @@ private:
     static volatile uint8_t requestedId;
     static volatile uint8_t requestedSpanH;
     static char             requestedRid[RID_MAX + 1];
+
+    // ─── Demande web de suppression des archives ─────────────────────────
+    // Posée depuis AsyncWebServer, consommée par handle(). Tant que l'opération
+    // est Pending ou Running, les nouvelles demandes MQTT sont refusées.
+    static volatile bool               archiveClearPending;
+    static volatile ArchiveClearStatus archiveClearStatus;
 
     // ─── État du scan en cours ───────────────────────────────────────────
     // state est lu par onRequest depuis le thread esp_mqtt pour refuser une

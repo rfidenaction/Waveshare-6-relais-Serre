@@ -55,13 +55,25 @@ struct FlashUsageStats {
 
 class DataLogger {
 public:
+    enum class ArchiveClearStepResult : uint8_t {
+        Deleted,
+        Complete,
+        Error
+    };
+
     static void init();
 
     // Drain logQueue (DataBus) → PENDING → réparation UTC → sérialisation
     // CSV → double buffer → flush LittleFS. UN seul record par appel.
     static void handle();
 
-    static void clearHistory();
+    // Prépare la suppression des archives en ouvrant, si nécessaire, le
+    // fichier de la période courante. Ce fichier et les buffers restent actifs.
+    static bool prepareArchiveClear();
+
+    // Supprime au plus un fichier log archivé par appel. Le fichier actuellement
+    // ouvert en écriture n'est jamais supprimé.
+    static ArchiveClearStepResult clearArchivedHistoryStep();
 
     // Écrit immédiatement sur la flash ce qui attend dans le buffer actif.
     //

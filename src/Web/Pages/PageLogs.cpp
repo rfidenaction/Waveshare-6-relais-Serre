@@ -5,11 +5,8 @@
 //  - Suppression variable JS gsmActive et garde GSM dans downloadLogs()
 //  - Suppression downloadDisabled (plus de blocage download)
 //  - Bloc d'info stats remplacé par "État de la flash" (programme + données)
-//    via FlashUsageStats. Les blocs Téléchargement et Suppression, ainsi que
-//    tout le JavaScript et le CSS, sont strictement préservés.
-//  - rawSizeJs : utilise désormais stats.datalogFileBytes (taille du seul
-//    fichier /datalog.csv) pour conserver le comportement exact de la barre
-//    de progression du téléchargement.
+//    via FlashUsageStats.
+//  - rawSizeJs utilise stats.datalogFileBytes, cumul de tous les log_*.csv.
 #include "Web/Pages/PageLogs.h"
 
 String PageLogs::getHtml(const FlashUsageStats& stats)
@@ -38,17 +35,11 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
             " MB / " + String(stats.littlefsPartitionBytes / MB, 2) +
             " MB partition (" + String(spPct) + "% partition)";
 
-        // "Fichier existant" déduit de la taille du fichier datalog (champ
-        // dédié dans FlashUsageStats, indépendant de littlefsUsedBytes).
-        bool   datalogExists = (stats.datalogFileBytes > 0);
-        String existsLine    = String("Fichier existant : ") + (datalogExists ? "Oui" : "Non");
-
         statsInfo =
             "<div class=\"card\">"
             "<p style=\"font-size: 1.3em;\">" + titleLine + "</p>"
             "<p class=\"subtext\">" + progLine + "</p>"
             "<p class=\"subtext\">" + dataLine + "</p>"
-            "<p style=\"font-size: 0.9em;\">" + existsLine + "</p>"
             "</div>";
     } else {
         constexpr float MB = 1024.0f * 1024.0f;
@@ -59,7 +50,6 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
             "<div class=\"card\">"
             "<p style=\"font-size: 1.3em;\">📊 État de la flash</p>"
             "<p class=\"subtext\">⚠️ LittleFS non disponible</p>"
-            "<p style=\"font-size: 0.9em;\">Fichier existant : Non</p>"
             "<p style=\"font-size: 0.9em;\">" + availableSpace + "</p>"
             "</div>";
     }
@@ -74,10 +64,8 @@ String PageLogs::getHtml(const FlashUsageStats& stats)
         String(stats.ramCurrentPercent) + "%</p>"
         "</div>";
 
-    // Taille brute du fichier datalog transmise au JS pour la barre de
-    // progression du téléchargement. Champ dédié distinct de littlefsUsedBytes :
-    // la barre doit refléter la taille du fichier servi par /logs/download
-    // (datalog.csv), pas l'occupation totale LittleFS.
+    // Taille brute cumulée des log_*.csv transmise au JS pour la barre de
+    // progression du bundle, distincte de l'occupation totale LittleFS.
     String rawSizeJs = String(stats.datalogFileBytes);
 
     String html = R"HTML(
@@ -208,22 +196,45 @@ async function downloadLogs() {
   }
 }
 
-function clearLogs() {
-  if (confirm('⚠️ ATTENTION ⚠️\n\nÊtes-vous ABSOLUMENT SÛR de vouloir supprimer TOUTES les données historiques ?\n\nCette action est IRRÉVERSIBLE !')) {
-    if (confirm('Dernière confirmation :\n\nToutes les données seront DÉFINITIVEMENT perdues.\n\nContinuer ?')) {
-      fetch('/logs/clear', { method: 'POST' })
-        .then(response => {
-          if (response.ok) {
-            alert('✅ Historique supprimé avec succès');
-            location.reload();
-          } else {
-            alert('❌ Erreur lors de la suppression');
-          }
-        })
-        .catch(error => {
-          alert('❌ Erreur : ' + error);
-        });
+async function clearLogs() {
+  if (!confirm('⚠️ ATTENTION ⚠️\n\nSupprimer définitivement toutes les archives clôturées ?\n\nLes données de la période actuellement enregistrée seront conservées.')) return;
+  if (!confirm('Dernière confirmation :\n\nLes archives supprimées ne pourront pas être récupérées.\n\nContinuer ?')) return;
+
+  const btn = document.getElementById('btn-clear');
+  const status = document.getElementById('clear-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Suppression en cours...';
+  status.textContent = 'Annulation de la lecture éventuelle puis suppression des archives...';
+
+  try {
+    const response = await fetch('/logs/clear', { method: 'POST' });
+    if (!response.ok && response.status !== 409) {
+      throw new Error(await response.text());
     }
+
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const stateResponse = await fetch('/logs/clear/status', { cache: 'no-store' });
+      if (!stateResponse.ok) throw new Error('état de suppression indisponible');
+
+      const state = (await stateResponse.json()).status;
+      if (state === 'success') {
+        alert('✅ Archives supprimées avec succès. La période en cours est conservée.');
+        location.reload();
+        return;
+      }
+      if (state === 'failed') {
+        throw new Error('la carte n’a pas pu supprimer toutes les archives');
+      }
+    }
+
+    throw new Error('délai de suppression dépassé');
+  } catch (error) {
+    alert('❌ Erreur : ' + error);
+    btn.disabled = false;
+    btn.textContent = '🗑️ Effacer les archives';
+    status.textContent = '';
   }
 }
 </script>
@@ -243,10 +254,11 @@ function clearLogs() {
 </div>
 
 <div class="card">
-  <p style="font-size: 1.3em;">Suppression des données</p>
-  <p class="subtext">⚠️ DANGER : Supprime définitivement tout l'historique</p>
-  <p style="font-size: 0.9em; color: #ffeb3b;">Cette action est IRRÉVERSIBLE</p>
-  <button class="danger" onclick="clearLogs()">🗑️ Effacer les données</button>
+  <p style="font-size: 1.3em;">Suppression des archives</p>
+  <p class="subtext">Supprime les fichiers clôturés et conserve la période en cours</p>
+  <p style="font-size: 0.9em; color: #ffeb3b;">Les archives supprimées sont irrécupérables</p>
+  <button id="btn-clear" class="danger" onclick="clearLogs()">🗑️ Effacer les archives</button>
+  <div id="clear-status"></div>
 </div>
 
 <a href="/" class="back-link">← Retour à la page principale</a>
