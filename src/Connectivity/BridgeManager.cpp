@@ -183,6 +183,14 @@ void BridgeManager::handleSmsMachine()
             logSmsEvent("SMS confirme par LilyGo vers " + smsQueue[0].number,
                         "Confirmé \"" + smsQueue[0].message + "\"");
             removeFrontSms();
+
+            // L'ACK prouve que la LilyGo vient d'envoyer un SMS : son rate limit
+            // démarre à cet instant, alors que l'état en cache date du dernier
+            // STATE reçu (jusqu'à 30 s). Sans cette invalidation, le SMS suivant
+            // partirait dans la demi-seconde et serait ignoré silencieusement.
+            // Le prochain STATE|1 rendra la main quand la LilyGo sera prête.
+            _canAcceptSms = false;
+
             smsState = SmsState::IDLE;
             return;
         }
