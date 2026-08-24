@@ -356,10 +356,10 @@
 // =============================================================================
 /*
  * Période d'appel de ConditionalWatering::handle() par TaskManager.
- * Le module n'a pas de cadence propre : il réagit aux mesures poussées par
- * DataBus. Cette période ne fixe donc que la latence entre l'arrivée d'une
- * mesure et la décision, la décision ne pouvant pas être prise dans
- * DataBus::distribute() (publish imbriqué).
+ * Le module n'a pas de cadence propre : il réagit aux mesures offertes par les
+ * modules capteur à leur cadence de lecture (RS485_TEMP_READ_PERIOD_MS). Cette
+ * période ne fixe donc que la latence entre l'arrivée d'une mesure et la
+ * décision.
  */
 #define CONDITIONAL_HANDLE_PERIOD_MS   1000
 

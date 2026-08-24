@@ -43,7 +43,7 @@ static constexpr uint16_t REG_COUNT             = 2;          // canal 1 + canal
 static constexpr size_t   RESPONSE_LENGTH       = 9;          // addr+fn+byteCount+4data+2crc
 static constexpr unsigned long RESPONSE_TIMEOUT_MS = 200;
 
-static constexpr float RESISTOR_DIVIDER_RATIO   = 4.06f;
+static constexpr float RESISTOR_DIVIDER_RATIO   = 4.15f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // État interne — dernières valeurs lues et suivi de publication

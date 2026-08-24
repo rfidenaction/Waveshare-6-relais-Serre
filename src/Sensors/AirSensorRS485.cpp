@@ -10,7 +10,7 @@
 #include "Config/TimingConfig.h"       // AIR_RS485_START_DELAY_MS
 #include "Core/DataBus.h"
 #include "Sensors/SoilSensorRS485.h"   // isMaintenanceMode() — bus RS485 partagé
-#include "Gardener/ConditionalWatering.h"
+#include "Sensors/SensorValidation.h"
 #include "Utils/Console.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,12 +71,18 @@ void AirSensorRS485::handle()
     float temperature = 0.0f;
     float humidity    = 0.0f;
 
-    if (!readOne(SENSORS[index], temperature, humidity)) return;
+    if (!readOne(SENSORS[index], temperature, humidity)) {
+        bool c1 = SensorValidation::feedNoResponse(SENSORS[index].temperatureId);
+        bool c2 = SensorValidation::feedNoResponse(SENSORS[index].humidityId);
+        if (c1 || c2) SensorValidation::publishSynthetic();
+        return;
+    }
 
     // L'arrosage conditionnel travaille à la cadence de lecture, sans attendre
     // la publication horaire. Sans effet si aucune règle ne cite ces id.
-    ConditionalWatering::offerMeasure(SENSORS[index].temperatureId, temperature);
-    ConditionalWatering::offerMeasure(SENSORS[index].humidityId,    humidity);
+    bool c1 = SensorValidation::feed(SENSORS[index].temperatureId, temperature);
+    bool c2 = SensorValidation::feed(SENSORS[index].humidityId,    humidity);
+    if (c1 || c2) SensorValidation::publishSynthetic();
 
     bool shouldPublish = false;
 
@@ -180,6 +186,15 @@ DataId AirSensorRS485::measurableAt(uint8_t index)
 
     const SensorDescriptor& sensor = SENSORS[index / 2];
     return (index % 2 == 0) ? sensor.temperatureId : sensor.humidityId;
+}
+
+uint8_t AirSensorRS485::rs485AddressOf(DataId id)
+{
+    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+        if (SENSORS[i].temperatureId == id || SENSORS[i].humidityId == id)
+            return SENSORS[i].address;
+    }
+    return 0;
 }
 
 bool AirSensorRS485::measureNow(DataId id)

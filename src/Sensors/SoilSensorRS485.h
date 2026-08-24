@@ -83,6 +83,10 @@ public:
     // (mode maintenance, délai de démarrage) ou si le capteur n'a pas répondu.
     static bool measureNow(DataId id);
 
+    // Retourne l'adresse RS485 Modbus associée à un DataId produit par ce
+    // module, ou 0 si l'id est inconnu.
+    static uint8_t rs485AddressOf(DataId id);
+
 private:
     static constexpr const char* TAG = "RS485";
 

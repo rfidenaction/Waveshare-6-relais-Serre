@@ -7,19 +7,17 @@
 // de repos en heures et une durée d'arrosage. 16 règles au maximum.
 //
 // Ce module ne cadence RIEN : c'est l'arrivée d'une mesure qui déclenche
-// l'évaluation. Une mesure arrive par deux voies, qui aboutissent toutes deux
-// à offerMeasure() :
-//   - onNewData(), appelé par DataBus::distribute() pour toute donnée publiée ;
-//   - offerMeasure(), appelé directement par un module capteur qui vient de
-//     lire sans publier, sa cadence de lecture étant plus rapide que sa
-//     cadence de journalisation.
-// Les deux voies subissent les mêmes filtres, si bien qu'une mesure évaluable
-// est toujours une mesure publiable.
+// l'évaluation. Les mesures arrivent par une seule voie, offerMeasure(),
+// appelée par SensorValidation::feed() après une lecture fiable, à la
+// cadence de lecture du module capteur — plus rapide que sa cadence de
+// journalisation. Rien de ce qui transite par DataBus n'aboutit ici : ni
+// la publication horaire, ni une lecture à la demande depuis l'UI ne
+// déclenchent d'évaluation.
 //
 // La mesure reçue n'est que mémorisée ; la décision est prise au tick suivant
-// de handle(), dans le thread TaskManager. Cette indirection est
-// indispensable : décider dans onNewData() reviendrait à appeler
-// DataBus::publish() depuis l'intérieur de DataBus::distribute().
+// de handle(), dans le thread TaskManager. Cette indirection garde
+// offerMeasure() minimale et sans I/O, son appelant étant SensorValidation
+// pendant la transaction RS485 du module capteur.
 //
 // Comme on ne décide que sur une mesure qui vient d'être produite, aucun
 // contrôle de fraîcheur n'est nécessaire.
@@ -50,8 +48,7 @@
 // Intégration :
 //   - init() appelé dans loopInit() après MqttManager::init()
 //   - handle() en tâche TaskManager période CONDITIONAL_HANDLE_PERIOD_MS
-//   - onNewData() appelé par DataBus::distribute() (n'importe quel thread)
-//   - offerMeasure() appelé par les modules capteurs (thread TaskManager)
+//   - offerMeasure() appelé par SensorValidation::feed() (thread TaskManager)
 //   - onConditionalMessage() appelé par MqttManager depuis le thread esp_mqtt
 //   - requestStatePublish() appelé par MqttManager sur MQTT_EVENT_CONNECTED
 #pragma once
@@ -59,8 +56,6 @@
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "Config/MetaDataModel.h"
-
-struct BusItem;  // forward declaration (défini dans Core/DataBus.h)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ConditionalRule — une règle d'arrosage conditionnel
@@ -101,14 +96,9 @@ public:
     // règles concernées par les mesures reçues depuis le tick précédent.
     static void handle();
 
-    // Réception d'une donnée du bus. Appelée par DataBus::distribute() depuis
-    // le thread du producteur — filtre ce qui n'est pas une mesure de capteur
-    // numérique, puis délègue à offerMeasure().
-    static void onNewData(const BusItem& item);
-
-    // Réception d'une mesure non publiée, offerte par le module capteur qui
-    // vient de la lire. Permet d'évaluer les règles à la cadence de lecture
-    // alors que la journalisation reste horaire.
+    // Réception d'une mesure non publiée, transmise par SensorValidation
+    // après une lecture fiable. Seule voie d'évaluation des règles, à la
+    // cadence de lecture, alors que la journalisation reste horaire.
     //
     // Se contente de mémoriser la mesure ; aucune décision, aucune I/O.
     // Les mesures invalides au sens de META sont écartées ici, exactement

@@ -30,6 +30,7 @@
 #include "Sensors/AirSensorRS485.h"    // Capteurs air RS485 Modbus RTU (Ebyte KTH2-R)
 #include "Sensors/InboxSensorRS485.h"  // Capteur air boîtier RS485 (Ebyte KTH2-R, adresse 15)
 #include "Sensors/OnDemandMeasure.h"   // Mesure à la demande (serre/ondemand/FromUser)
+#include "Sensors/SensorValidation.h"  // Validation fiabilité capteurs (spike / stuck)
 
 #include "Actuators/ValveManager.h"
 
@@ -160,6 +161,11 @@ static void loopInit()
 
     InboxSensorRS485::init();
     Console::info("[InboxRS485] InboxSensorRS485 initialisé");
+
+    // Validation fiabilité capteurs — doit venir APRÈS les trois modules
+    // capteurs RS485 : init() les interroge pour construire sa table id → état.
+    SensorValidation::init();
+    Console::info("[SensorValid] SensorValidation initialisé");
 
     // Mesure à la demande — doit venir APRÈS les quatre modules capteurs :
     // init() les interroge pour construire sa vue id → propriétaire.

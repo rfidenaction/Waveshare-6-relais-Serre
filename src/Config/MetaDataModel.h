@@ -102,8 +102,8 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
     \
     /* ── Capteurs ──────────────────────────────────────────────────────────── */ \
     X( 1, AirTemperature1,  Sensor,   "Capteur",      "Température air 1",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X( 2, AirHumidity1,     Sensor,   "Capteur",      "Humidité air 1",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
-    X( 3, SoilMoisture1,    Sensor,   "Capteur",      "Humidité sol 1",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X( 2, AirHumidity1,     Sensor,   "Capteur",      "Humidité air 1",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X( 3, SoilMoisture1,    Sensor,   "Capteur",      "Humidité sol 1",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     \
     /* ── Actionneurs ───────────────────────────────────────────────────────── */ \
     X( 4, Valve1,           Actuator, "Actionneur",   "Vanne 1",            "",    etat,        0.0f,   0.0f, valve1StateLabels,      2) \
@@ -135,15 +135,15 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
     \
     /* ── Capteurs sol RS485 ───────────────────────────────────────────────── */ \
     X(23, SoilTemperature1, Sensor,   "Capteur",      "Température sol 1",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
-    X(24, SoilMoisture2,    Sensor,   "Capteur",      "Humidité sol 2",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(24, SoilMoisture2,    Sensor,   "Capteur",      "Humidité sol 2",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(25, SoilTemperature2, Sensor,   "Capteur",      "Température sol 2",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
-    X(26, SoilMoisture3,    Sensor,   "Capteur",      "Humidité sol 3",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(26, SoilMoisture3,    Sensor,   "Capteur",      "Humidité sol 3",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(27, SoilTemperature3, Sensor,   "Capteur",      "Température sol 3",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
-    X(28, SoilMoisture4,    Sensor,   "Capteur",      "Humidité sol 4",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(28, SoilMoisture4,    Sensor,   "Capteur",      "Humidité sol 4",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(29, SoilTemperature4, Sensor,   "Capteur",      "Température sol 4",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
-    X(30, SoilMoisture5,    Sensor,   "Capteur",      "Humidité sol 5",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(30, SoilMoisture5,    Sensor,   "Capteur",      "Humidité sol 5",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(31, SoilTemperature5, Sensor,   "Capteur",      "Température sol 5",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
-    X(32, SoilMoisture6,    Sensor,   "Capteur",      "Humidité sol 6",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(32, SoilMoisture6,    Sensor,   "Capteur",      "Humidité sol 6",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(33, SoilTemperature6, Sensor,   "Capteur",      "Température sol 6",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
     \
     /* ── Alimentation (suite) — détection secteur via Analog Input 8CH (B) ─── */ \
@@ -151,9 +151,12 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
     \
     /* ── Capteurs air RS485 (Ebyte KTH2-R) ────────────────────────────────── */ \
     X(35, AirTemperature2,  Sensor,   "Capteur",      "Température air 2",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X(36, AirHumidity2,     Sensor,   "Capteur",      "Humidité air 2",     "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(36, AirHumidity2,     Sensor,   "Capteur",      "Humidité air 2",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X(37, AirTemperature3,  Sensor,   "Capteur",      "Température air 3",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X(38, AirHumidity3,     Sensor,   "Capteur",      "Humidité air 3",     "%",   metrique,    0.0f, 100.0f, nullptr,                0)
+    X(38, AirHumidity3,     Sensor,   "Capteur",      "Humidité air 3",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    \
+    /* ── Validation capteurs ───────────────────────────────────────────────── */ \
+    X(39, SensorHealth,     System,   "Système",      "Santé des capteurs",  "",   texte,       0.0f,   0.0f, nullptr,                0)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST

@@ -43,22 +43,11 @@ void ConditionalWatering::init()
                   + String(conditionalRuleCount) + " règle(s) chargée(s)");
 }
 
-// ─── onNewData() — thread du producteur ──────────────────────────────────────
-// Appelée par DataBus::distribute() pour CHAQUE donnée publiée. Écarte ce qui
-// n'est pas une mesure de capteur numérique, puis délègue.
-
-void ConditionalWatering::onNewData(const BusItem& item)
-{
-    if (item.type != DataType::Sensor)  return;
-    if (item.valueKind != 0)            return;
-
-    offerMeasure(item.id, item.valueFloat);
-}
-
 // ─── offerMeasure() — thread du producteur ───────────────────────────────────
-// Entrée unique des mesures, qu'elles viennent du bus (via onNewData) ou
-// directement d'un module capteur qui a lu sans publier. Doit rester minimale :
-// filtrage, puis mémorisation de la mesure sous portMUX.
+// Entrée unique et unique voie d'évaluation : SensorValidation::feed()
+// transmet ici une mesure jugée fiable. Rien de ce qui est publié sur
+// DataBus n'aboutit ici. Doit rester minimale : filtrage, puis mémorisation
+// de la mesure sous portMUX.
 //
 // Les contrôles META reproduisent ceux de DataBus::validate(). Sans eux, la
 // voie directe accepterait ce que le bus rejette : une trame corrompue de CRC
@@ -245,9 +234,8 @@ void ConditionalWatering::evaluateRulesForSensor(DataId sensorId, float value,
                       + " — durée " + String(rule.duration)
                       + " s, repos " + String(rule.restHours) + " h");
 
-        // Publication de la mesure qui a décidé. Le repos est déjà armé, donc
-        // la réévaluation que cette publication provoque (distribute →
-        // onNewData → tick suivant) sera écartée par le filtre de repos.
+        // Publication de la mesure qui a décidé. Elle ne provoque aucune
+        // réévaluation : rien de ce qui transite par DataBus ne revient ici.
         if (!measurePublished) {
             BusItem measure = {};
             measure.type       = getMeta(sensorId).type;

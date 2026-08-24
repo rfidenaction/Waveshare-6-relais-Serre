@@ -8,14 +8,12 @@
 //         xQueueSend(mqttQueue)      → MqttManager drain
 //         xQueueSend(logQueue)       → DataLogger drain (drop si plein)
 //         WebServer::updateLastData() → portMUX, accès direct
-//         ConditionalWatering::onNewData() → mémorisation, décision différée
 //     → si commande : routeCommand() via RELAYS[]
 
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
 #include "Config/IO-Config.h"
 #include "Web/WebServer.h"
-#include "Gardener/ConditionalWatering.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "DataBus";
@@ -72,11 +70,6 @@ void DataBus::distribute(const BusItem& item)
 
     // lastDataForWeb — mise à jour directe, protégée par portMUX dans WebServer
     WebServer::updateLastData(item);
-
-    // Arrosage conditionnel — mémorisation seule. La décision (et donc un
-    // éventuel publish) est différée au prochain handle() : jamais de publish
-    // imbriqué dans distribute().
-    ConditionalWatering::onNewData(item);
 }
 
 // ─── validate() ──────────────────────────────────────────────────────────────

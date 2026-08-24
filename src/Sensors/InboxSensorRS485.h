@@ -43,6 +43,10 @@ public:
     static uint8_t measurableCount();
     static DataId  measurableAt(uint8_t index);
 
+    // Retourne l'adresse RS485 Modbus associée à un DataId produit par ce
+    // module, ou 0 si l'id est inconnu.
+    static uint8_t rs485AddressOf(DataId id);
+
     // Interroge immédiatement le capteur et publie la paire sur DataBus.
     // Appelée depuis le thread TaskManager uniquement (bus RS485 partagé).
     static bool measureNow(DataId id);

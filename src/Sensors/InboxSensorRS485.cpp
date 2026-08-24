@@ -20,7 +20,7 @@
 #include "Config/TimingConfig.h"
 #include "Core/DataBus.h"
 #include "Sensors/SoilSensorRS485.h"   // isMaintenanceMode() — bus RS485 partagé
-#include "Gardener/ConditionalWatering.h"
+#include "Sensors/SensorValidation.h"
 #include "Connectivity/SmsManager.h"
 #include "Utils/Console.h"
 
@@ -83,12 +83,18 @@ void InboxSensorRS485::handle()
     float temperature = 0.0f;
     float humidity    = 0.0f;
 
-    if (!readHardware(temperature, humidity)) return;
+    if (!readHardware(temperature, humidity)) {
+        bool c1 = SensorValidation::feedNoResponse(TEMPERATURE_ID);
+        bool c2 = SensorValidation::feedNoResponse(HUMIDITY_ID);
+        if (c1 || c2) SensorValidation::publishSynthetic();
+        return;
+    }
 
     // L'arrosage conditionnel travaille à la cadence de lecture, sans attendre
     // la publication horaire. Sans effet si aucune règle ne cite ces id.
-    ConditionalWatering::offerMeasure(TEMPERATURE_ID, temperature);
-    ConditionalWatering::offerMeasure(HUMIDITY_ID,    humidity);
+    bool c1 = SensorValidation::feed(TEMPERATURE_ID, temperature);
+    bool c2 = SensorValidation::feed(HUMIDITY_ID,    humidity);
+    if (c1 || c2) SensorValidation::publishSynthetic();
 
     bool shouldPublish = false;
 
@@ -276,6 +282,13 @@ uint8_t InboxSensorRS485::measurableCount()
 DataId InboxSensorRS485::measurableAt(uint8_t index)
 {
     return (index == 1) ? HUMIDITY_ID : TEMPERATURE_ID;
+}
+
+uint8_t InboxSensorRS485::rs485AddressOf(DataId id)
+{
+    if (id == TEMPERATURE_ID || id == HUMIDITY_ID)
+        return SENSOR_ADDRESS;
+    return 0;
 }
 
 bool InboxSensorRS485::measureNow(DataId id)
