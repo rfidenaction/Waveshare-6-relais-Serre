@@ -96,7 +96,7 @@ private:
         DataId  temperatureId;
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 4;
+    static constexpr uint8_t SENSOR_COUNT = 3;
     static_assert(SENSOR_COUNT > 0,
                   "SENSOR_COUNT divise RS485_TEMP_READ_PERIOD_MS dans main.cpp");
 
@@ -104,7 +104,6 @@ private:
         { 0x01, DataId::SoilMoisture1, DataId::SoilTemperature1 },
         { 0x02, DataId::SoilMoisture2, DataId::SoilTemperature2 },
         { 0x03, DataId::SoilMoisture3, DataId::SoilTemperature3 },
-        { 0x04, DataId::SoilMoisture4, DataId::SoilTemperature4 },
     };
 
     static bool    _initialized;

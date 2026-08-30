@@ -79,12 +79,11 @@ private:
         DataId  humidityId;
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 2;
+    static constexpr uint8_t SENSOR_COUNT = 1;
     static_assert(SENSOR_COUNT > 0,
                   "SENSOR_COUNT divise RS485_TEMP_READ_PERIOD_MS dans main.cpp");
 
     static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
-        { 13, DataId::AirTemperature3, DataId::AirHumidity3 },
         { 14, DataId::AirTemperature2, DataId::AirHumidity2 },
     };
 

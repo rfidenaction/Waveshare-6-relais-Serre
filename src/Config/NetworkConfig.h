@@ -31,7 +31,8 @@ static const IPAddress WIFI_AP_SUBNET  (255,255,255,0);
 // Format international avec "+"
 // =============================================================================
 static constexpr const char* SMS_NUMBERS[] = {
-    "+33672967933"
+    "+33672967933",
+    "+33613081468"
     // Ajouter d'autres numéros ici si besoin :
     // "+33698765432",
     // "+33611223344"
