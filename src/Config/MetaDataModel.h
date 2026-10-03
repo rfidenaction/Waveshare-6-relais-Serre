@@ -73,10 +73,14 @@ inline constexpr const char* const valve3StateLabels[] = { "Fermée", "Ouverte" 
 inline constexpr const char* const valve4StateLabels[] = { "Fermée", "Ouverte" };
 inline constexpr const char* const valve5StateLabels[] = { "Fermée", "Ouverte" };
 inline constexpr const char* const valve6StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve7StateLabels[] = { "Fermée", "Ouverte" };
+inline constexpr const char* const valve8StateLabels[] = { "Fermée", "Ouverte" };
 
 inline constexpr const char* const kLabelsWifiStaConnected[] = { "Déconnecté",  "Connecté" };
 inline constexpr const char* const kLabelsWifiApEnabled[]    = { "Inactif",     "Actif"    };
 inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      "Présent"  };
+inline constexpr const char* const kLabelsLighting[]         = { "Éteinte",     "Allumée"  };
+inline constexpr const char* const kLabelsLightingCmd[]      = { "OFF",         "ON"       };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DATA_ID_LIST — SOURCE DE VÉRITÉ UNIQUE
@@ -98,11 +102,11 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
 
 #define DATA_ID_LIST \
     /* ── Alimentation ──────────────────────────────────────────────────────── */ \
-    X( 0, SupplyVoltage,    Power,    "Alimentation", "Tension alim",       "V",   metrique,    5.0f,  40.0f, nullptr,                0) \
+    X( 0, SupplyVoltage,    Power,    "Alimentation", "Tension batterie",       "V",   metrique,    5.0f,  40.0f, nullptr,                0) \
     \
     /* ── Capteurs ──────────────────────────────────────────────────────────── */ \
-    X( 1, AirTemperature1,  Sensor,   "Capteur",      "Température air 1",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X( 2, AirHumidity1,     Sensor,   "Capteur",      "Humidité air 1",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X( 1, AirTemperature15, Sensor,   "Capteur",      "Température boitier", "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
+    X( 2, AirHumidity15,     Sensor,   "Capteur",      "Humidité boitier",    "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     X( 3, SoilMoisture1,    Sensor,   "Capteur",      "Humidité sol 1",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
     \
     /* ── Actionneurs ───────────────────────────────────────────────────────── */ \
@@ -150,13 +154,31 @@ inline constexpr const char* const kLabelsAcPower[]          = { "Absent",      
     X(34, AcPower,          Power,    "Alimentation", "Secteur 220V",       "",    etat,        0.0f,   0.0f, kLabelsAcPower,         2) \
     \
     /* ── Capteurs air RS485 (Ebyte KTH2-R) ────────────────────────────────── */ \
-    X(35, AirTemperature2,  Sensor,   "Capteur",      "Température air 2",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X(36, AirHumidity2,     Sensor,   "Capteur",      "Humidité air 2",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
-    X(37, AirTemperature3,  Sensor,   "Capteur",      "Température air 3",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
-    X(38, AirHumidity3,     Sensor,   "Capteur",      "Humidité air 3",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X(35, AirTemperature14, Sensor,   "Capteur",      "Température air serre",  "°C",  metrique,  -20.0f,  60.0f, nullptr,                0) \
+    X(36, AirHumidity14,    Sensor,   "Capteur",      "Humidité air serre",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    \
+    /* ── Capteurs sol RS485 (suite) ───────────────────────────────────────── */ \
+    X(37, SoilMoisture7,    Sensor,   "Capteur",      "Humidité sol 7",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X(38, SoilTemperature7, Sensor,   "Capteur",      "Température sol 7",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
     \
     /* ── Validation capteurs ───────────────────────────────────────────────── */ \
-    X(39, SensorHealth,     System,   "Système",      "Santé des capteurs",  "",   texte,       0.0f,   0.0f, nullptr,                0)
+    X(39, SensorHealth,     System,   "Système",      "Santé des capteurs",  "",   texte,       0.0f,   0.0f, nullptr,                0) \
+    \
+    /* ── Capteurs sol RS485 (suite) ───────────────────────────────────────── */ \
+    X(40, SoilMoisture8,    Sensor,   "Capteur",      "Humidité sol 8",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X(41, SoilTemperature8, Sensor,   "Capteur",      "Température sol 8",  "°C",  metrique,  -40.0f,  80.0f, nullptr,                0) \
+    \
+    /* ── Capteurs sol sans fil RS485 ───────────────────────────────────────── */ \
+    X(42, SoilMoisture9,    Sensor,   "Capteur",      "Humidité sol 9",     "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X(43, SoilBattery9,     Sensor,   "Capteur",      "Charge pile sol 9",  "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    X(44, SoilMoisture10,   Sensor,   "Capteur",      "Humidité sol 10",    "%",   metrique,    2.0f, 100.0f, nullptr,                0) \
+    X(45, SoilBattery10,    Sensor,   "Capteur",      "Charge pile sol 10", "%",   metrique,    0.0f, 100.0f, nullptr,                0) \
+    \
+    /* ── Lumières / commandes ON-OFF (valeur 0=OFF, 1=ON — pas de durée) ─ */ \
+    X(46, Lighting7,        Actuator,       "Actionneur", "Lumière 7",          "",  etat,     0.0f,   0.0f, kLabelsLighting,    2) \
+    X(47, Lighting8,        Actuator,       "Actionneur", "Lumière 8",          "",  etat,     0.0f,   0.0f, kLabelsLighting,    2) \
+    X(48, CommandLighting7, CommandGeneric, "Commande",   "Commande lumière 7", "",  etat,     0.0f,   1.0f, kLabelsLightingCmd, 2) \
+    X(49, CommandLighting8, CommandGeneric, "Commande",   "Commande lumière 8", "",  etat,     0.0f,   1.0f, kLabelsLightingCmd, 2)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Enum DataId — généré automatiquement depuis DATA_ID_LIST

@@ -9,30 +9,28 @@
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class SupplyVoltage {
 public:
     static void init();
     static void handle();   // Appelé périodiquement par TaskManager
 
-    // ─── Mesure à la demande ─────────────────────────────────────────────
-    // Ce module déclare les DataId qu'il produit ; il ne les reçoit d'aucune
-    // table extérieure. OnDemandMeasure l'interroge au démarrage pour
-    // construire sa vue id → propriétaire, comme ValveManager se construit
-    // depuis RELAYS[].
+    // ─── Déclaration NEO ─────────────────────────────────────────────────
+    // Ce module décrit lui-même les données qu'il produit ; il ne les reçoit
+    // d'aucune table extérieure. Neo::build() l'interroge au démarrage.
     //
-    // Les deux ids sont écrits ici et non dans un descripteur en rotation :
-    // il n'y a qu'un seul appareil sur le bus (carte Analog Input 8CH à
-    // l'adresse 16) et une seule transaction Modbus livre les deux canaux.
-    // Le canal 1 donne une métrique (tension), le canal 2 un état (secteur
-    // présent ou absent) après application du seuil dans ce module.
+    // Les deux grandeurs sont décrites ici et non dans un descripteur en
+    // rotation : il n'y a qu'un seul appareil sur le bus (carte Analog Input
+    // 8CH à l'adresse 16) et une seule transaction Modbus livre les deux
+    // canaux. Le canal 1 donne la tension de la batterie d'alimentation, le
+    // canal 2 la présence du secteur après application du seuil dans ce
+    // module.
 
-    // Nombre de DataId produits : SupplyVoltage et AcPower.
-    static uint8_t measurableCount();
+    static uint8_t  neoCount();
+    static NeoEntry neoAt(uint8_t index);
 
-    // DataId numéro `index`, avec index < measurableCount().
-    static DataId measurableAt(uint8_t index);
-
+    // ─── Mesure à la demande ─────────────────────────────────────────────
     // Interroge immédiatement la carte et publie les deux canaux sur DataBus
     // — même chemin que handle(), donc même validation, même horodatage,
     // même journalisation CSV, et même détection de front sur l'état secteur.
@@ -42,6 +40,13 @@ public:
     static bool measureNow(DataId id);
 
 private:
+    // L'adresse Modbus n'est pas reprise ici : elle vit une seule fois dans
+    // DEVICE_ADDRESS (.cpp), où les trames sont bâties, et neoAt l'y lit.
+    static constexpr NeoMeasure MEASURES[] = {
+        { DataId::SupplyVoltage, Grandeur::Tension,  Concerne::Batterie },
+        { DataId::AcPower,       Grandeur::Presence, Concerne::Secteur  },
+    };
+
     // Transaction Modbus pure : lecture des deux canaux, décodage, pas de
     // publication ni d'effet de bord. Retourne true si la carte a répondu.
     static bool readHardware(float& voltage, float& acPower);

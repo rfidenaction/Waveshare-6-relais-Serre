@@ -25,6 +25,7 @@
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class AirSensorRS485 {
 public:
@@ -44,19 +45,19 @@ public:
     // constexpr : la division est faite à la compilation.
     static constexpr uint8_t sensorCount() { return SENSOR_COUNT; }
 
+    // ─── Déclaration NEO ─────────────────────────────────────────────────
+    // Ce module décrit lui-même les données qu'il produit ; il ne les reçoit
+    // d'aucune table extérieure. Tout est dérivé de SENSORS[], seule source
+    // de vérité de l'appartenance id ↔ adresse Modbus ↔ grandeur mesurée.
+    // Neo::build() interroge ce couple de méthodes une fois au démarrage.
+
+    // Nombre d'entrées déclarées : 2 par capteur (température + humidité).
+    static uint8_t neoCount();
+
+    // Entrée numéro `index`, avec index < neoCount().
+    static NeoEntry neoAt(uint8_t index);
+
     // ─── Mesure à la demande ─────────────────────────────────────────────
-    // Ce module déclare les DataId qu'il produit ; il ne les reçoit d'aucune
-    // table extérieure. La liste est dérivée de SENSORS[], seule source de
-    // vérité de l'appartenance id ↔ adresse Modbus. OnDemandMeasure
-    // l'interroge au démarrage pour construire sa vue id → propriétaire,
-    // comme ValveManager se construit depuis RELAYS[].
-
-    // Nombre de DataId produits (2 par capteur : température + humidité).
-    static uint8_t measurableCount();
-
-    // DataId numéro `index`, avec index < measurableCount().
-    static DataId measurableAt(uint8_t index);
-
     // Interroge immédiatement le capteur portant cet id et publie la paire
     // température + humidité sur DataBus — même chemin que handle(), donc
     // même validation, même horodatage, même journalisation CSV.
@@ -66,26 +67,25 @@ public:
     // (mode maintenance, délai de démarrage) ou si le capteur n'a pas répondu.
     static bool measureNow(DataId id);
 
-    // Retourne l'adresse RS485 Modbus associée à un DataId produit par ce
-    // module, ou 0 si l'id est inconnu.
-    static uint8_t rs485AddressOf(DataId id);
-
 private:
     static constexpr const char* TAG = "AirRS485";
 
     struct SensorDescriptor {
-        uint8_t address;
-        DataId  temperatureId;
-        DataId  humidityId;
+        uint8_t    address;
+        NeoMeasure temperature;
+        NeoMeasure humidity;
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 1;
+    static constexpr SensorDescriptor SENSORS[] = {
+        { 14, { DataId::AirTemperature14, Grandeur::Temperature, Concerne::Serre },
+              { DataId::AirHumidity14,    Grandeur::Humidite,    Concerne::Serre } },
+    };
+
+    // Effectif dérivé du tableau : ajouter une ligne ci-dessus suffit, aucun
+    // nombre à tenir à jour en parallèle.
+    static constexpr uint8_t SENSOR_COUNT = sizeof(SENSORS) / sizeof(SENSORS[0]);
     static_assert(SENSOR_COUNT > 0,
                   "SENSOR_COUNT divise RS485_TEMP_READ_PERIOD_MS dans main.cpp");
-
-    static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
-        { 14, DataId::AirTemperature2, DataId::AirHumidity2 },
-    };
 
     static bool    _initialized;
     static uint8_t _currentSensor;

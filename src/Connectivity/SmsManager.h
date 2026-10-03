@@ -49,7 +49,7 @@
 // Alerte : température excessive du boîtier (InboxSensorRS485)
 // -----------------------------------------------------------------------------
 #define SMS_INBOX_TEMP_ENABLED          true
-#define SMS_INBOX_TEMP_THRESHOLD        50.0f        // °C — seuil d'alerte (montée)
+#define SMS_INBOX_TEMP_THRESHOLD        45.0f        // °C — seuil d'alerte (montée)
 #define SMS_INBOX_TEMP_CLEAR_OFFSET     5.0f         // °C — fin d'alerte à (seuil − offset)
 #define SMS_INBOX_TEMP_COOLDOWN_MS      86400000UL   // 24 h entre deux SMS (alerte et fin d'alerte ont chacun leur cooldown)
 

@@ -3,7 +3,9 @@
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"     // DataId utilisé dans RELAYS[]
+#include "Config/Neo.h"               // NeoEntry produit par relayNeoAt
 #include "Actuators/ValveManager.h"   // handler enqueueByEntity référencé dans RELAYS[]
+#include "Actuators/LightManager.h"   // handler enqueueByEntity des lumières
 
 /*
  * IO-Config
@@ -30,55 +32,9 @@
 #define RELAY_CH5_PIN      45    // CH5
 #define RELAY_CH6_PIN      46    // CH6
 
-// =============================================================================
-// Affectation des relais — couche fonctionnelle
-//
-// Table unique reliant chaque canal physique à TOUTE la chaîne fonctionnelle :
-// entité pilotée (DataId META), commande META associée, et handler du manager
-// propriétaire. C'est la source de vérité du câblage réel de l'installation
-// ET du routage logiciel des commandes.
-//
-// Règles :
-//   - Une ligne par canal physique, dans l'ordre des canaux (1..6).
-//   - Une ligne ne porte qu'UNE entity (un contact sec = un état à la fois).
-//   - Plusieurs lignes peuvent porter la MÊME entity (mapping N:1 — ex :
-//     lumière alimentée en parallèle par deux relais). Dans ce cas, elles
-//     doivent porter la MÊME command et le MÊME enqueue handler.
-//   - Pour réaffecter un relais : changer entity + command + enqueue ici
-//     puis recompiler. Si l'entity ou la command n'existe pas encore dans
-//     DATA_ID_LIST (DataLogger.h), l'y ajouter d'abord. Si le manager cible
-//     n'existe pas encore, le créer (avec sa fonction enqueueByEntity).
-//
-// Invariant — chaque relais a TOUJOURS une commande et un handler :
-//   La carte n'a que 6 canaux et ils sont tous destinés à être pilotés par
-//   une commande de durée (vanne aujourd'hui, ventilateur/éclairage demain).
-//   Quand on réaffectera un canal vanne → ventilateur, on créera le couple
-//   entity+command dans DATA_ID_LIST, le manager correspondant avec sa
-//   fonction enqueueByEntity, et on remplacera les trois champs sur la
-//   ligne concernée. Aucun cas « pas de commande » n'est prévu.
-//
-// Dispatch des commandes (zéro code ailleurs) :
-//   DataBus::routeCommand parcourt RELAYS[] à la recherche d'une ligne où
-//   command == cmdId reçue. Trouvée → il appelle ligne.enqueue(ligne.entity,
-//   durationMs). Les dispatchers (MqttManager, WebServer) enchaînent
-//   DataBus::parseCommand → DataBus::publish (qui appelle routeCommand si commande),
-//   sans jamais connaître les managers d'actionneurs.
-//   Ajouter LightManager = créer son enqueueByEntity + changer quelques
-//   lignes de RELAYS[], sans toucher au reste du code.
-//
-// Lecture par les managers métier :
-//   ValveManager     : scanne la table, ramasse les lignes dont entity est
-//                      une vanne (Valve1..Valve6) et construit ses slots
-//                      (entity + ch + gpio). Ne regarde ni command ni
-//                      enqueue : ces champs servent le dispatch, pas
-//                      l'exécution. Pilote les GPIO directement.
-//   Futurs managers  : même principe (LightManager ramasserait ses Light*).
-// =============================================================================
-
-// Signature commune à tous les handlers de manager (ValveManager::enqueueByEntity,
-// future LightManager::enqueueByEntity, …). Reçoit l'entité à piloter et la
-// durée en ms ; retourne true si la commande a pu être empilée vers le manager.
-using RelayEnqueueFn = bool (*)(DataId entity, uint32_t durationMs);
+// Signature commune à tous les handlers de manager.
+// Second argument : durée en ms (vanne) ou état 0/1 (lumière).
+using RelayEnqueueFn = bool (*)(DataId entity, uint32_t commandParam);
 
 struct RelayAssignment {
     uint8_t        ch;       // 1-based, aligné sur la sérigraphie CH1..CH6
@@ -98,6 +54,45 @@ inline constexpr RelayAssignment RELAYS[] = {
 };
 
 inline constexpr size_t RELAYS_COUNT = sizeof(RELAYS) / sizeof(RELAYS[0]);
+
+// =============================================================================
+// Déclaration NEO — projection de RELAYS[] en liste plate
+//
+// Deux entrées par canal : l'entité pilotée et sa commande. Chacune porte le
+// canal relais et l'id de l'autre, de sorte que la correspondance
+// vanne ↔ commande se lise dans les deux sens sans table supplémentaire.
+//
+// Réaffecter un canal se fait toujours sur la seule ligne de RELAYS[] :
+// l'inventaire NEO suit au prochain démarrage, et une entité absente d'ici
+// (Lighting7 sur cette carte) n'est tout simplement pas installée.
+//
+// Grandeur::Aucune : un relais ne mesure rien. Ce qu'il est et comment il
+// s'affiche se lit dans META (type, nature, libellés d'état).
+// =============================================================================
+
+inline uint8_t relayNeoCount()
+{
+    return (uint8_t)(RELAYS_COUNT * 2);
+}
+
+inline NeoEntry relayNeoAt(uint8_t index)
+{
+    if (index >= RELAYS_COUNT * 2) index = 0;   // garde : index hors bornes
+
+    const RelayAssignment& relay    = RELAYS[index / 2];
+    const bool             isEntity = (index % 2 == 0);
+
+    NeoEntry entry = {};
+    entry.id       = isEntity ? relay.entity  : relay.command;
+    entry.grandeur = Grandeur::Aucune;
+    entry.concerne = (relay.enqueue == &LightManager::enqueueByEntity)
+                     ? Concerne::Serre : Concerne::Sol;
+    entry.relayCh  = relay.ch;
+    entry.idLie    = isEntity ? relay.command : relay.entity;
+    entry.enqueue  = relay.enqueue;
+
+    return entry;
+}
 
 // =============================================================================
 // RS485 (UART isolé)

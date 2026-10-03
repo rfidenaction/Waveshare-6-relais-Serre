@@ -6,7 +6,8 @@
 #include "Connectivity/MqttManager.h"
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
-#include "Config/IO-Config.h"
+#include "Config/Neo.h"
+#include "Sensors/SensorValidation.h"
 #include "Utils/Console.h"
 
 #include <ArduinoJson.h>
@@ -315,7 +316,7 @@ void ConditionalWatering::processConditionalMessage(char* msg)
 }
 
 // ─── validateConditionalRule() ───────────────────────────────────────────────
-// Toutes les bornes viennent de META et de RELAYS[], sources de vérité uniques.
+// Toutes les bornes viennent de META, et l'existence du matériel de NEO.
 
 bool ConditionalWatering::validateConditionalRule(const ConditionalRule& rule)
 {
@@ -332,13 +333,19 @@ bool ConditionalWatering::validateConditionalRule(const ConditionalRule& rule)
         return false;
     }
 
-    bool found = false;
-    for (size_t i = 0; i < RELAYS_COUNT; i++) {
-        if (RELAYS[i].command == rule.cmdId) { found = true; break; }
-    }
-    if (!found) {
+    // Une règle déclenche un arrosage d'une durée donnée. Une commande d'état
+    // (lumière) n'en a pas : elle n'a rien à faire dans un arrosage
+    // conditionnel.
+    if (cmdMeta.nature == DataNature::etat) {
         Console::warn(TAG, "cmdId=" + String((uint8_t)rule.cmdId)
-                      + " absent de RELAYS[]");
+                      + " est une commande d'état : pas de règle conditionnelle");
+        return false;
+    }
+
+    const NeoEntry* cmdEntry = Neo::find(rule.cmdId);
+    if (cmdEntry == nullptr || cmdEntry->enqueue == nullptr) {
+        Console::warn(TAG, "cmdId=" + String((uint8_t)rule.cmdId)
+                      + " absent de NEO");
         return false;
     }
 
@@ -366,6 +373,18 @@ bool ConditionalWatering::validateConditionalRule(const ConditionalRule& rule)
     if (sensorMeta.nature != DataNature::metrique) {
         Console::warn(TAG, "sensorId=" + String((uint8_t)rule.sensorId)
                       + " n'est pas une grandeur métrique");
+        return false;
+    }
+
+    // Une règle ne se déclenche que sur une mesure parvenue jusqu'à
+    // offerMeasure(), et seules les grandeurs jugées par SensorValidation y
+    // parviennent. Le critère est demandé à ce module plutôt que redécidé ici :
+    // la charge de pile d'une sonde sans fil, par exemple, est suivie en
+    // présence mais jamais jugée, donc jamais offerte.
+    if (!SensorValidation::isJudged(rule.sensorId)) {
+        Console::warn(TAG, "sensorId=" + String((uint8_t)rule.sensorId)
+                      + " est une grandeur dont la fiabilité n'est pas jugée"
+                        " — pas de règle conditionnelle");
         return false;
     }
     if (rule.threshold < sensorMeta.min || rule.threshold > sensorMeta.max) {

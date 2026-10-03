@@ -24,7 +24,7 @@
 //
 // Au déclenchement, un BusItem (DataType::CommandConditional) est publié via
 // DataBus::publish(), ce qui enclenche la chaîne existante (validation META,
-// horodatage, distribution mqttQueue/logQueue/WebServer, routage via RELAYS[]
+// horodatage, distribution mqttQueue/logQueue/WebServer, routage via NEO
 // → ValveManager). Si la vanne est déjà ouverte, ValveManager ignore la
 // demande : le délai de repos démarre malgré tout, le travail étant fait.
 //
@@ -188,7 +188,7 @@ private:
     static bool addConditionalRule(const ConditionalRule& rule);
     static bool removeConditionalRule(const ConditionalRule& rule);
 
-    // Validation des champs d'une règle (bornes META, cmdId routé par RELAYS[]).
+    // Validation des champs d'une règle (bornes META, cmdId présent dans NEO).
     static bool validateConditionalRule(const ConditionalRule& rule);
 
     // Égalité de deux règles sur la totalité de leurs champs (identité).

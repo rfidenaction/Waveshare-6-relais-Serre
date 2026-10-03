@@ -8,11 +8,11 @@
 //         xQueueSend(mqttQueue)      → MqttManager drain
 //         xQueueSend(logQueue)       → DataLogger drain (drop si plein)
 //         WebServer::updateLastData() → portMUX, accès direct
-//     → si commande : routeCommand() via RELAYS[]
+//     → si commande : routeCommand() via NEO
 
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
-#include "Config/IO-Config.h"
+#include "Config/Neo.h"
 #include "Web/WebServer.h"
 #include "Utils/Console.h"
 
@@ -166,11 +166,20 @@ bool DataBus::publish(BusItem& item)
     if (item.type == DataType::CommandManual ||
         item.type == DataType::CommandAuto   ||
         item.type == DataType::CommandConditional) {
-        uint32_t durationMs = (uint32_t)(item.valueFloat * 1000.0f);
-        if (!routeCommand(item.id, durationMs)) {
+        // Le paramètre transmis au manager dépend de la nature de la commande :
+        // une durée en millisecondes pour une commande métrique (vanne), l'état
+        // demandé pour une commande d'état (lumière).
+        const DataMeta& cmdMeta = getMeta(item.id);
+        uint32_t commandParam;
+        if (cmdMeta.nature == DataNature::etat) {
+            commandParam = (uint32_t)(item.valueFloat + 0.5f);
+        } else {
+            commandParam = (uint32_t)(item.valueFloat * 1000.0f);
+        }
+        if (!routeCommand(item.id, commandParam)) {
             Console::warn(TAG, "Commande non routée : cmdId="
                           + String((uint8_t)item.id)
-                          + " (absente de RELAYS[] ou manager non prêt)");
+                          + " (absente de NEO ou manager non prêt)");
             return false;
         }
     }
@@ -260,15 +269,17 @@ CommandParseResult DataBus::parseCommand(
 }
 
 // ─── routeCommand() ──────────────────────────────────────────────────────────
-// Parcourt RELAYS[] et invoque le handler du manager propriétaire.
-bool DataBus::routeCommand(DataId cmdId, uint32_t durationMs)
+// Cherche l'entrée NEO de la commande et invoque le handler du manager
+// propriétaire sur l'entité liée. L'entrée d'une entité porte les mêmes
+// champs en miroir, d'où le contrôle de type : seule une commande route.
+bool DataBus::routeCommand(DataId cmdId, uint32_t commandParam)
 {
-    for (size_t i = 0; i < RELAYS_COUNT; i++) {
-        if (RELAYS[i].command == cmdId) {
-            return RELAYS[i].enqueue(RELAYS[i].entity, durationMs);
-        }
-    }
-    return false;
+    if (getMeta(cmdId).type != DataType::CommandGeneric) return false;
+
+    const NeoEntry* entry = Neo::find(cmdId);
+    if (entry == nullptr || entry->enqueue == nullptr) return false;
+
+    return entry->enqueue(entry->idLie, commandParam);
 }
 
 // ─── tryPopMqtt() ────────────────────────────────────────────────────────────

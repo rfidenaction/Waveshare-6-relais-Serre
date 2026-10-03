@@ -118,6 +118,7 @@ private:
     // Distribue un BusItem déjà rempli vers toutes les destinations.
     static void distribute(const BusItem& item);
 
-    // Route une commande via RELAYS[] vers le handler du manager propriétaire.
-    static bool routeCommand(DataId cmdId, uint32_t durationMs);
+    // Route une commande via NEO vers le handler du manager propriétaire.
+    // commandParam : durée en ms (commande métrique) ou 0/1 (commande état).
+    static bool routeCommand(DataId cmdId, uint32_t commandParam);
 };

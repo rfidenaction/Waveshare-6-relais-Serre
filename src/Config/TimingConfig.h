@@ -43,7 +43,7 @@
 /*
  * TaskManager::handle() exécute dans la MÊME passe de boucle toutes les tâches
  * échues : leurs durées s'additionnent dans cette passe. Or les périodes des
- * quatre tâches du bus RS485 sont harmoniques (30, 75, 150 et 300 s) et toutes
+ * quatre tâches du bus RS485 sont harmoniques (30 ; 37,5 ; 300 et 300 s) et toutes
  * comptées depuis le démarrage, si bien qu'elles tombaient ensemble toutes les
  * 300 secondes — quatre transactions Modbus bloquantes enchaînées, que
  * TaskManagerMonitor mesure comme une dérive du scheduler.
@@ -60,8 +60,8 @@
  * dix paires ont été vérifiées, aucune ne remplit cette condition.
  *
  *   tension alim  30 s   → 1  (5 s)
- *   sondes sol    75 s   → 2  (10 s)
- *   capteurs air  150 s  → 3  (15 s)
+ *   sondes sol    37,5 s → 2  (10 s)
+ *   capteurs air  300 s  → 3  (15 s)
  *   capteur boît. 300 s  → 4  (20 s)
  *   état WiFi     1 h    → 5  (4 min + 25 s)
  *
@@ -465,7 +465,7 @@
 #define INBOX_RS485_START_DELAY_MS     285000UL    // 4 min 45 s
 
 /*
- * Période de publication de AirTemperature1 et AirHumidity1 sur DataBus.
+ * Période de publication de AirTemperature15 et AirHumidity15 sur DataBus.
  *
  * La première publication a lieu dès la première lecture réussie et pose
  * le point de départ du battement. Les suivantes sont espacées de cette

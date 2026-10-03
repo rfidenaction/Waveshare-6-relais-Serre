@@ -14,6 +14,7 @@
 #include "Config/NetworkConfig.h"
 #include "Core/DataBus.h"
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 #include "Gardener/GardenerManager.h"
 #include "Gardener/ConditionalWatering.h"
 #include "Sensors/OnDemandMeasure.h"
@@ -36,6 +37,9 @@ bool          MqttManager::mqttStarted     = false;
 bool          MqttManager::schemaPublished = false;
 uint32_t      MqttManager::lastSchemaPublishMs = 0;
 
+uint8_t       MqttManager::retainedRefreshStep   = 0;
+uint32_t      MqttManager::retainedRefreshStepMs = 0;
+
 void (*MqttManager::_onPublishSuccess)() = nullptr;
 
 char    MqttManager::inFlightPayload[200] = {};
@@ -53,6 +57,9 @@ volatile uint32_t MqttManager::messagesPublished = 0;
 // ~65 min d'uptime, strictement comme le comportement d'origine.
 volatile uint32_t MqttManager::watchdogSeconds   = MqttManager::WATCHDOG_SECONDS;
 uint32_t          MqttManager::forcedDisconnectCount = 0;
+
+char   MqttManager::uiPrefs[MqttManager::UIPREFS_MAX_LEN + 1] = {};
+size_t MqttManager::uiPrefsLen = 0;
 
 uint32_t MqttManager::mqttKoDownSinceMs = 0;
 uint32_t MqttManager::mqttKoLastSentMs  = 0;
@@ -82,18 +89,18 @@ void MqttManager::init()
 
     cfg.keepalive = MQTT_KEEPALIVE_S;
 
-    cfg.lwt_topic  = MQTT_LWT_TOPIC;
-    cfg.lwt_msg    = "offline";
-    cfg.lwt_msg_len = 7;
-    cfg.lwt_qos    = 1;
-    cfg.lwt_retain = true;
-
     cfg.buffer_size = 1024;
 
-    // Timeout réseau pour le thread esp_mqtt (5 s). Valeur par défaut = 10 s.
-    // Assez tolérant pour absorber les pics de latence Cat-M (handover,
-    // congestion radio), assez court pour détecter un broker injoignable.
-    cfg.network_timeout_ms = 5000;
+    // Borne toutes les attentes réseau de la tâche esp_mqtt : poignée de main
+    // TLS, attente du CONNACK, lectures et écritures en session. La tâche garde
+    // son verrou d'API pendant ces attentes, et esp_mqtt_client_enqueue appelée
+    // depuis le thread TaskManager réclame ce même verrou. Cette valeur plafonne
+    // donc l'attente qu'un tour de boucle peut subir, et la boucle pilote
+    // l'arrosage : jamais plus de 2 s.
+    //
+    // Une poignée de main ou un CONNACK plus lents font échouer la tentative de
+    // connexion ; esp-mqtt en relance une une dizaine de secondes plus tard.
+    cfg.network_timeout_ms = 2000;
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&cfg);
     if (!client) {
@@ -111,6 +118,11 @@ void MqttManager::init()
     );
 
     mqttStarted = false;
+
+    // LittleFS est monté dans setup(), bien avant loopInit() : le fichier est
+    // lisible ici. loadFamilyNames() reste appelée depuis main.cpp, où elle
+    // était déjà.
+    loadUiPrefs();
 
     Console::info(TAG, "Client MQTT configuré (en attente WiFi STA)");
     Console::info(TAG, "Broker: " + String(MQTT_BROKER_URI));
@@ -157,10 +169,9 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         mqttKoDownSinceMs = 0;
         mqttKoLastSentMs  = 0;
 
-        publishOnline();
-
         if (!schemaPublished) {
             publishSchema();
+            publishNeo();
             schemaPublished = true;
         }
 
@@ -206,6 +217,20 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
         );
         Console::info(TAG, "Abonné à "
                      + String(HistoryQuery::HISTORY_TOPIC_FROM_USER));
+
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            MQTT_PING_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à " + String(MQTT_PING_TOPIC_FROM_USER));
+
+        esp_mqtt_client_subscribe(
+            (esp_mqtt_client_handle_t)mqttClient,
+            MQTT_UIPREFS_TOPIC_FROM_USER, 1
+        );
+        Console::info(TAG, "Abonné à " + String(MQTT_UIPREFS_TOPIC_FROM_USER));
+
+        publishUiPrefs();
 
         break;
 
@@ -307,6 +332,22 @@ void MqttManager::mqttEventHandler(void* handlerArgs, const char* base,
                 HistoryQuery::onRequest(event->data, event->data_len);
                 break;
             }
+
+            static const char PING_TOPIC[] = "serre/ping/FromUser";
+            static const int  PING_LEN     = sizeof(PING_TOPIC) - 1;
+            if (event->topic_len == PING_LEN &&
+                memcmp(event->topic, PING_TOPIC, PING_LEN) == 0) {
+                publishPong();
+                break;
+            }
+
+            static const char PREFS_TOPIC[] = "serre/uiprefs/FromUser";
+            static const int  PREFS_LEN     = sizeof(PREFS_TOPIC) - 1;
+            if (event->topic_len == PREFS_LEN &&
+                memcmp(event->topic, PREFS_TOPIC, PREFS_LEN) == 0) {
+                handleUiPrefs(event->data, event->data_len);
+                break;
+            }
         }
         dispatchCommand(event);
         break;
@@ -365,15 +406,23 @@ void MqttManager::dispatchCommand(void* eventData)
 }
 
 // =============================================================================
-void MqttManager::publishOnline()
+// Réponse au ping de l'interface. Appelée depuis l'event handler, donc dans le
+// thread esp_mqtt : le pong part sur la socket avant même le retour du handler.
+//
+// retain=false, à la différence de tous les autres passe-plats : un pong est la
+// preuve qu'une carte est vivante à l'instant où elle répond, pas un état. Le
+// broker le rejouerait à chaque abonnement et l'interface afficherait la serre
+// en ligne alors que la carte serait éteinte — l'exact contraire du but.
+// =============================================================================
+void MqttManager::publishPong()
 {
     esp_mqtt_client_publish(
         (esp_mqtt_client_handle_t)mqttClient,
-        MQTT_LWT_TOPIC,
-        "online", 6,
-        1, true
+        MQTT_PING_TOPIC_TO_USER,
+        "pong", 4,
+        1, false
     );
-    Console::info(TAG, "Publié 'online' sur " + String(MQTT_LWT_TOPIC));
+    Console::info(TAG, "Pong publié sur " + String(MQTT_PING_TOPIC_TO_USER));
 }
 
 // =============================================================================
@@ -383,11 +432,13 @@ void MqttManager::publishSchema()
 {
     String json = buildSchemaJson();
 
-    int msgId = esp_mqtt_client_publish(
+    int msgId = esp_mqtt_client_enqueue(
         (esp_mqtt_client_handle_t)mqttClient,
         MQTT_SCHEMA_TOPIC,
         json.c_str(), json.length(),
-        1, true
+        1,      // qos=1
+        true,   // retain=true
+        true    // store=true (requis pour que enqueue accepte)
     );
 
     // Réarmé sur la tentative et non sur le succès : un échec ne doit pas
@@ -395,10 +446,10 @@ void MqttManager::publishSchema()
     lastSchemaPublishMs = millis();
 
     if (msgId >= 0) {
-        Console::info(TAG, "Schéma publié sur " + String(MQTT_SCHEMA_TOPIC)
+        Console::info(TAG, "Schéma mis en file pour " + String(MQTT_SCHEMA_TOPIC)
                      + " (" + String(json.length()) + " octets)");
     } else {
-        Console::error(TAG, "Échec publication schéma");
+        Console::error(TAG, "Échec mise en file du schéma");
     }
 }
 
@@ -491,18 +542,116 @@ String MqttManager::buildSchemaJson()
         p += jsonEscape(familyNames[i]);
         p += "\"";
     }
-    p += "],\n";
-
-    // Données que la carte sait mesurer à la demande. Liste déclarée par les
-    // modules producteurs et agrégée par OnDemandMeasure — l'interface n'a donc
-    // aucune règle à coder en dur pour savoir sur quelles valeurs proposer une
-    // nouvelle mesure.
-    p += "  \"measurableIds\": [";
-    for (uint8_t i = 0; i < OnDemandMeasure::measurableCount(); i++) {
-        if (i > 0) p += ", ";
-        p += (uint8_t)OnDemandMeasure::measurableAt(i);
-    }
     p += "]\n";
+
+    // Plus de liste measurableIds ici : elle disait quelles données la carte
+    // sait mesurer à la demande, ce que NEO dit déjà. Une donnée est
+    // mesurable si son entrée NEO porte une grandeur, puisque seuls les
+    // modules capteurs en déclarent une, et qu'ils fournissent du même geste
+    // le pointeur de mesure. Deux messages, deux rôles, aucun recouvrement.
+
+    p += "}";
+
+    return p;
+}
+
+// =============================================================================
+// Publication de la table NEO (retain), sur son propre topic.
+// =============================================================================
+void MqttManager::publishNeo()
+{
+    String json = buildNeoJson();
+
+    int msgId = esp_mqtt_client_enqueue(
+        (esp_mqtt_client_handle_t)mqttClient,
+        MQTT_NEO_TOPIC,
+        json.c_str(), json.length(),
+        1,      // qos=1
+        true,   // retain=true
+        true    // store=true (requis pour que enqueue accepte)
+    );
+
+    if (msgId >= 0) {
+        Console::info(TAG, "NEO mis en file pour " + String(MQTT_NEO_TOPIC)
+                     + " (" + String(json.length()) + " octets, "
+                     + String(Neo::count()) + " entrées)");
+    } else {
+        Console::error(TAG, "Échec mise en file de NEO");
+    }
+}
+
+// =============================================================================
+// Génération de la table NEO en JSON.
+//
+// Deux tables, deux messages : celui-ci ne reprend AUCUN champ de META. Il ne
+// porte que des DataId, qui sont les clés de jointure, et les caractéristiques
+// matérielles que META ne peut pas décrire. L'interface joint les deux par id.
+//
+// Les champs matériels sont omis quand ils ne s'appliquent pas : pas d'adresse
+// pour une entité système, pas de canal ni d'id lié pour un capteur.
+// =============================================================================
+String MqttManager::buildNeoJson()
+{
+    String p;
+    p.reserve(1536);
+
+    p += "{\n";
+
+    char dateBuf[24] = "";
+    {
+        time_t now = time(nullptr);
+        struct tm tmLocal;
+        localtime_r(&now, &tmLocal);
+        if (tmLocal.tm_year > 120) {
+            strftime(dateBuf, sizeof(dateBuf), "%d-%m-%Y %H:%M:%S", &tmLocal);
+        }
+    }
+    p += "  \"generated\": \""; p += dateBuf; p += "\",\n";
+
+    // Légendes des deux énumérations — l'interface n'a aucune valeur à coder
+    // en dur, exactement comme pour dataTypes dans le schéma.
+    p += "  \"grandeurs\": [\n";
+    for (uint8_t g = 0; g <= (uint8_t)Grandeur::Debit; g++) {
+        if (g > 0) p += ",\n";
+        p += "    {\"id\": "; p += g;
+        p += ", \"label\": \"";
+        p += jsonEscape(grandeurLabel((Grandeur)g));
+        p += "\"}";
+    }
+    p += "\n  ],\n";
+
+    p += "  \"concernes\": [\n";
+    for (uint8_t c = 0; c <= (uint8_t)Concerne::Secteur; c++) {
+        if (c > 0) p += ",\n";
+        p += "    {\"id\": "; p += c;
+        p += ", \"label\": \"";
+        p += jsonEscape(concerneLabel((Concerne)c));
+        p += "\"}";
+    }
+    p += "\n  ],\n";
+
+    p += "  \"entries\": [\n";
+    for (uint8_t i = 0; i < Neo::count(); i++) {
+        const NeoEntry& e = Neo::at(i);
+
+        p += "    {\"id\": ";        p += (uint8_t)e.id;
+        p += ", \"grandeur\": ";     p += (uint8_t)e.grandeur;
+        p += ", \"concerne\": ";     p += (uint8_t)e.concerne;
+
+        if (e.rs485Address != 0) {
+            p += ", \"addr\": ";     p += e.rs485Address;
+        }
+
+        if (e.relayCh != 0) {
+            p += ", \"ch\": ";       p += e.relayCh;
+            p += ", \"lie\": ";      p += (uint8_t)e.idLie;
+        }
+
+        p += "}";
+        if (i < Neo::count() - 1) p += ",";
+        p += "\n";
+    }
+    p += "  ]\n";
 
     p += "}";
 
@@ -511,11 +660,15 @@ String MqttManager::buildSchemaJson()
 
 // =============================================================================
 // Drain de DataBus::mqttQueue vers esp-mqtt + watchdog zombie.
-// Tâche TaskManager période 200 ms. Non-bloquant (latence max 2 s via
-// network_timeout_ms). En cas d'échec enqueue, le payload reste dans le slot
-// in-flight et sera retenté au prochain tour — aucun item perdu sur
-// erreur transitoire. La backpressure globale (bursts + coupures WiFi) est
-// absorbée par DataBus::mqttQueue en amont (capacité 30, éviction FIFO).
+// Tâche TaskManager période 200 ms. Aucune écriture sur la socket : tout sort
+// par l'outbox esp_mqtt. Un tour peut néanmoins attendre le verrou d'API que la
+// tâche esp_mqtt garde pendant ses propres attentes réseau ; cette attente est
+// bornée par cfg.network_timeout_ms (2 s, voir init()) et chaque enqueue du tour
+// la risque une fois. C'est la seule attente réseau que subit la boucle. En cas d'échec
+// enqueue, le payload reste dans le slot in-flight et sera retenté au prochain
+// tour — aucun item perdu sur erreur transitoire. La backpressure globale
+// (bursts + coupures WiFi) est absorbée par DataBus::mqttQueue en amont
+// (capacité 30, éviction FIFO).
 // =============================================================================
 void MqttManager::handle()
 {
@@ -553,11 +706,28 @@ void MqttManager::handle()
     // non signée, insensible au débordement de millis(). publishSchema()
     // réarme l'échéance, un renommage de famille ou une reconnexion la
     // repoussent donc d'autant.
+    //
+    // L'échéance n'émet que le schéma : NEO et les deux programmations suivent,
+    // une par RETAINED_REFRESH_SPACING_MS. Le second bloc ne peut pas se
+    // déclencher dans la même passe que le premier, qui vient de poser
+    // retainedRefreshStepMs à l'instant courant. Une coupure du lien gèle la
+    // séquence sur le return ci-dessus et elle reprend au retour du lien.
     if ((millis() - lastSchemaPublishMs) >= RETAINED_REFRESH_MS) {
-        Console::info(TAG, "Rafraîchissement des messages retenus (schéma + programmations)");
+        Console::info(TAG, "Rafraîchissement des messages retenus — schéma, puis NEO et programmations espacés");
         publishSchema();
-        GardenerManager::requestStatePublish();
-        ConditionalWatering::requestStatePublish();
+        retainedRefreshStep   = 1;
+        retainedRefreshStepMs = millis();
+    }
+
+    if (retainedRefreshStep != 0 &&
+        (millis() - retainedRefreshStepMs) >= RETAINED_REFRESH_SPACING_MS) {
+        switch (retainedRefreshStep) {
+            case 1: publishNeo();                               break;
+            case 2: GardenerManager::requestStatePublish();      break;
+            case 3: ConditionalWatering::requestStatePublish();  break;
+        }
+        retainedRefreshStepMs = millis();
+        retainedRefreshStep   = (retainedRefreshStep < 3) ? retainedRefreshStep + 1 : 0;
     }
 
     // ─── Slot in-flight : recharge si libre ──────────────────────────────
@@ -664,20 +834,21 @@ void MqttManager::publishGardenerWateringState(const char* payload, size_t len)
 {
     if (!mqttClient || !mqttConnected) return;
 
-    int msgId = esp_mqtt_client_publish(
+    int msgId = esp_mqtt_client_enqueue(
         (esp_mqtt_client_handle_t)mqttClient,
         GardenerManager::GARDENER_TOPIC_TO_USER,
         payload, len,
         1,      // qos=1
-        true    // retain=true
+        true,   // retain=true
+        true    // store=true (requis pour que enqueue accepte)
     );
 
     if (msgId >= 0) {
-        Console::info(TAG, "Gardener state publié sur "
+        Console::info(TAG, "Gardener state mis en file pour "
                      + String(GardenerManager::GARDENER_TOPIC_TO_USER)
                      + " (" + String(len) + " octets)");
     } else {
-        Console::error(TAG, "Échec publication Gardener state");
+        Console::error(TAG, "Échec mise en file du Gardener state");
     }
 }
 
@@ -690,20 +861,21 @@ void MqttManager::publishConditionalState(const char* payload, size_t len)
 {
     if (!mqttClient || !mqttConnected) return;
 
-    int msgId = esp_mqtt_client_publish(
+    int msgId = esp_mqtt_client_enqueue(
         (esp_mqtt_client_handle_t)mqttClient,
         ConditionalWatering::CONDITIONAL_TOPIC_TO_USER,
         payload, len,
         1,      // qos=1
-        true    // retain=true
+        true,   // retain=true
+        true    // store=true (requis pour que enqueue accepte)
     );
 
     if (msgId >= 0) {
-        Console::info(TAG, "Conditional state publié sur "
+        Console::info(TAG, "Conditional state mis en file pour "
                      + String(ConditionalWatering::CONDITIONAL_TOPIC_TO_USER)
                      + " (" + String(len) + " octets)");
     } else {
-        Console::error(TAG, "Échec publication Conditional state");
+        Console::error(TAG, "Échec mise en file du Conditional state");
     }
 }
 
@@ -713,13 +885,6 @@ void MqttManager::publishConditionalState(const char* payload, size_t len)
 //
 // retain=false : voir MqttManager.h. Une réponse périmée redélivrée à chaque
 // reconnexion afficherait un graphique faux.
-//
-// enqueue et non publish, à la différence des trois autres passe-plats :
-// esp_mqtt_client_publish écrit sur la socket dans le thread appelant et peut
-// donc y bloquer jusqu'à network_timeout_ms sur un lien dégradé. Or ce
-// passe-plat est appelé depuis le thread TaskManager, celui qui pilote les
-// vannes. enqueue se contente de déposer le message dans l'outbox, que le
-// thread esp_mqtt écoulera. Un historique peut attendre ; un arrosage non.
 // =============================================================================
 void MqttManager::publishHistory(const char* payload, size_t len)
 {
@@ -735,11 +900,11 @@ void MqttManager::publishHistory(const char* payload, size_t len)
     );
 
     if (msgId >= 0) {
-        Console::info(TAG, "Historique publié sur "
+        Console::info(TAG, "Historique mis en file pour "
                      + String(HistoryQuery::HISTORY_TOPIC_TO_USER)
                      + " (" + String(len) + " octets)");
     } else {
-        Console::error(TAG, "Échec publication historique");
+        Console::error(TAG, "Échec mise en file de l'historique");
     }
 }
 
@@ -846,4 +1011,132 @@ void MqttManager::handleFamilyRename(const char* data, int len)
     schemaPublished = false;
     publishSchema();
     schemaPublished = true;
+}
+
+// =============================================================================
+// Préférences d'affichage de l'interface — voir MqttManager.h
+//
+// Mémoire commune aux téléphones, opaque pour la carte. Traitées depuis le
+// thread esp_mqtt, comme le renommage de famille juste au-dessus : il s'agit
+// d'écrire un petit fichier sur commande de l'utilisateur, pas de parcourir
+// une structure qui pilote des vannes.
+//
+// Délibérément hors du schéma, à la différence des noms de familles :
+// schemaSignature() compare tout le schéma sauf "generated", donc y loger ces
+// préférences ferait reconstruire les trois chapitres de l'interface à chaque
+// renommage de boîtier, refermant tous les dépliants ouverts.
+// =============================================================================
+
+void MqttManager::loadUiPrefs()
+{
+    uiPrefs[0] = '\0';
+    uiPrefsLen = 0;
+
+    File f = LittleFS.open("/uiprefs.json", "r");
+    if (!f) {
+        Console::info(TAG, "Fichier /uiprefs.json absent — préférences d'affichage par défaut");
+        return;
+    }
+
+    size_t size = f.size();
+    if (size == 0 || size > UIPREFS_MAX_LEN) {
+        Console::warn(TAG, "/uiprefs.json de taille invalide (" + String(size)
+                          + " octets) — ignoré");
+        f.close();
+        return;
+    }
+
+    uiPrefsLen = f.readBytes(uiPrefs, size);
+    uiPrefs[uiPrefsLen] = '\0';
+    f.close();
+
+    Console::info(TAG, "Préférences d'affichage chargées ("
+                      + String(uiPrefsLen) + " octets)");
+}
+
+bool MqttManager::saveUiPrefs()
+{
+    File f = LittleFS.open("/uiprefs.tmp", "w");
+    if (!f) {
+        Console::error(TAG, "Échec ouverture /uiprefs.tmp en écriture");
+        return false;
+    }
+
+    size_t written = f.write((const uint8_t*)uiPrefs, uiPrefsLen);
+    f.close();
+
+    if (written != uiPrefsLen) {
+        Console::error(TAG, "Écriture partielle /uiprefs.tmp (" + String(written)
+                          + "/" + String(uiPrefsLen) + ")");
+        return false;
+    }
+
+    if (!LittleFS.rename("/uiprefs.tmp", "/uiprefs.json")) {
+        Console::error(TAG, "Échec rename /uiprefs.tmp → /uiprefs.json");
+        return false;
+    }
+
+    return true;
+}
+
+// Le message reçu remplace intégralement l'état mémorisé : l'interface publie
+// l'objet complet à chaque modification, il n'y a pas d'ordre unitaire à
+// fusionner.
+void MqttManager::handleUiPrefs(const char* data, int len)
+{
+    if (len <= 0 || (size_t)len > UIPREFS_MAX_LEN) {
+        Console::warn(TAG, "Préférences d'affichage rejetées — taille "
+                          + String(len) + " octets");
+        return;
+    }
+
+    // Contrôle de forme, pas de sens : on vérifie seulement que c'est du JSON.
+    // Sans ce garde-fou, un émetteur tiers pourrait figer en flash un contenu
+    // que l'interface n'arriverait plus jamais à relire.
+    {
+        DynamicJsonDocument probe(UIPREFS_MAX_LEN + 512);
+        if (deserializeJson(probe, data, (size_t)len) != DeserializationError::Ok) {
+            Console::warn(TAG, "Préférences d'affichage rejetées — JSON malformé");
+            return;
+        }
+    }
+
+    memcpy(uiPrefs, data, len);
+    uiPrefs[len] = '\0';
+    uiPrefsLen   = (size_t)len;
+
+    if (saveUiPrefs()) {
+        Console::info(TAG, "Préférences d'affichage enregistrées ("
+                          + String(uiPrefsLen) + " octets)");
+    }
+
+    publishUiPrefs();
+}
+
+// Retain : c'est un état, et il doit parvenir à un téléphone qui se connecte
+// longtemps après la dernière modification.
+void MqttManager::publishUiPrefs()
+{
+    if (!mqttClient || !mqttConnected) return;
+
+    // Rien en flash : on publie quand même un objet vide, pour que l'interface
+    // sache qu'elle a reçu la réponse de la carte et applique ses défauts,
+    // plutôt que d'attendre indéfiniment un message qui ne viendrait pas.
+    const char* payload = (uiPrefsLen > 0) ? uiPrefs   : "{}";
+    size_t      len     = (uiPrefsLen > 0) ? uiPrefsLen : 2;
+
+    int msgId = esp_mqtt_client_publish(
+        (esp_mqtt_client_handle_t)mqttClient,
+        MQTT_UIPREFS_TOPIC_TO_USER,
+        payload, len,
+        1, true
+    );
+
+    if (msgId >= 0) {
+        Console::info(TAG, "Préférences d'affichage publiées sur "
+                     + String(MQTT_UIPREFS_TOPIC_TO_USER)
+                     + " (" + String(len) + " octets)");
+    } else {
+        Console::error(TAG, "Échec publication des préférences d'affichage");
+    }
 }

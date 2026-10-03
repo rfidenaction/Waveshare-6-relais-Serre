@@ -72,16 +72,16 @@ void AirSensorRS485::handle()
     float humidity    = 0.0f;
 
     if (!readOne(SENSORS[index], temperature, humidity)) {
-        bool c1 = SensorValidation::feedNoResponse(SENSORS[index].temperatureId);
-        bool c2 = SensorValidation::feedNoResponse(SENSORS[index].humidityId);
+        bool c1 = SensorValidation::feedNoResponse(SENSORS[index].temperature.id);
+        bool c2 = SensorValidation::feedNoResponse(SENSORS[index].humidity.id);
         if (c1 || c2) SensorValidation::publishSynthetic();
         return;
     }
 
     // L'arrosage conditionnel travaille à la cadence de lecture, sans attendre
     // la publication horaire. Sans effet si aucune règle ne cite ces id.
-    bool c1 = SensorValidation::feed(SENSORS[index].temperatureId, temperature);
-    bool c2 = SensorValidation::feed(SENSORS[index].humidityId,    humidity);
+    bool c1 = SensorValidation::feed(SENSORS[index].temperature.id, temperature);
+    bool c2 = SensorValidation::feed(SENSORS[index].humidity.id,    humidity);
     if (c1 || c2) SensorValidation::publishSynthetic();
 
     bool shouldPublish = false;
@@ -149,14 +149,14 @@ void AirSensorRS485::publishValues(const SensorDescriptor& sensor,
 {
     BusItem item = {};
 
-    item.type       = getMeta(sensor.temperatureId).type;
-    item.id         = sensor.temperatureId;
+    item.type       = getMeta(sensor.temperature.id).type;
+    item.id         = sensor.temperature.id;
     item.valueKind  = 0;
     item.valueFloat = temperature;
     DataBus::publish(item);
 
-    item.type       = getMeta(sensor.humidityId).type;
-    item.id         = sensor.humidityId;
+    item.type       = getMeta(sensor.humidity.id).type;
+    item.id         = sensor.humidity.id;
     item.valueKind  = 0;
     item.valueFloat = humidity;
     DataBus::publish(item);
@@ -167,35 +167,39 @@ void AirSensorRS485::publishValues(const SensorDescriptor& sensor,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
+// Déclaration NEO — projection de SENSORS[] en liste plate
 //
-// measurableCount / measurableAt projettent SENSORS[] sous forme de liste
-// plate de DataId. Rien n'est écrit à la main : ajouter un capteur dans
-// SENSORS[] suffit à l'exposer ici, donc au routage de OnDemandMeasure et à la
-// liste publiée dans le schéma MQTT.
+// Deux entrées par capteur, dans l'ordre des registres lus. Rien n'est écrit
+// à la main : ajouter une ligne dans SENSORS[] suffit à faire apparaître les
+// deux grandeurs dans la table NEO au prochain démarrage.
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint8_t AirSensorRS485::measurableCount()
+uint8_t AirSensorRS485::neoCount()
 {
     return SENSOR_COUNT * 2;
 }
 
-DataId AirSensorRS485::measurableAt(uint8_t index)
+NeoEntry AirSensorRS485::neoAt(uint8_t index)
 {
     if (index >= SENSOR_COUNT * 2) index = 0;   // garde : index hors bornes
 
-    const SensorDescriptor& sensor = SENSORS[index / 2];
-    return (index % 2 == 0) ? sensor.temperatureId : sensor.humidityId;
+    const SensorDescriptor& sensor  = SENSORS[index / 2];
+    const NeoMeasure&       measure = (index % 2 == 0) ? sensor.temperature
+                                                       : sensor.humidity;
+
+    NeoEntry entry     = {};
+    entry.id           = measure.id;
+    entry.grandeur     = measure.grandeur;
+    entry.concerne     = measure.concerne;
+    entry.rs485Address = sensor.address;
+    entry.measure      = &AirSensorRS485::measureNow;
+
+    return entry;
 }
 
-uint8_t AirSensorRS485::rs485AddressOf(DataId id)
-{
-    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        if (SENSORS[i].temperatureId == id || SENSORS[i].humidityId == id)
-            return SENSORS[i].address;
-    }
-    return 0;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande
+// ─────────────────────────────────────────────────────────────────────────────
 
 bool AirSensorRS485::measureNow(DataId id)
 {
@@ -213,7 +217,7 @@ bool AirSensorRS485::measureNow(DataId id)
     }
 
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        if (SENSORS[i].temperatureId == id || SENSORS[i].humidityId == id) {
+        if (SENSORS[i].temperature.id == id || SENSORS[i].humidity.id == id) {
             float temperature = 0.0f;
             float humidity    = 0.0f;
 

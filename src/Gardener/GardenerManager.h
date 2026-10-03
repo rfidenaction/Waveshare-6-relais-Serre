@@ -10,7 +10,7 @@
 // Au déclenchement d'un créneau, GardenerManager construit un BusItem
 // (DataType::CommandAuto) et le publie via DataBus::publish(), ce qui
 // enclenche la chaîne existante (validation META, horodatage, distribution
-// mqttQueue/logQueue/WebServer, routage via RELAYS[] → ValveManager).
+// mqttQueue/logQueue/WebServer, routage via NEO → ValveManager).
 //
 // Intégration :
 //   - init() appelé dans loopInit() après MqttManager::init()

@@ -43,7 +43,7 @@ static constexpr uint16_t REG_COUNT             = 2;          // canal 1 + canal
 static constexpr size_t   RESPONSE_LENGTH       = 9;          // addr+fn+byteCount+4data+2crc
 static constexpr unsigned long RESPONSE_TIMEOUT_MS = 200;
 
-static constexpr float RESISTOR_DIVIDER_RATIO   = 4.15f;
+static constexpr float RESISTOR_DIVIDER_RATIO   = 4.06f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // État interne — dernières valeurs lues et suivi de publication
@@ -273,25 +273,34 @@ bool SupplyVoltage::readHardware(float& voltage, float& acPower)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
-//
-// Les deux ids sont écrits ici : un seul appareil physique sur le bus, une
-// seule transaction, deux canaux. OnDemandMeasure les récupère au démarrage
-// pour construire sa vue id → propriétaire.
+// Déclaration NEO — les deux canaux de la carte Analog Input 8CH
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint8_t SupplyVoltage::neoCount()
+{
+    return sizeof(MEASURES) / sizeof(MEASURES[0]);
+}
+
+NeoEntry SupplyVoltage::neoAt(uint8_t index)
+{
+    if (index >= neoCount()) index = 0;   // garde : index hors bornes
+
+    NeoEntry entry     = {};
+    entry.id           = MEASURES[index].id;
+    entry.grandeur     = MEASURES[index].grandeur;
+    entry.concerne     = MEASURES[index].concerne;
+    entry.rs485Address = DEVICE_ADDRESS;
+    entry.measure      = &SupplyVoltage::measureNow;
+
+    return entry;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande
 //
 // Hors de handle() : pas de détection de front, pas de SMS, pas de cooldown.
 // Un appui UI publie toujours, même pendant l'heure qui suit une alerte.
 // ─────────────────────────────────────────────────────────────────────────────
-
-uint8_t SupplyVoltage::measurableCount()
-{
-    return 2;
-}
-
-DataId SupplyVoltage::measurableAt(uint8_t index)
-{
-    return (index == 1) ? DataId::AcPower : DataId::SupplyVoltage;
-}
 
 bool SupplyVoltage::measureNow(DataId id)
 {

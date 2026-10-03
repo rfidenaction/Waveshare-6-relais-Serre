@@ -1,6 +1,7 @@
 // Sensors/SensorValidation.h
 //
-// Validation de fiabilité des capteurs métriques avant arrosage conditionnel.
+// Suivi de présence de toutes les mesures, et validation de fiabilité de la
+// température et de l'hygrométrie avant arrosage conditionnel.
 //
 // Deux mécanismes indépendants, par capteur :
 //
@@ -24,20 +25,41 @@
 // À chaque changement d'état de validation (passage OK↔Figé↔Dysf↔Abs),
 // un message synthétique unique est publié sur DataBus (DataId::SensorHealth, texte)
 // donnant l'état de TOUS les capteurs en une ligne compacte, groupé par
-// grandeur physique (Temp / Hygro) et identifié par adresse RS485.
-// Format : °C OK:1-2-3 Figé:4 Dysf: Abs: | % OK:1-2-3-4 Figé: Dysf: Abs:
+// grandeur NEO et identifié par adresse RS485. L'en-tête de chaque groupe est
+// le symbole de la grandeur (grandeurSymbol, Config/Neo.h).
+// Format : °C OK:1-2-3 Figé:4 Dysf: Abs: | % OK:1-2 Figé: Dysf: Abs: | Pile OK:9 Figé: Dysf: Abs:10
 //
-// La vue id → état est construite à l'init par interrogation des modules
-// capteurs (même pattern que OnDemandMeasure). Seuls les DataId de type
-// Sensor et de nature metrique sont retenus — SupplyVoltage (type Power) est
-// donc naturellement exclu.
+// Deux rôles distincts, dont un seul est de portée restreinte :
+//
+//   Suivi de présence — toute mesure métrique déclarée dans NEO a son entrée
+//   dans la table. Recevoir une valeur dit que la sonde répond, ne rien
+//   recevoir dit qu'elle est absente. Ce suivi ne suppose rien de la nature
+//   de la mesure : il vaut pour la vingt-cinquième grandeur comme pour la
+//   première, sans qu'une ligne de ce module ait à la nommer.
+//
+//   Jugement de vraisemblance — les deux mécanismes ci-dessus ne s'appliquent
+//   qu'à la température et à l'hygrométrie, seules grandeurs dont une valeur
+//   fausse peut déclencher un arrosage à tort. Elles sont nommées à un seul
+//   endroit, dans buildSlotsFromNeo(), avec le seuil qui les décrit. Le reste
+//   est suivi sans être jugé : ni saut, ni valeur figée, et pas d'offre à
+//   ConditionalWatering. La charge de pile d'une sonde sans fil, qui ne bouge
+//   que de quelques pour cent par mois, apparaît donc en OK ou en Abs et
+//   jamais en Figé.
+//
+// isJudged() expose cette distinction au dehors : ConditionalWatering s'en
+// sert pour refuser une règle écrite sur une grandeur dont la mesure ne lui
+// parviendra jamais.
+//
+// La grandeur et l'adresse RS485 sont lues dans l'entrée NEO. Elles ne sont
+// plus déduites du texte de META.unit, qui vaut « % » aussi bien pour une
+// hygrométrie que pour une charge de pile.
 //
 // État en RAM seule, perdu au reboot (choix cohérent avec
 // ConditionalWatering::conditionalRuleLastTrigger).
 //
 // Intégration :
-//   - init() appelé dans loopInit() après les init() des 3 modules capteurs
-//     et avant ConditionalWatering::init() ; publie un digest initial
+//   - init() appelé dans loopInit() après Neo::build() et avant
+//     ConditionalWatering::init() ; publie un digest initial
 //     « tout OK » sur DataId::SensorHealth (retain MQTT)
 //   - feed() appelé par SoilSensorRS485, AirSensorRS485, InboxSensorRS485
 //     à la place de ConditionalWatering::offerMeasure()
@@ -45,12 +67,13 @@
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class SensorValidation {
 public:
-    // Construit la table id → état en interrogeant les modules capteurs.
-    // À appeler après les init() de SoilSensorRS485, AirSensorRS485,
-    // InboxSensorRS485. Publie ensuite le digest initial sur SensorHealth.
+    // Construit la table id → état par parcours de NEO.
+    // À appeler après Neo::build(). Publie ensuite le digest initial sur
+    // SensorHealth.
     static void init();
 
     // Point d'entrée unique. Appelé par chaque module capteur après lecture
@@ -64,6 +87,13 @@ public:
     // Retourne true si l'état de validation a changé.
     static bool feedNoResponse(DataId sensorId);
 
+    // Vrai si ce module juge la vraisemblance des mesures de cet id, donc si
+    // elles peuvent atteindre ConditionalWatering::offerMeasure(). Faux pour
+    // une grandeur seulement suivie en présence, et pour un id absent de la
+    // table. Une règle conditionnelle écrite sur un id qui ne le satisfait pas
+    // ne se déclencherait jamais.
+    static bool isJudged(DataId sensorId);
+
     // Construit et publie le message synthétique global sur DataId::SensorHealth.
     // À appeler par le module capteur après avoir traité TOUTES les grandeurs
     // d'un capteur physique, si au moins un appel feed/feedNoResponse a
@@ -73,7 +103,7 @@ public:
 private:
     static constexpr const char* TAG = "SensorValid";
 
-    static constexpr uint8_t  SLOT_MAX            = 32;
+    static constexpr uint8_t  SLOT_MAX            = (uint8_t)Neo::MAX;
     static constexpr uint8_t  WINDOW_SIZE         = 12;
     static constexpr float    SPIKE_THRESHOLD_TEMP = 50.0f;   // °C
     static constexpr float    SPIKE_THRESHOLD_HUM  = 80.0f;   // %
@@ -83,6 +113,11 @@ private:
     struct SensorSlot {
         DataId   id;
         uint8_t  rs485Address;
+        Grandeur grandeur;
+
+        // Faux : mesure suivie en présence seulement. Les deux mécanismes
+        // ci-dessous sont alors inactifs et leurs drapeaux restent à false.
+        bool     judged;
 
         // Fenêtre glissante (spike)
         float    window[WINDOW_SIZE];
@@ -104,10 +139,9 @@ private:
     static SensorSlot slots[SLOT_MAX];
     static uint8_t    slotCount;
 
-    // Agrège les DataId déclarés par un module capteur. Ne retient que ceux
-    // de type Sensor et de nature metrique dans META.
-    static void collect(uint8_t count, DataId (*at)(uint8_t),
-                        uint8_t (*addrOf)(DataId));
+    // Parcourt NEO et retient les entrées de type Sensor et de nature
+    // metrique dans META.
+    static void buildSlotsFromNeo();
 
     // Recherche linéaire dans slots[].
     static bool findSlot(DataId id, SensorSlot*& out);

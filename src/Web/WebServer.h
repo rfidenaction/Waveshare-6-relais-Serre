@@ -1,5 +1,4 @@
 // Web/WebServer.h
-// Portage Waveshare ESP32-S3-Relay-6CH
 //
 // lastDataForWeb[] hébergé ici (protégé par portMUX).
 // updateLastData() appelé par DataBus::distribute().
@@ -54,6 +53,9 @@ private:
     static void handleRS485(AsyncWebServerRequest *request);
     static void handleRS485SetAddr(AsyncWebServerRequest *request);
     static void handleRS485Exit(AsyncWebServerRequest *request);
+
+    static void handleRS485ReadSoil(AsyncWebServerRequest *request);
+    static void handleRS485ProgramSoil(AsyncWebServerRequest *request);
 
     // ── Capteurs air Ebyte KTH2-R — configuration via RS485 ────────
     static void handleRS485ReadEbyte(AsyncWebServerRequest *request);

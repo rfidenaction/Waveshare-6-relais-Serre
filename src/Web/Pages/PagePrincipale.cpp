@@ -28,6 +28,7 @@
 
 #include "Web/WebServer.h"
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 #include "Config/NetworkConfig.h"
 #include "Utils/Console.h"
 
@@ -157,17 +158,15 @@ String PagePrincipale::getHtml()
     String apSsid   = WIFI_AP_SSID;
     String apIp     = WIFI_AP_IP.toString();
 
-    // ───────── Alimentation ─────────
-    String supplyLine;
+    // ───────── Alimentation (tension batterie, déclarée dans NEO) ─────────
+    String supplyLine = "—";
     String supplyTime;
-    float supplyVoltage = 0.0f;
 
-    if (WebServer::hasLastData(DataId::SupplyVoltage, d)) {
-        supplyVoltage = getFloat(d);
+    if (Neo::find(DataId::SupplyVoltage) != nullptr &&
+        WebServer::hasLastData(DataId::SupplyVoltage, d)) {
+        supplyLine = String(getFloat(d), 2) + " V";
         supplyTime = timeHtml(d);
     }
-
-    supplyLine = String(supplyVoltage, 2) + " V";
 
     // ───────── HTML ─────────
     String html = R"HTML(

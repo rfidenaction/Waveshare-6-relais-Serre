@@ -6,7 +6,7 @@
 #include "Connectivity/MqttManager.h"
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
-#include "Config/IO-Config.h"
+#include "Config/Neo.h"
 #include "Utils/Console.h"
 
 #include <ArduinoJson.h>
@@ -169,7 +169,8 @@ void GardenerManager::processGardenerMessage(char* msg)
 }
 
 // ─── validateGardenerWateringSlot() ──────────────────────────────────────────
-// Vérifie les bornes des champs et que cmdId est une commande routée par RELAYS[].
+// Vérifie les bornes des champs et que cmdId est une commande de durée
+// installée sur ce matériel, donc routable.
 
 bool GardenerManager::validateGardenerWateringSlot(const GardenerWateringSlot& slot)
 {
@@ -186,14 +187,20 @@ bool GardenerManager::validateGardenerWateringSlot(const GardenerWateringSlot& s
         return false;
     }
 
-    // cmdId doit correspondre à un relais dans RELAYS[] (source de vérité IO-Config)
-    bool found = false;
-    for (size_t i = 0; i < RELAYS_COUNT; i++) {
-        if (RELAYS[i].command == slot.cmdId) { found = true; break; }
-    }
-    if (!found) {
+    // Un créneau porte une durée d'ouverture. Une commande d'état (lumière)
+    // n'en a pas : son champ « duration » ne porterait que le 0 ou le 1 de
+    // l'état, et le calcul de chevauchement n'aurait plus de sens.
+    if (meta.nature == DataNature::etat) {
         Console::warn(TAG, "cmdId=" + String((uint8_t)slot.cmdId)
-                      + " absent de RELAYS[]");
+                      + " est une commande d'état : pas de programmation horaire");
+        return false;
+    }
+
+    // cmdId doit être installée sur ce matériel : NEO dit ce qui existe ici.
+    const NeoEntry* cmdEntry = Neo::find(slot.cmdId);
+    if (cmdEntry == nullptr || cmdEntry->enqueue == nullptr) {
+        Console::warn(TAG, "cmdId=" + String((uint8_t)slot.cmdId)
+                      + " absent de NEO");
         return false;
     }
 

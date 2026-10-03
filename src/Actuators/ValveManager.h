@@ -2,8 +2,8 @@
 // Pilote logique des électrovannes (manager métier "vanne").
 //
 // Manager métier unique des électrovannes.
-//   Scanne RELAYS[] (IO-Config.h) au démarrage, ramasse les canaux dont
-//   l'entity est une vanne (Valve1..Valve6) et les gère : file de commandes
+//   Scanne NEO (Config/Neo.h) au démarrage, ramasse les entrées dont
+//   l'entité est une vanne (Valve1..Valve6) et les gère : file de commandes
 //   thread-safe, timers d'auto-fermeture, journalisation via DataBus.
 //   Pilote les relais directement via digitalWrite sur RELAYS[].gpio.
 //
@@ -12,12 +12,14 @@
 //   (Valve1..Valve6). Aucun "index 0..5" n'est exposé dans l'API publique.
 //
 // Source de vérité du câblage fonctionnel :
-//   RELAYS[] dans Config/IO-Config.h. Chaque ligne déclare, pour un canal
-//   physique, le triplet (entity, command, ch). C'est le SEUL endroit du
-//   projet où la correspondance vanne ↔ commande ↔ canal relais est écrite.
-//   Le tableau interne slots[] n'en est qu'une vue runtime, construite une
-//   fois au démarrage (voir buildSlotsFromRelays) et utilisée ensuite pour
-//   tous les lookups et pour porter l'état d'ouverture de chaque vanne.
+//   RELAYS[] dans Config/IO-Config.h reste la DÉCLARATION du câblage : une
+//   ligne par canal physique, portant le triplet (entity, command, ch).
+//   Elle est lue une seule fois au démarrage, par Neo::build(). Ensuite,
+//   toutes les recherches à l'exécution passent par NEO — ce module comme
+//   DataBus::routeCommand. Il n'existe donc qu'une seule projection en RAM
+//   du câblage, au lieu des deux d'avant.
+//   Le tableau interne slots[] ne porte plus que l'état d'ouverture et
+//   l'échéance de fermeture de chaque vanne.
 //
 // Cycle de vie — silence total avant VALVE_START_DELAY_MS :
 //   - handle()      : unique tâche périodique, enregistrée dès le boot dans
@@ -57,14 +59,17 @@
 #include "freertos/queue.h"
 #include "Config/TimingConfig.h"
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class ValveManager {
 public:
     // ─── Constantes métier ───────────────────────────────────────────────
-    // Borne supérieure : au plus 6 vannes peuvent être affectées
-    // simultanément dans RELAYS[] (la carte n'a que 6 canaux). Le nombre
-    // effectif est déterminé à l'exécution par le scan de RELAYS[].
-    static constexpr uint8_t  VALVE_COUNT           = 6;
+    // Borne supérieure du tableau de slots. Adossée à NEO plutôt qu'au
+    // nombre de canaux de cette carte-ci : une vanne est forcément une
+    // entrée NEO, donc le dépassement est impossible et aucun nombre n'est
+    // à réviser si le matériel gagne des canaux. Le nombre effectif est
+    // déterminé à l'exécution par le scan de NEO.
+    static constexpr uint8_t  VALVE_MAX             = (uint8_t)Neo::MAX;
     static constexpr uint32_t VALVE_MAX_DURATION_MS = 15UL * 60UL * 1000UL; // 15 min
 
     // États logiques (évite LOW/HIGH sans signification métier)
@@ -76,7 +81,7 @@ public:
     //
     //  - Avant VALVE_START_DELAY_MS : return immédiat, aucune action.
     //  - Au premier passage après le délai : construit slots[] depuis
-    //    RELAYS[], crée la queue FreeRTOS et publie l'état initial "Fermée"
+    //    NEO, crée la queue FreeRTOS et publie l'état initial "Fermée"
     //    des vannes affectées.
     //  - Ensuite : consomme la queue de commandes puis vérifie les
     //    deadlines de fermeture.
@@ -118,32 +123,27 @@ private:
         uint32_t durationMs;  // durée d'ouverture en millisecondes
     };
 
-    // ─── Slot interne : vue runtime d'une ligne vanne de RELAYS[] ────────
-    // Double rôle :
-    //   1. Copie RAM de deux champs constants (entity, ch) de la ligne
-    //      RELAYS[] correspondant à cette vanne, pour éviter de reparcourir
-    //      RELAYS[] à chaque action.
-    //   2. Porteur de l'état runtime de la vanne (state + deadline), qui
-    //      n'a pas sa place dans RELAYS[] puisque celui-ci est constexpr.
-    // La source de vérité du câblage reste RELAYS[] ; slots[] n'en est
-    // qu'une projection rafraîchie une fois au démarrage par
-    // buildSlotsFromRelays. Le champ command de RELAYS[] n'est pas recopié
-    // ici : la traduction cmdId → entity est faite en amont par
-    // DataBus::routeCommand (qui parcourt RELAYS[]) avant d'appeler
-    // enqueueByEntity. Le GPIO physique est piloté directement via
-    // RELAYS[].gpio dans applyValveState.
+    // ─── Slot interne : état runtime d'une vanne ─────────────────────────
+    // Ce slot ne décrit plus le câblage : NEO le porte déjà (entité, canal
+    // relais, commande liée). Il ne garde que ce que NEO n'a pas à porter,
+    // l'état d'ouverture et l'échéance de fermeture, plus le canal recopié
+    // pour éviter une recherche NEO à chaque commutation.
+    // Le GPIO physique est piloté via RELAYS[].gpio dans applyValveState :
+    // c'est la seule chose qui reste lue directement dans IO-Config.h, parce
+    // qu'elle décrit la carte et non l'affectation fonctionnelle.
     struct ValveSlot {
         DataId   id;        // DataId META de la vanne (clé de recherche)
-        uint8_t  relayCh;   // canal relais (1-based, cf. RELAYS[].ch)
+        uint8_t  relayCh;   // canal relais (1-based, cf. NeoEntry::relayCh)
         uint8_t  state;     // VALVE_CLOSED ou VALVE_OPENED
         uint32_t deadline;  // millis() cible de fermeture, 0 si fermée
     };
 
-    static ValveSlot  slots[VALVE_COUNT];
+    static ValveSlot  slots[VALVE_MAX];
     static uint8_t    slotCount;         // nombre d'entrées valides dans slots[]
     static bool       valveSystemReady;
 
-    // Queue FreeRTOS de commandes entrantes. Taille = VALVE_COUNT.
+    // Queue FreeRTOS de commandes entrantes. Taille = nombre de vannes
+    // effectivement trouvées dans NEO.
     // nullptr tant que VALVE_START_DELAY_MS n'est pas écoulé.
     // Créée paresseusement au premier handle() après le délai.
     // Producteur : thread esp_mqtt ou thread HTTP (via enqueueCommand).
@@ -157,10 +157,10 @@ private:
     // Application physique d'un nouvel état + journalisation.
     static void applyValveState(ValveSlot& slot, uint8_t newState);
 
-    // Construit slots[] à partir de RELAYS[] (IO-Config.h) : recopie, pour
-    // chaque ligne dont l'entity est une vanne, le triplet (entity, command,
-    // ch) dans un ValveSlot et initialise l'état runtime (VALVE_CLOSED,
-    // deadline=0). Appelée une seule fois, au premier handle() après
-    // VALVE_START_DELAY_MS. Privée car elle touche au type interne ValveSlot.
-    static void buildSlotsFromRelays();
+    // Construit slots[] à partir de NEO : pour chaque entrée dont l'entité
+    // est une vanne, recopie le canal relais et initialise l'état runtime
+    // (VALVE_CLOSED, deadline=0). Appelée une seule fois, au premier
+    // handle() après VALVE_START_DELAY_MS. Privée car elle touche au type
+    // interne ValveSlot.
+    static void buildSlotsFromNeo();
 };

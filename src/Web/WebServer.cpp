@@ -1,5 +1,4 @@
 // Web/WebServer.cpp
-// Portage Waveshare ESP32-S3-Relay-6CH
 //
 // lastDataForWeb[] hébergé ici, protégé par portMUX.
 // buildBundleHeader() utilise typeLabel/jsonEscape (MetaDataModel.h).
@@ -16,6 +15,7 @@
 #include "Storage/HistoryQuery.h"
 #include "Core/DataBus.h"
 #include "Config/MetaDataModel.h"
+#include "Config/IO-Config.h"          // RS485_TX_PIN, RS485_RX_PIN
 #include "Utils/Console.h"
 
 #include <LittleFS.h>
@@ -276,6 +276,9 @@ void WebServer::init()
     server.on("/rs485",         HTTP_GET,  handleRS485);
     server.on("/rs485/setaddr", HTTP_POST, handleRS485SetAddr);
     server.on("/rs485/exit",    HTTP_POST, handleRS485Exit);
+
+    server.on("/rs485/read-soil",    HTTP_POST, handleRS485ReadSoil);
+    server.on("/rs485/program-soil", HTTP_POST, handleRS485ProgramSoil);
 
     // ── Capteurs air Ebyte KTH2-R — configuration ─────────────────
     server.on("/rs485/read-ebyte",    HTTP_POST, handleRS485ReadEbyte);
@@ -722,6 +725,9 @@ void WebServer::handleRS485Exit(AsyncWebServerRequest *request)
     request->send(204);
 }
 
+// Les handlers sol (read-soil / program-soil) sont plus bas, avec les
+// utilitaires Modbus et les tables de baud.
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 void WebServer::handleLogsClear(AsyncWebServerRequest *request)
@@ -752,27 +758,19 @@ void WebServer::handleLogsClearStatus(AsyncWebServerRequest *request)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Analog Input 8CH (B) — configuration via RS485
+// Utilitaires Modbus RTU — configuration de capteurs via RS485
 //
-// Fonctions utilitaires et handlers pour lire la configuration actuelle
-// du module Waveshare Modbus RTU Analog Input 8CH (B) et le reprogrammer
-// (baud rate + adresse Modbus).
+// Briques élémentaires partagées par les handlers de configuration de capteurs
+// RS485 : CRC, purge du buffer, transaction, lecture et écriture d'un registre.
 //
-// Protocole : Modbus RTU standard.
-//   - Lecture adresse   : fonction 0x03, registre 0x4000
-//   - Lecture version   : fonction 0x03, registre 0x8000
-//   - Écriture baud rate: fonction 0x06, registre 0x2000
-//   - Écriture adresse  : fonction 0x06, registre 0x4000
-//   - Adresse broadcast : 0x00
-//
-// Ref : https://www.waveshare.com/wiki/Modbus_RTU_Analog_Input_8CH_(B)
+// Protocole : Modbus RTU standard, fonctions 0x03 (Read Holding Register) et
+// 0x06 (Write Single Register). Les registres et les particularités de chaque
+// capteur sont documentés dans la section qui l'utilise.
 // ═════════════════════════════════════════════════════════════════════════════
-
-static const char* TAG_AI = "AnalogInput";
 
 // ── CRC16 Modbus RTU (copie autonome, n'utilise pas SoilSensorRS485) ────────
 
-static uint16_t analogInputCrc16(const uint8_t* data, size_t len)
+static uint16_t rs485ConfigCrc16(const uint8_t* data, size_t len)
 {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
@@ -790,7 +788,7 @@ static uint16_t analogInputCrc16(const uint8_t* data, size_t len)
 
 // ── Purge du buffer RX de Serial1 ───────────────────────────────────────────
 
-static void analogInputDrainRx()
+static void rs485ConfigDrainRx()
 {
     while (Serial1.available()) {
         Serial1.read();
@@ -803,11 +801,11 @@ static void analogInputDrainRx()
 // attend jusqu'à expectedLen octets pendant timeoutMs.
 // Retourne le nombre d'octets reçus dans response[].
 
-static size_t analogInputTransaction(const uint8_t* request, size_t requestLen,
+static size_t rs485ConfigTransaction(const uint8_t* request, size_t requestLen,
                                      uint8_t* response, size_t expectedLen,
                                      unsigned long timeoutMs = 200)
 {
-    analogInputDrainRx();
+    rs485ConfigDrainRx();
 
     Serial1.write(request, requestLen);
     Serial1.flush();
@@ -817,6 +815,8 @@ static size_t analogInputTransaction(const uint8_t* request, size_t requestLen,
     while (idx < expectedLen && (millis() - startMs) < timeoutMs) {
         if (Serial1.available()) {
             response[idx++] = Serial1.read();
+        } else {
+            yield();
         }
     }
     return idx;
@@ -828,7 +828,7 @@ static size_t analogInputTransaction(const uint8_t* request, size_t requestLen,
 // Retourne true si la réponse est valide, et place la valeur 16 bits
 // dans outValue.
 
-static bool analogInputReadRegister(uint8_t deviceAddr, uint16_t regAddr,
+static bool rs485ConfigReadRegister(uint8_t deviceAddr, uint16_t regAddr,
                                     uint16_t& outValue,
                                     unsigned long timeoutMs = 200)
 {
@@ -840,17 +840,17 @@ static bool analogInputReadRegister(uint8_t deviceAddr, uint16_t regAddr,
     request[4] = 0x00;
     request[5] = 0x01;
 
-    uint16_t crc = analogInputCrc16(request, 6);
+    uint16_t crc = rs485ConfigCrc16(request, 6);
     request[6] = crc & 0xFF;
     request[7] = (crc >> 8) & 0xFF;
 
     uint8_t response[16];
-    size_t rxLen = analogInputTransaction(request, 8, response, 7, timeoutMs);
+    size_t rxLen = rs485ConfigTransaction(request, 8, response, 7, timeoutMs);
 
     if (rxLen < 7) return false;
 
     uint16_t rxCrc  = response[5] | ((uint16_t)response[6] << 8);
-    uint16_t chkCrc = analogInputCrc16(response, 5);
+    uint16_t chkCrc = rs485ConfigCrc16(response, 5);
     if (rxCrc != chkCrc) return false;
 
     if (response[1] != 0x03) return false;
@@ -865,7 +865,7 @@ static bool analogInputReadRegister(uint8_t deviceAddr, uint16_t regAddr,
 // Écrit value dans le registre regAddr du device à deviceAddr.
 // Le module renvoie un écho identique si l'écriture réussit.
 
-static bool analogInputWriteRegister(uint8_t deviceAddr, uint16_t regAddr,
+static bool rs485ConfigWriteRegister(uint8_t deviceAddr, uint16_t regAddr,
                                      uint16_t value)
 {
     uint8_t request[8];
@@ -876,72 +876,16 @@ static bool analogInputWriteRegister(uint8_t deviceAddr, uint16_t regAddr,
     request[4] = (value >> 8) & 0xFF;
     request[5] = value & 0xFF;
 
-    uint16_t crc = analogInputCrc16(request, 6);
+    uint16_t crc = rs485ConfigCrc16(request, 6);
     request[6] = crc & 0xFF;
     request[7] = (crc >> 8) & 0xFF;
 
     uint8_t response[16];
-    size_t rxLen = analogInputTransaction(request, 8, response, 8);
+    size_t rxLen = rs485ConfigTransaction(request, 8, response, 8);
 
     if (rxLen < 8) return false;
 
     return (memcmp(request, response, 8) == 0);
-}
-
-// ── Scan : recherche du module sur les adresses 1–30, à un baud rate donné ──
-//
-// Essaie de lire le registre d'adresse (0x4000) via broadcast (0x00).
-// Si le module répond, on obtient son adresse dans la réponse.
-// Si broadcast échoue, scanne individuellement les adresses 1–30.
-// Retourne l'adresse trouvée, ou 0 si aucun module ne répond.
-
-static uint8_t analogInputScan(uint32_t baudRate)
-{
-    Serial1.end();
-    Serial1.begin(baudRate, SERIAL_8N1, 18, 17);  // RX=GPIO18, TX=GPIO17
-    delay(20);
-
-    uint16_t readAddr = 0;
-
-    // Tentative broadcast d'abord (rapide, un seul module sur le bus)
-    // Timeout 50 ms : le module répond en < 15 ms, même à 4800 bauds.
-    if (analogInputReadRegister(0x00, 0x4000, readAddr, 50)) {
-        Console::info(TAG_AI, "Module trouvé via broadcast à " + String(baudRate)
-                              + " bauds — adresse " + String(readAddr));
-        return (uint8_t)readAddr;
-    }
-
-    // Scan individuel adresses 1–30
-    for (uint8_t addr = 1; addr <= 30; addr++) {
-        if (analogInputReadRegister(addr, 0x4000, readAddr, 50)) {
-            Console::info(TAG_AI, "Module trouvé à l'adresse " + String(addr)
-                                  + " (" + String(baudRate) + " bauds)");
-            return addr;
-        }
-    }
-
-    return 0;
-}
-
-// ── Correspondance code baud rate ↔ valeur numérique ────────────────────────
-
-static const uint32_t AI_BAUD_TABLE[] = {
-    4800, 9600, 19200, 38400, 57600, 115200, 128000, 256000
-};
-static const size_t AI_BAUD_TABLE_SIZE = sizeof(AI_BAUD_TABLE) / sizeof(AI_BAUD_TABLE[0]);
-
-static uint32_t analogInputBaudFromCode(uint8_t code)
-{
-    if (code < AI_BAUD_TABLE_SIZE) return AI_BAUD_TABLE[code];
-    return 0;
-}
-
-static uint8_t analogInputCodeFromBaud(uint32_t baud)
-{
-    for (uint8_t i = 0; i < AI_BAUD_TABLE_SIZE; i++) {
-        if (AI_BAUD_TABLE[i] == baud) return i;
-    }
-    return 0xFF;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -957,32 +901,94 @@ static uint8_t analogInputCodeFromBaud(uint32_t baud)
 // Le KTH2-R n'échoie pas le 0x06 (Write Single Register). L'écriture passe
 // par 0x10 ; l'écho, s'il arrive, est encore à l'ancienne vitesse.
 //
-// Réutilise analogInputCrc16 / analogInputTransaction / analogInputReadRegister.
+// Réutilise rs485ConfigCrc16 / rs485ConfigTransaction / rs485ConfigReadRegister.
 // ═════════════════════════════════════════════════════════════════════════════
 
 static const char* TAG_EB = "Ebyte";
 
-// ── Scan Ebyte : adresses 1–16, à un baud rate donné ────────────────────────
-// Pas de broadcast pour la lecture (le capteur Ebyte suit le standard Modbus
-// où broadcast = écriture seule, pas de réponse).
+// Timeout de lecture : 15 octets (req 8 + resp 7) × 11 bits + marge isolateur.
+static unsigned long ebyteReadTimeoutMs(uint32_t baudRate)
+{
+    unsigned long ms = (15UL * 11UL * 1000UL) / baudRate + 40UL;
+    return (ms < 50UL) ? 50UL : ms;
+}
 
-static uint8_t ebyteScan(uint32_t baudRate)
+static const uint32_t EB_SCAN_BAUDS[] = { 9600, 4800, 19200, 2400, 1200 };
+static const size_t   EB_SCAN_BAUD_COUNT = sizeof(EB_SCAN_BAUDS) / sizeof(EB_SCAN_BAUDS[0]);
+
+struct EbyteParityOpt {
+    uint32_t config;
+    uint8_t  code;
+};
+
+static const EbyteParityOpt EB_SCAN_PARITIES[] = {
+    { SERIAL_8N1, 0 },
+    { SERIAL_8O1, 1 },
+    { SERIAL_8E1, 2 },
+};
+
+static const char* ebyteParityName(uint8_t code)
+{
+    switch (code) {
+        case 1:  return "impaire";
+        case 2:  return "paire";
+        default: return "aucune";
+    }
+}
+
+static void ebyteRestoreBus()
 {
     Serial1.end();
-    Serial1.begin(baudRate, SERIAL_8N1, 18, 17);
+    Serial1.begin(4800, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
+}
+
+// Scan d'une plage d'adresses à un baud et une config série donnés.
+// Pas de broadcast en lecture (standard Modbus : broadcast = écriture seule).
+// La boucle utilise uint16_t : addrMax peut valoir 254, un uint8_t bouclerait.
+static uint8_t ebyteScan(uint32_t baudRate, uint32_t serialConfig,
+                         uint8_t addrMin, uint8_t addrMax)
+{
+    Serial1.end();
+    Serial1.begin(baudRate, serialConfig, RS485_RX_PIN, RS485_TX_PIN);
     delay(20);
 
+    const unsigned long timeoutMs = ebyteReadTimeoutMs(baudRate);
     uint16_t readAddr = 0;
 
-    for (uint8_t addr = 1; addr <= 16; addr++) {
-        if (analogInputReadRegister(addr, 0x000C, readAddr, 50)) {
+    for (uint16_t addr = addrMin; addr <= addrMax; addr++) {
+        yield();
+        if (rs485ConfigReadRegister((uint8_t)addr, 0x000C, readAddr, timeoutMs)) {
             Console::info(TAG_EB, "Capteur trouvé à l'adresse " + String(addr)
                                   + " (" + String(baudRate) + " bauds)");
-            return addr;
+            return (uint8_t)addr;
         }
     }
 
     return 0;
+}
+
+// Chemin historique : 8N1, adresses 1–16. Utilisé par la programmation.
+static uint8_t ebyteScan(uint32_t baudRate)
+{
+    return ebyteScan(baudRate, SERIAL_8N1, 1, 16);
+}
+
+static bool ebyteBaudAllowed(uint32_t baud)
+{
+    for (size_t i = 0; i < EB_SCAN_BAUD_COUNT; i++) {
+        if (baud == EB_SCAN_BAUDS[i]) return true;
+    }
+    return false;
+}
+
+static uint32_t ebyteSerialConfig(uint8_t parityCode)
+{
+    for (size_t p = 0; p < 3; p++) {
+        if (EB_SCAN_PARITIES[p].code == parityCode) {
+            return EB_SCAN_PARITIES[p].config;
+        }
+    }
+    return SERIAL_8N1;
 }
 
 // ── Correspondance code baud rate Ebyte ↔ valeur numérique ──────────────────
@@ -994,6 +1000,21 @@ static uint32_t ebyteBaudFromCode(uint8_t code)
 {
     if (code < EB_BAUD_TABLE_SIZE) return EB_BAUD_TABLE[code];
     return 0;
+}
+
+static int ebyteCodeFromBaud(uint32_t baud)
+{
+    for (size_t i = 0; i < EB_BAUD_TABLE_SIZE; i++) {
+        if (EB_BAUD_TABLE[i] == baud) return (int)i;
+    }
+    return -1;
+}
+
+static void ebyteOpen(uint32_t baud, uint8_t parityCode)
+{
+    Serial1.end();
+    Serial1.begin(baud, ebyteSerialConfig(parityCode), RS485_RX_PIN, RS485_TX_PIN);
+    delay(20);
 }
 
 // Écriture d'un holding register Ebyte — fonction 0x10 (1 registre).
@@ -1011,20 +1032,25 @@ static bool ebyteWriteRegister(uint8_t deviceAddr, uint16_t regAddr, uint16_t va
     request[7] = (value >> 8) & 0xFF;
     request[8] = value & 0xFF;
 
-    uint16_t crc = analogInputCrc16(request, 9);
+    uint16_t crc = rs485ConfigCrc16(request, 9);
     request[9]  = crc & 0xFF;
     request[10] = (crc >> 8) & 0xFF;
 
     uint8_t response[16];
-    size_t rxLen = analogInputTransaction(request, 11, response, 8);
+    size_t rxLen = rs485ConfigTransaction(request, 11, response, 8);
 
     if (rxLen < 8) return false;
 
     uint16_t rxCrc  = response[6] | ((uint16_t)response[7] << 8);
-    uint16_t chkCrc = analogInputCrc16(response, 6);
+    uint16_t chkCrc = rs485ConfigCrc16(response, 6);
     if (rxCrc != chkCrc) return false;
 
-    if (response[0] != deviceAddr) return false;
+    // Changement d'adresse : l'écho peut déjà porter la nouvelle adresse.
+    if (regAddr == 0x000C) {
+        if (response[0] != deviceAddr && response[0] != (uint8_t)value) return false;
+    } else if (response[0] != deviceAddr) {
+        return false;
+    }
     if (response[1] != 0x10) return false;
     if (response[2] != request[2] || response[3] != request[3]) return false;
     if (response[4] != 0x00 || response[5] != 0x01) return false;
@@ -1038,47 +1064,70 @@ static bool ebyteWriteRegister(uint8_t deviceAddr, uint16_t regAddr, uint16_t va
 
 void WebServer::handleRS485ReadEbyte(AsyncWebServerRequest *request)
 {
-    SoilSensorRS485::setMaintenanceMode(true);
+    uint32_t baud = 9600;
+    uint8_t  parityCode = 0;
+    uint16_t addrFrom = 1;
+    uint16_t addrTo = 16;
 
-    uint8_t foundAddr = 0;
-    uint32_t foundBaud = 0;
-
-    foundAddr = ebyteScan(9600);
-    if (foundAddr != 0) {
-        foundBaud = 9600;
-    } else {
-        foundAddr = ebyteScan(4800);
-        if (foundAddr != 0) {
-            foundBaud = 4800;
-        }
+    if (request->hasParam("baud")) {
+        baud = (uint32_t)request->getParam("baud")->value().toInt();
+    }
+    if (request->hasParam("parity")) {
+        parityCode = (uint8_t)request->getParam("parity")->value().toInt();
+    }
+    if (request->hasParam("from")) {
+        addrFrom = (uint16_t)request->getParam("from")->value().toInt();
+    }
+    if (request->hasParam("to")) {
+        addrTo = (uint16_t)request->getParam("to")->value().toInt();
     }
 
-    if (foundAddr == 0) {
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
-        SoilSensorRS485::setMaintenanceMode(false);
-
-        Console::warn(TAG_EB, "Aucun capteur Ebyte détecté (scan 1-16, 9600+4800)");
-        request->send(200, "application/json",
-                      "{\"ok\":false,\"error\":\"Aucun capteur détecté (adresses 1–16, 9600 et 4800 bauds)\"}");
+    if (!ebyteBaudAllowed(baud) || parityCode > 2
+            || addrFrom < 1 || addrTo < addrFrom || addrTo > 254
+            || (addrTo - addrFrom + 1) > 16) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres de scan invalides\"}");
         return;
     }
 
-    // Lire le baud rate configuré (registre 0x000D) pour confirmation
-    uint16_t baudCode = 0;
-    analogInputReadRegister(foundAddr, 0x000D, baudCode);
-    uint32_t reportedBaud = ebyteBaudFromCode((uint8_t)baudCode);
-    if (reportedBaud == 0) reportedBaud = foundBaud;
+    SoilSensorRS485::setMaintenanceMode(true);
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    uint8_t foundAddr = ebyteScan(baud, ebyteSerialConfig(parityCode),
+                                  (uint8_t)addrFrom, (uint8_t)addrTo);
+
+    if (foundAddr == 0) {
+        ebyteRestoreBus();
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json", "{\"ok\":false}");
+        return;
+    }
+
+    uint16_t baudCode = 0;
+    rs485ConfigReadRegister(foundAddr, 0x000D, baudCode,
+                            ebyteReadTimeoutMs(baud));
+    uint32_t reportedBaud = ebyteBaudFromCode((uint8_t)baudCode);
+    if (reportedBaud == 0) reportedBaud = baud;
+
+    uint16_t parityReg = 0;
+    uint8_t reportedParity = parityCode;
+    if (rs485ConfigReadRegister(foundAddr, 0x000E, parityReg,
+                                ebyteReadTimeoutMs(baud))) {
+        if (parityReg <= 2) {
+            reportedParity = (uint8_t)parityReg;
+        }
+    }
+
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     Console::info(TAG_EB, "Capteur détecté — adresse=" + String(foundAddr)
-                          + " baud=" + String(reportedBaud));
+                          + " baud=" + String(reportedBaud)
+                          + " parité=" + ebyteParityName(reportedParity));
 
     String json = "{\"ok\":true,\"address\":" + String(foundAddr)
-                + ",\"baudrate\":" + String(reportedBaud) + "}";
+                + ",\"baudrate\":" + String(reportedBaud)
+                + ",\"parity\":" + String(reportedParity)
+                + ",\"parityName\":\"" + String(ebyteParityName(reportedParity)) + "\"}";
     request->send(200, "application/json", json);
 }
 
@@ -1088,115 +1137,125 @@ void WebServer::handleRS485ReadEbyte(AsyncWebServerRequest *request)
 
 void WebServer::handleRS485ProgramEbyte(AsyncWebServerRequest *request)
 {
-    if (!request->hasParam("to")) {
+    const bool hasAll =
+        request->hasParam("from") && request->hasParam("fromBaud")
+        && request->hasParam("fromParity") && request->hasParam("to")
+        && request->hasParam("baud") && request->hasParam("parity");
+
+    if (!hasAll) {
         request->send(400, "application/json",
-                      "{\"ok\":false,\"error\":\"Paramètre 'to' requis\"}");
+                      "{\"ok\":false,\"error\":\"Paramètres from/fromBaud/fromParity/to/baud/parity requis\"}");
         return;
     }
 
-    uint8_t toAddr = request->getParam("to")->value().toInt();
-    if (toAddr < 1 || toAddr > 16) {
+    uint8_t  fromAddr   = (uint8_t)request->getParam("from")->value().toInt();
+    uint32_t fromBaud   = (uint32_t)request->getParam("fromBaud")->value().toInt();
+    uint8_t  fromParity = (uint8_t)request->getParam("fromParity")->value().toInt();
+    uint8_t  toAddr     = (uint8_t)request->getParam("to")->value().toInt();
+    uint32_t toBaud     = (uint32_t)request->getParam("baud")->value().toInt();
+    uint8_t  toParity   = (uint8_t)request->getParam("parity")->value().toInt();
+
+    int toBaudCode = ebyteCodeFromBaud(toBaud);
+
+    if (fromAddr < 1 || fromAddr > 16 || toAddr < 1 || toAddr > 16
+            || !ebyteBaudAllowed(fromBaud) || !ebyteBaudAllowed(toBaud)
+            || fromParity > 2 || toParity > 2 || toBaudCode < 0) {
         request->send(400, "application/json",
-                      "{\"ok\":false,\"error\":\"Adresse cible hors bornes (1–16)\"}");
+                      "{\"ok\":false,\"error\":\"Paramètres de programmation invalides\"}");
         return;
     }
 
     SoilSensorRS485::setMaintenanceMode(true);
 
-    // ── Étape 1 : trouver le capteur ────────────────────────────────────
-    uint8_t foundAddr = 0;
-    uint32_t foundBaud = 0;
+    // ── Étape 1 : parler au capteur avec la config lue ───────────────
+    ebyteOpen(fromBaud, fromParity);
 
-    foundAddr = ebyteScan(9600);
-    if (foundAddr != 0) {
-        foundBaud = 9600;
-    } else {
-        foundAddr = ebyteScan(4800);
-        if (foundAddr != 0) {
-            foundBaud = 4800;
-        }
-    }
-
-    if (foundAddr == 0) {
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    uint16_t seenAddr = 0;
+    if (!rs485ConfigReadRegister(fromAddr, 0x000C, seenAddr, 200)) {
+        ebyteRestoreBus();
         SoilSensorRS485::setMaintenanceMode(false);
-
         request->send(200, "application/json",
-                      "{\"ok\":false,\"error\":\"Capteur non détecté — programmation annulée\"}");
+                      "{\"ok\":false,\"error\":\"Capteur non détecté à l'adresse "
+                      + String(fromAddr) + " — relancez une lecture\"}");
         return;
     }
 
-    bool needBaudChange = (foundBaud != 4800);
-    bool needAddrChange = (foundAddr != toAddr);
+    delay(80);
 
-    // ── Étape 2 : changer le baud rate vers 4800 si nécessaire ──────────
-    //
-    // Écriture 0x10 (le 0x06 n'obtient pas d'écho sur ce capteur). On attend
-    // la réponse à l'ancienne vitesse, puis on bascule Serial1 à 4800.
-    // Si l'écho manque, la lecture de vérif tranche.
-    if (needBaudChange) {
-        bool echoOk = ebyteWriteRegister(foundAddr, 0x000D, 2);  // code 2 = 4800
+    uint8_t  workingAddr   = fromAddr;
+    uint32_t workingBaud   = fromBaud;
+    uint8_t  workingParity = fromParity;
 
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
-        delay(50);
+    bool needAddrChange   = (fromAddr != toAddr);
+    bool needParityChange = (fromParity != toParity);
+    bool needBaudChange   = (fromBaud != toBaud);
 
-        uint16_t verifyVal = 0;
-        bool baudOk = analogInputReadRegister(foundAddr, 0x000C, verifyVal, 200);
-        if (!baudOk) {
-            Serial1.end();
-            Serial1.begin(foundBaud, SERIAL_8N1, 18, 17);
-            delay(20);
-            uint16_t stillThere = 0;
-            bool stillAtOld = analogInputReadRegister(foundAddr, 0x000C, stillThere, 200);
-
-            Serial1.end();
-            Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    // ── Étape 2 : adresse, puis pause EEPROM avant toute autre trame ─
+    // Une lecture trop tôt sur le bus peut empêcher l'écriture de tenir.
+    if (needAddrChange) {
+        bool addrOk = false;
+        for (int attempt = 0; attempt < 3 && !addrOk; attempt++) {
+            ebyteWriteRegister(fromAddr, 0x000C, (uint16_t)toAddr);
+            delay(200);
+            uint16_t v = 0;
+            if (rs485ConfigReadRegister(toAddr, 0x000C, v, 200) && v == toAddr) {
+                addrOk = true;
+            }
+        }
+        if (!addrOk) {
+            uint16_t still = 0;
+            bool stillOld = rs485ConfigReadRegister(fromAddr, 0x000C, still, 200);
+            ebyteRestoreBus();
             SoilSensorRS485::setMaintenanceMode(false);
-
-            if (stillAtOld) {
-                Console::warn(TAG_EB, "Capteur toujours à " + String(foundBaud)
-                                  + (echoOk ? " malgré l'écho" : " (pas d'écho)"));
+            if (stillOld) {
+                Console::warn(TAG_EB, "Adresse inchangée (" + String(fromAddr) + ")");
                 request->send(200, "application/json",
-                              "{\"ok\":false,\"error\":\"Le capteur est toujours à "
-                              + String(foundBaud) + " bauds\"}");
+                              "{\"ok\":false,\"error\":\"L'adresse n'a pas changé (toujours "
+                              + String(fromAddr) + ")\"}");
             } else {
-                Console::warn(TAG_EB, "Capteur muet à 4800 et à " + String(foundBaud));
+                Console::warn(TAG_EB, "Vérification échouée après écriture d'adresse");
                 request->send(200, "application/json",
-                              "{\"ok\":false,\"error\":\"Changement de baud rate envoyé mais le capteur ne répond ni à 4800 ni à "
-                              + String(foundBaud) + " bauds\"}");
+                              "{\"ok\":false,\"error\":\"Commandes envoyées mais vérification échouée — relancez une lecture pour vérifier\"}");
             }
             return;
         }
-        Console::info(TAG_EB, "Baud rate changé de " + String(foundBaud) + " vers 4800 (vérifié)");
+        Console::info(TAG_EB, "Adresse changée de " + String(fromAddr)
+                              + " vers " + String(toAddr));
+        workingAddr = toAddr;
     }
 
-    // ── Étape 3 : changer l'adresse si nécessaire ───────────────────────
-    // Même 0x10. Si l'écho manque, l'étape 4 tranche par lecture.
-    if (needAddrChange) {
-        bool ok = ebyteWriteRegister(foundAddr, 0x000C, (uint16_t)toAddr);
-        if (ok) {
-            Console::info(TAG_EB, "Adresse changée de " + String(foundAddr) + " vers " + String(toAddr));
-        } else {
-            Console::warn(TAG_EB, "Pas d'écho 0x10 pour l'adresse " + String(toAddr)
-                              + " — vérification par lecture");
-        }
+    // ── Étape 3 : parité, puis bascule Serial1 si elle a changé ──────
+    if (needParityChange) {
+        ebyteWriteRegister(workingAddr, 0x000E, (uint16_t)toParity);
+        delay(200);
+        workingParity = toParity;
+        ebyteOpen(workingBaud, workingParity);
     }
 
-    // ── Étape 4 : vérification — lire l'adresse à la nouvelle adresse ───
+    // ── Étape 4 : baud en dernier (l'écho 0x10 arrive encore à l'ancienne vitesse)
+    if (needBaudChange) {
+        ebyteWriteRegister(workingAddr, 0x000D, (uint16_t)toBaudCode);
+        delay(200);
+        workingBaud = toBaud;
+        ebyteOpen(workingBaud, workingParity);
+    }
+
+    // ── Étape 5 : vérification à la config cible ─────────────────────
     delay(50);
     uint16_t verifyAddr = 0;
-    bool verified = analogInputReadRegister(toAddr, 0x000C, verifyAddr);
+    bool verified = rs485ConfigReadRegister(toAddr, 0x000C, verifyAddr, 200);
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     if (verified && verifyAddr == toAddr) {
-        String msg = "Capteur configuré — adresse " + String(toAddr) + ", 4800 bauds";
-        if (!needBaudChange && !needAddrChange) {
-            msg = "Capteur déjà configuré à l'adresse " + String(toAddr) + " en 4800 bauds";
+        String msg = "Capteur configuré — adresse " + String(toAddr)
+                   + ", " + String(toBaud) + " bauds, parité "
+                   + ebyteParityName(toParity);
+        if (!needAddrChange && !needBaudChange && !needParityChange) {
+            msg = "Capteur déjà configuré à l'adresse " + String(toAddr)
+                + ", " + String(toBaud) + " bauds, parité "
+                + ebyteParityName(toParity);
         }
         Console::info(TAG_EB, msg);
         request->send(200, "application/json",
@@ -1213,57 +1272,413 @@ void WebServer::handleRS485ProgramEbyte(AsyncWebServerRequest *request)
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Capteurs sol ZTS-3000 — lecture / programmation adresse + baud
+//
+// Registres : 0x07D0 adresse (1–254), 0x07D1 baud (0=2400, 1=4800, 2=9600).
+// Écriture 0x06. Pas de registre de parité documenté (8N1 usine).
+// ═════════════════════════════════════════════════════════════════════════════
+
+static const uint32_t SOIL_BAUD_TABLE[] = { 2400, 4800, 9600 };
+static const size_t   SOIL_BAUD_TABLE_SIZE = sizeof(SOIL_BAUD_TABLE) / sizeof(SOIL_BAUD_TABLE[0]);
+
+static int soilCodeFromBaud(uint32_t baud)
+{
+    for (size_t i = 0; i < SOIL_BAUD_TABLE_SIZE; i++) {
+        if (SOIL_BAUD_TABLE[i] == baud) return (int)i;
+    }
+    return -1;
+}
+
+static uint32_t soilBaudFromCode(uint16_t code)
+{
+    if (code < SOIL_BAUD_TABLE_SIZE) return SOIL_BAUD_TABLE[code];
+    return 0;
+}
+
+static bool soilBaudAllowed(uint32_t baud)
+{
+    return soilCodeFromBaud(baud) >= 0;
+}
+
+static uint8_t soilScan(uint32_t baudRate, uint32_t serialConfig,
+                        uint8_t addrMin, uint8_t addrMax)
+{
+    Serial1.end();
+    Serial1.begin(baudRate, serialConfig, RS485_RX_PIN, RS485_TX_PIN);
+    delay(20);
+
+    const unsigned long timeoutMs = ebyteReadTimeoutMs(baudRate);
+    uint16_t value = 0;
+
+    for (uint16_t addr = addrMin; addr <= addrMax; addr++) {
+        yield();
+        if (!rs485ConfigReadRegister((uint8_t)addr, 0x07D0, value, timeoutMs)) {
+            continue;
+        }
+        if (value < 1 || value > 254) {
+            continue;
+        }
+
+        uint16_t ebyteAddr = 0;
+        if (rs485ConfigReadRegister((uint8_t)addr, 0x000C, ebyteAddr, timeoutMs)
+                && ebyteAddr == addr) {
+            continue;
+        }
+
+        uint16_t analogAddr = 0;
+        if (rs485ConfigReadRegister((uint8_t)addr, 0x4000, analogAddr, timeoutMs)
+                && analogAddr == addr) {
+            continue;
+        }
+
+        return (uint8_t)addr;
+    }
+    return 0;
+}
+
+void WebServer::handleRS485ReadSoil(AsyncWebServerRequest *request)
+{
+    uint32_t baud = 4800;
+    uint8_t  parityCode = 0;
+    uint16_t addrFrom = 1;
+    uint16_t addrTo = 15;
+
+    if (request->hasParam("baud")) {
+        baud = (uint32_t)request->getParam("baud")->value().toInt();
+    }
+    if (request->hasParam("parity")) {
+        parityCode = (uint8_t)request->getParam("parity")->value().toInt();
+    }
+    if (request->hasParam("from")) {
+        addrFrom = (uint16_t)request->getParam("from")->value().toInt();
+    }
+    if (request->hasParam("to")) {
+        addrTo = (uint16_t)request->getParam("to")->value().toInt();
+    }
+
+    if (!soilBaudAllowed(baud) || parityCode > 2
+            || addrFrom < 1 || addrTo < addrFrom || addrTo > 254
+            || (addrTo - addrFrom + 1) > 16) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres de scan invalides\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    uint8_t foundAddr = soilScan(baud, ebyteSerialConfig(parityCode),
+                                 (uint8_t)addrFrom, (uint8_t)addrTo);
+
+    if (foundAddr == 0) {
+        ebyteRestoreBus();
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json", "{\"ok\":false}");
+        return;
+    }
+
+    uint16_t baudReg = 0;
+    uint32_t reportedBaud = baud;
+    if (rs485ConfigReadRegister(foundAddr, 0x07D1, baudReg,
+                                ebyteReadTimeoutMs(baud))) {
+        uint32_t decoded = soilBaudFromCode(baudReg);
+        if (decoded != 0) reportedBaud = decoded;
+    }
+
+    ebyteRestoreBus();
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    Console::info(TAG, "Sol détecté — adresse=" + String(foundAddr)
+                       + " baud=" + String(reportedBaud));
+
+    String json = "{\"ok\":true,\"address\":" + String(foundAddr)
+                + ",\"baudrate\":" + String(reportedBaud)
+                + ",\"parity\":" + String(parityCode)
+                + ",\"parityName\":\"" + String(ebyteParityName(parityCode)) + "\"}";
+    request->send(200, "application/json", json);
+}
+
+void WebServer::handleRS485ProgramSoil(AsyncWebServerRequest *request)
+{
+    const bool hasAll =
+        request->hasParam("from") && request->hasParam("fromBaud")
+        && request->hasParam("fromParity") && request->hasParam("to")
+        && request->hasParam("baud") && request->hasParam("parity");
+
+    if (!hasAll) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres from/fromBaud/fromParity/to/baud/parity requis\"}");
+        return;
+    }
+
+    uint8_t  fromAddr   = (uint8_t)request->getParam("from")->value().toInt();
+    uint32_t fromBaud   = (uint32_t)request->getParam("fromBaud")->value().toInt();
+    uint8_t  fromParity = (uint8_t)request->getParam("fromParity")->value().toInt();
+    uint8_t  toAddr     = (uint8_t)request->getParam("to")->value().toInt();
+    uint32_t toBaud     = (uint32_t)request->getParam("baud")->value().toInt();
+    uint8_t  toParity   = (uint8_t)request->getParam("parity")->value().toInt();
+    int      toBaudCode = soilCodeFromBaud(toBaud);
+
+    if (fromAddr < 1 || fromAddr > 15 || toAddr < 1 || toAddr > 15
+            || !soilBaudAllowed(fromBaud) || toBaudCode < 0
+            || fromParity > 2 || toParity > 2) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres de programmation invalides\"}");
+        return;
+    }
+
+    SoilSensorRS485::setMaintenanceMode(true);
+    ebyteOpen(fromBaud, fromParity);
+
+    uint16_t seen = 0;
+    if (!rs485ConfigReadRegister(fromAddr, 0x07D0, seen, 200)
+            && !rs485ConfigReadRegister(fromAddr, 0x0000, seen, 200)) {
+        ebyteRestoreBus();
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Capteur non détecté à l'adresse "
+                      + String(fromAddr) + " — relancez une lecture\"}");
+        return;
+    }
+
+    delay(80);
+
+    uint8_t  workingAddr   = fromAddr;
+    uint32_t workingBaud   = fromBaud;
+    uint8_t  workingParity = fromParity;
+    bool needAddrChange = (fromAddr != toAddr);
+    bool needBaudChange = (fromBaud != toBaud);
+
+    if (needAddrChange) {
+        bool addrOk = false;
+        for (int attempt = 0; attempt < 3 && !addrOk; attempt++) {
+            rs485ConfigWriteRegister(fromAddr, 0x07D0, (uint16_t)toAddr);
+            delay(200);
+            uint16_t v = 0;
+            if (rs485ConfigReadRegister(toAddr, 0x07D0, v, 200) && v == toAddr) {
+                addrOk = true;
+            }
+        }
+        if (!addrOk) {
+            ebyteRestoreBus();
+            SoilSensorRS485::setMaintenanceMode(false);
+            request->send(200, "application/json",
+                          "{\"ok\":false,\"error\":\"L'adresse n'a pas changé (toujours "
+                          + String(fromAddr) + ")\"}");
+            return;
+        }
+        workingAddr = toAddr;
+    }
+
+    if (needBaudChange) {
+        rs485ConfigWriteRegister(workingAddr, 0x07D1, (uint16_t)toBaudCode);
+        delay(200);
+        workingBaud = toBaud;
+        ebyteOpen(workingBaud, workingParity);
+    }
+
+    delay(50);
+    uint16_t verifyAddr = 0;
+    bool verified = rs485ConfigReadRegister(toAddr, 0x07D0, verifyAddr, 200);
+
+    ebyteRestoreBus();
+    SoilSensorRS485::setMaintenanceMode(false);
+
+    if (verified && verifyAddr == toAddr) {
+        String msg = "Capteur configuré — adresse " + String(toAddr)
+                   + ", " + String(toBaud) + " bauds";
+        Console::info(TAG, msg);
+        request->send(200, "application/json",
+                      "{\"ok\":true,\"msg\":\"" + msg + "\"}");
+    } else {
+        request->send(200, "application/json",
+                      "{\"ok\":false,\"error\":\"Commandes envoyées mais vérification échouée — relancez une lecture pour vérifier\"}");
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Analog Input 8CH (B) — configuration via RS485
+//
+// Fonctions utilitaires et handlers pour lire la configuration actuelle
+// du module Waveshare Modbus RTU Analog Input 8CH (B) et le reprogrammer
+// (baud rate + adresse Modbus).
+//
+// Protocole : Modbus RTU standard.
+//   - Lecture adresse   : fonction 0x03, registre 0x4000
+//   - Lecture version   : fonction 0x03, registre 0x8000
+//   - Lecture/écriture du mode d'un canal : registre 0x1000 + (canal - 1)
+//   - Écriture baud rate: fonction 0x06, registre 0x2000
+//   - Écriture adresse  : fonction 0x06, registre 0x4000
+//   - Adresse broadcast : 0x00
+//
+// Réutilise rs485ConfigCrc16 / rs485ConfigDrainRx / rs485ConfigTransaction /
+// rs485ConfigReadRegister / rs485ConfigWriteRegister.
+//
+// Ref : https://www.waveshare.com/wiki/Modbus_RTU_Analog_Input_8CH_(B)
+// ═════════════════════════════════════════════════════════════════════════════
+
+static const char* TAG_AI = "AnalogInput";
+
+static const uint32_t AI_BAUD_TABLE[] = {
+    4800, 9600, 19200, 38400, 57600, 115200, 128000, 256000
+};
+static const size_t AI_BAUD_TABLE_SIZE = sizeof(AI_BAUD_TABLE) / sizeof(AI_BAUD_TABLE[0]);
+
+static int analogCodeFromBaud(uint32_t baud)
+{
+    for (size_t i = 0; i < AI_BAUD_TABLE_SIZE; i++) {
+        if (AI_BAUD_TABLE[i] == baud) return (int)i;
+    }
+    return -1;
+}
+
+static uint32_t analogBaudFromCode(uint8_t code)
+{
+    if (code < AI_BAUD_TABLE_SIZE) return AI_BAUD_TABLE[code];
+    return 0;
+}
+
+static bool analogBaudAllowed(uint32_t baud)
+{
+    return analogCodeFromBaud(baud) >= 0;
+}
+
+// Wiki 0x2000 : poids fort = parité (0=aucune, 1=paire, 2=impaire),
+// poids faible = code baud. L'UI utilise 0=aucune, 1=impaire, 2=paire.
+static uint8_t analogParityRegFromUi(uint8_t ui)
+{
+    if (ui == 1) return 2;
+    if (ui == 2) return 1;
+    return 0;
+}
+
+static uint8_t analogParityUiFromReg(uint8_t reg)
+{
+    if (reg == 1) return 2;
+    if (reg == 2) return 1;
+    return 0;
+}
+
+static bool analogIsOtherFamily(uint8_t addr, unsigned long timeoutMs)
+{
+    uint16_t v = 0;
+    if (rs485ConfigReadRegister(addr, 0x000C, v, timeoutMs) && v == addr) {
+        return true;
+    }
+    if (rs485ConfigReadRegister(addr, 0x07D0, v, timeoutMs) && v == addr) {
+        return true;
+    }
+    return false;
+}
+
+// Broadcast d'abord (renvoie l'adresse réelle), puis plage demandée.
+static uint8_t analogInputScan(uint32_t baudRate, uint32_t serialConfig,
+                               uint8_t addrMin, uint8_t addrMax, bool tryBroadcast)
+{
+    Serial1.end();
+    Serial1.begin(baudRate, serialConfig, RS485_RX_PIN, RS485_TX_PIN);
+    delay(20);
+
+    uint16_t readAddr = 0;
+
+    if (tryBroadcast && rs485ConfigReadRegister(0x00, 0x4000, readAddr, 50)
+            && readAddr >= 1 && readAddr <= 254
+            && !analogIsOtherFamily((uint8_t)readAddr, 50)) {
+        Console::info(TAG_AI, "Module trouvé via broadcast à " + String(baudRate)
+                              + " bauds — adresse " + String(readAddr));
+        return (uint8_t)readAddr;
+    }
+
+    for (uint16_t addr = addrMin; addr <= addrMax; addr++) {
+        yield();
+        if (!rs485ConfigReadRegister((uint8_t)addr, 0x4000, readAddr, 50)) {
+            continue;
+        }
+        if (readAddr != addr) {
+            continue;
+        }
+        if (analogIsOtherFamily((uint8_t)addr, 50)) {
+            continue;
+        }
+        Console::info(TAG_AI, "Module trouvé à l'adresse " + String(addr)
+                              + " (" + String(baudRate) + " bauds)");
+        return (uint8_t)addr;
+    }
+
+    return 0;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Handler POST /rs485/read-analog — lecture de la configuration actuelle
 // ═════════════════════════════════════════════════════════════════════════════
 
 void WebServer::handleRS485ReadAnalog(AsyncWebServerRequest *request)
 {
-    SoilSensorRS485::setMaintenanceMode(true);
+    uint32_t baud = 9600;
+    uint8_t  parityCode = 0;
+    uint16_t addrFrom = 1;
+    uint16_t addrTo = 30;
 
-    uint8_t foundAddr = 0;
-    uint32_t foundBaud = 0;
-
-    // Essai à 9600 d'abord (défaut usine), puis 4800 (valeur cible)
-    foundAddr = analogInputScan(9600);
-    if (foundAddr != 0) {
-        foundBaud = 9600;
-    } else {
-        foundAddr = analogInputScan(4800);
-        if (foundAddr != 0) {
-            foundBaud = 4800;
-        }
+    if (request->hasParam("baud")) {
+        baud = (uint32_t)request->getParam("baud")->value().toInt();
+    }
+    if (request->hasParam("parity")) {
+        parityCode = (uint8_t)request->getParam("parity")->value().toInt();
+    }
+    if (request->hasParam("from")) {
+        addrFrom = (uint16_t)request->getParam("from")->value().toInt();
+    }
+    if (request->hasParam("to")) {
+        addrTo = (uint16_t)request->getParam("to")->value().toInt();
     }
 
-    if (foundAddr == 0) {
-        // Restaurer Serial1 à 4800 pour les capteurs sol
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
-        SoilSensorRS485::setMaintenanceMode(false);
-
-        Console::warn(TAG_AI, "Aucun module Analog Input détecté (scan 1-30, 9600+4800)");
-        request->send(200, "application/json",
-                      "{\"ok\":false,\"error\":\"Aucun module détecté (adresses 1–30, 9600 et 4800 bauds)\"}");
+    if (!analogBaudAllowed(baud) || parityCode > 2
+            || addrFrom < 1 || addrTo < addrFrom || addrTo > 254
+            || (addrTo - addrFrom + 1) > 30) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Paramètres de scan invalides\"}");
         return;
     }
 
-    // Lire la version firmware (registre 0x8000)
+    SoilSensorRS485::setMaintenanceMode(true);
+
+    const bool tryBroadcast = (addrFrom == 1);
+    uint8_t foundAddr = analogInputScan(baud, ebyteSerialConfig(parityCode),
+                                        (uint8_t)addrFrom, (uint8_t)addrTo,
+                                        tryBroadcast);
+
+    if (foundAddr == 0) {
+        ebyteRestoreBus();
+        SoilSensorRS485::setMaintenanceMode(false);
+        request->send(200, "application/json", "{\"ok\":false}");
+        return;
+    }
+
     uint16_t rawVersion = 0;
-    analogInputReadRegister(foundAddr, 0x8000, rawVersion);
+    rs485ConfigReadRegister(foundAddr, 0x8000, rawVersion, 200);
     String versionStr = "V" + String(rawVersion / 100) + "."
                         + String((rawVersion % 100) / 10)
                         + String(rawVersion % 10);
 
-    // Restaurer Serial1 à 4800 pour les capteurs sol
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    uint16_t uart = 0;
+    uint8_t reportedParity = parityCode;
+    uint32_t reportedBaud = baud;
+    if (rs485ConfigReadRegister(foundAddr, 0x2000, uart, 200)) {
+        uint32_t decoded = analogBaudFromCode((uint8_t)(uart & 0xFF));
+        if (decoded != 0) reportedBaud = decoded;
+        reportedParity = analogParityUiFromReg((uint8_t)(uart >> 8));
+    }
+
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     Console::info(TAG_AI, "Module détecté — adresse=" + String(foundAddr)
-                          + " baud=" + String(foundBaud)
+                          + " baud=" + String(reportedBaud)
                           + " version=" + versionStr);
 
     String json = "{\"ok\":true,\"address\":" + String(foundAddr)
-                + ",\"baudrate\":" + String(foundBaud)
+                + ",\"baudrate\":" + String(reportedBaud)
+                + ",\"parity\":" + String(reportedParity)
+                + ",\"parityName\":\"" + String(ebyteParityName(reportedParity)) + "\""
                 + ",\"version\":\"" + versionStr + "\"}";
     request->send(200, "application/json", json);
 }
@@ -1274,120 +1689,104 @@ void WebServer::handleRS485ReadAnalog(AsyncWebServerRequest *request)
 
 void WebServer::handleRS485ProgramAnalog(AsyncWebServerRequest *request)
 {
-    if (!request->hasParam("to")) {
+    const bool hasAll =
+        request->hasParam("from") && request->hasParam("fromBaud")
+        && request->hasParam("fromParity") && request->hasParam("to")
+        && request->hasParam("baud") && request->hasParam("parity");
+
+    if (!hasAll) {
         request->send(400, "application/json",
-                      "{\"ok\":false,\"error\":\"Paramètre 'to' requis\"}");
+                      "{\"ok\":false,\"error\":\"Paramètres from/fromBaud/fromParity/to/baud/parity requis\"}");
         return;
     }
 
-    uint8_t toAddr = request->getParam("to")->value().toInt();
-    if (toAddr < 16 || toAddr > 30) {
+    uint8_t  fromAddr   = (uint8_t)request->getParam("from")->value().toInt();
+    uint32_t fromBaud   = (uint32_t)request->getParam("fromBaud")->value().toInt();
+    uint8_t  fromParity = (uint8_t)request->getParam("fromParity")->value().toInt();
+    uint8_t  toAddr     = (uint8_t)request->getParam("to")->value().toInt();
+    uint32_t toBaud     = (uint32_t)request->getParam("baud")->value().toInt();
+    uint8_t  toParity   = (uint8_t)request->getParam("parity")->value().toInt();
+    int      toBaudCode = analogCodeFromBaud(toBaud);
+
+    if (fromAddr < 1 || toAddr < 1 || toAddr > 30
+            || !analogBaudAllowed(fromBaud) || toBaudCode < 0
+            || fromParity > 2 || toParity > 2) {
         request->send(400, "application/json",
-                      "{\"ok\":false,\"error\":\"Adresse cible hors bornes (16–30)\"}");
+                      "{\"ok\":false,\"error\":\"Paramètres de programmation invalides\"}");
         return;
     }
 
     SoilSensorRS485::setMaintenanceMode(true);
+    ebyteOpen(fromBaud, fromParity);
 
-    // ── Étape 1 : trouver le module ─────────────────────────────────────
-    uint8_t foundAddr = 0;
-    uint32_t foundBaud = 0;
-
-    foundAddr = analogInputScan(9600);
-    if (foundAddr != 0) {
-        foundBaud = 9600;
-    } else {
-        foundAddr = analogInputScan(4800);
-        if (foundAddr != 0) {
-            foundBaud = 4800;
-        }
-    }
-
-    if (foundAddr == 0) {
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    uint16_t seen = 0;
+    if (!rs485ConfigReadRegister(fromAddr, 0x4000, seen, 200)) {
+        ebyteRestoreBus();
         SoilSensorRS485::setMaintenanceMode(false);
-
         request->send(200, "application/json",
-                      "{\"ok\":false,\"error\":\"Module non détecté — programmation annulée\"}");
+                      "{\"ok\":false,\"error\":\"Module non détecté à l'adresse "
+                      + String(fromAddr) + " — relancez une lecture\"}");
         return;
     }
 
-    bool needBaudChange = (foundBaud != 4800);
-    bool needAddrChange = (foundAddr != toAddr);
+    delay(80);
 
-    // ── Étape 2 : changer le baud rate vers 4800 si nécessaire ──────────
-    //
-    // Le module bascule immédiatement après réception de la commande.
-    // L'écho de confirmation arrive donc à la NOUVELLE vitesse (4800),
-    // illisible si Serial1 est encore à l'ancienne (9600).
-    // → On envoie la commande sans vérifier l'écho, on bascule Serial1
-    //   à 4800, puis on vérifie en lisant un registre.
-    if (needBaudChange) {
-        uint8_t cmdBaud[8];
-        cmdBaud[0] = 0x00;   // broadcast
-        cmdBaud[1] = 0x06;   // Write Single Register
-        cmdBaud[2] = 0x20;   // registre 0x2000 (UART parameter)
-        cmdBaud[3] = 0x00;
-        cmdBaud[4] = 0x00;   // pas de parité
-        cmdBaud[5] = 0x00;   // code 0 = 4800 bauds
-        uint16_t crc = analogInputCrc16(cmdBaud, 6);
-        cmdBaud[6] = crc & 0xFF;
-        cmdBaud[7] = (crc >> 8) & 0xFF;
+    uint8_t  workingAddr   = fromAddr;
+    uint32_t workingBaud   = fromBaud;
+    uint8_t  workingParity = fromParity;
+    bool needAddrChange   = (fromAddr != toAddr);
+    bool needUartChange   = (fromBaud != toBaud) || (fromParity != toParity);
 
-        analogInputDrainRx();
-        Serial1.write(cmdBaud, 8);
-        Serial1.flush();
-
-        // Basculer Serial1 à 4800 et vérifier que le module répond
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
-        delay(50);
-
-        uint16_t verifyVal = 0;
-        bool baudOk = analogInputReadRegister(foundAddr, 0x4000, verifyVal);
-        if (!baudOk) {
-            SoilSensorRS485::setMaintenanceMode(false);
-
-            Console::warn(TAG_AI, "Baud rate envoyé mais module muet à 4800");
-            request->send(200, "application/json",
-                          "{\"ok\":false,\"error\":\"Changement de baud rate envoyé mais le module ne répond pas à 4800\"}");
-            return;
-        }
-        Console::info(TAG_AI, "Baud rate changé de " + String(foundBaud) + " vers 4800 (vérifié)");
-    }
-
-    // ── Étape 3 : changer l'adresse si nécessaire ───────────────────────
     if (needAddrChange) {
-        bool ok = analogInputWriteRegister(0x00, 0x4000, (uint16_t)toAddr);
+        bool ok = rs485ConfigWriteRegister(fromAddr, 0x4000, (uint16_t)toAddr);
         if (!ok) {
-            Serial1.end();
-            Serial1.begin(4800, SERIAL_8N1, 18, 17);
+            ok = rs485ConfigWriteRegister(0x00, 0x4000, (uint16_t)toAddr);
+        }
+        delay(200);
+        uint16_t v = 0;
+        if (!ok && !(rs485ConfigReadRegister(toAddr, 0x4000, v, 200) && v == toAddr)) {
+            ebyteRestoreBus();
             SoilSensorRS485::setMaintenanceMode(false);
-
-            Console::warn(TAG_AI, "Échec du changement d'adresse vers " + String(toAddr));
             request->send(200, "application/json",
-                          "{\"ok\":false,\"error\":\"Baud rate OK mais échec du changement d'adresse\"}");
+                          "{\"ok\":false,\"error\":\"L'adresse n'a pas changé (toujours "
+                          + String(fromAddr) + ")\"}");
             return;
         }
-        Console::info(TAG_AI, "Adresse changée de " + String(foundAddr) + " vers " + String(toAddr));
+        workingAddr = toAddr;
     }
 
-    // ── Étape 4 : vérification — lire l'adresse à la nouvelle adresse ───
-    delay(50);
-    uint16_t verifyAddr = 0;
-    bool verified = analogInputReadRegister(toAddr, 0x4000, verifyAddr);
+    // UART 0x2000 : l'écho arrive à la NOUVELLE vitesse — on n'attend pas l'écho.
+    if (needUartChange) {
+        uint8_t cmd[8];
+        cmd[0] = workingAddr;
+        cmd[1] = 0x06;
+        cmd[2] = 0x20;
+        cmd[3] = 0x00;
+        cmd[4] = analogParityRegFromUi(toParity);
+        cmd[5] = (uint8_t)toBaudCode;
+        uint16_t crc = rs485ConfigCrc16(cmd, 6);
+        cmd[6] = crc & 0xFF;
+        cmd[7] = (crc >> 8) & 0xFF;
+        rs485ConfigDrainRx();
+        Serial1.write(cmd, 8);
+        Serial1.flush();
+        delay(50);
+        workingBaud   = toBaud;
+        workingParity = toParity;
+        ebyteOpen(workingBaud, workingParity);
+        delay(50);
+    }
 
-    // Restaurer Serial1 à 4800 pour les capteurs sol
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    uint16_t verifyAddr = 0;
+    bool verified = rs485ConfigReadRegister(toAddr, 0x4000, verifyAddr, 200);
+
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     if (verified && verifyAddr == toAddr) {
-        String msg = "Module configuré — adresse " + String(toAddr) + ", 4800 bauds";
-        if (!needBaudChange && !needAddrChange) {
-            msg = "Module déjà configuré à l'adresse " + String(toAddr) + " en 4800 bauds";
-        }
+        String msg = "Module configuré — adresse " + String(toAddr)
+                   + ", " + String(toBaud) + " bauds, parité "
+                   + ebyteParityName(toParity);
         Console::info(TAG_AI, msg);
         request->send(200, "application/json",
                       "{\"ok\":true,\"msg\":\"" + msg + "\"}");
@@ -1433,18 +1832,28 @@ void WebServer::handleRS485ReadAnalogChannel(AsyncWebServerRequest *request)
         return;
     }
 
-    SoilSensorRS485::setMaintenanceMode(true);
+    uint32_t baud = 4800;
+    uint8_t  parityCode = 0;
+    if (request->hasParam("baud")) {
+        baud = (uint32_t)request->getParam("baud")->value().toInt();
+    }
+    if (request->hasParam("parity")) {
+        parityCode = (uint8_t)request->getParam("parity")->value().toInt();
+    }
+    if (!analogBaudAllowed(baud) || parityCode > 2) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Baud ou parité invalides\"}");
+        return;
+    }
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
-    delay(20);
+    SoilSensorRS485::setMaintenanceMode(true);
+    ebyteOpen(baud, parityCode);
 
     uint16_t regAddr = 0x1000 + (channel - 1);
     uint16_t modeValue = 0;
-    bool ok = analogInputReadRegister(addr, regAddr, modeValue, 200);
+    bool ok = rs485ConfigReadRegister(addr, regAddr, modeValue, 200);
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     if (!ok) {
@@ -1504,19 +1913,29 @@ void WebServer::handleRS485WriteAnalogChannel(AsyncWebServerRequest *request)
         return;
     }
 
-    SoilSensorRS485::setMaintenanceMode(true);
+    uint32_t baud = 4800;
+    uint8_t  parityCode = 0;
+    if (request->hasParam("baud")) {
+        baud = (uint32_t)request->getParam("baud")->value().toInt();
+    }
+    if (request->hasParam("parity")) {
+        parityCode = (uint8_t)request->getParam("parity")->value().toInt();
+    }
+    if (!analogBaudAllowed(baud) || parityCode > 2) {
+        request->send(400, "application/json",
+                      "{\"ok\":false,\"error\":\"Baud ou parité invalides\"}");
+        return;
+    }
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
-    delay(20);
+    SoilSensorRS485::setMaintenanceMode(true);
+    ebyteOpen(baud, parityCode);
 
     uint16_t regAddr = 0x1000 + (channel - 1);
 
-    bool writeOk = analogInputWriteRegister(addr, regAddr, newMode);
+    bool writeOk = rs485ConfigWriteRegister(addr, regAddr, newMode);
 
     if (!writeOk) {
-        Serial1.end();
-        Serial1.begin(4800, SERIAL_8N1, 18, 17);
+        ebyteRestoreBus();
         SoilSensorRS485::setMaintenanceMode(false);
 
         Console::warn(TAG_AI, "Échec écriture mode canal " + String(channel));
@@ -1528,10 +1947,9 @@ void WebServer::handleRS485WriteAnalogChannel(AsyncWebServerRequest *request)
     delay(50);
 
     uint16_t verifyMode = 0xFFFF;
-    bool readOk = analogInputReadRegister(addr, regAddr, verifyMode, 200);
+    bool readOk = rs485ConfigReadRegister(addr, regAddr, verifyMode, 200);
 
-    Serial1.end();
-    Serial1.begin(4800, SERIAL_8N1, 18, 17);
+    ebyteRestoreBus();
     SoilSensorRS485::setMaintenanceMode(false);
 
     if (readOk && verifyMode == newMode) {

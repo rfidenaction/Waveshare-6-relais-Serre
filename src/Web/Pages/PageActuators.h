@@ -7,10 +7,10 @@
 // Les commandes sont envoyées via POST /command en text/plain, payload CSV
 // 7 champs identique au format MQTT serre/cmd. Le serveur enchaîne
 // DataBus::parseCommand (validation) → DataBus::publish
-// (horodatage + distribution + routage via RELAYS[]).
+// (horodatage + distribution + routage via NEO).
 //
-// La liste des vannes est construite dynamiquement depuis META : tous les
-// DataIds dont type == Actuator et nature == etat sont affichés.
+// La liste est construite depuis META, filtrée par Neo::find. Seules les
+// vannes installées sur cette carte apparaissent.
 #pragma once
 
 #include <Arduino.h>

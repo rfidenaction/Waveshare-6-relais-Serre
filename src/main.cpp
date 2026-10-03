@@ -10,6 +10,7 @@
 #include "Config/Config.h"
 #include "Config/TimingConfig.h"
 #include "Config/IO-Config.h"
+#include "Config/Neo.h"                // Inventaire du matériel réellement installé
 
 #include "Connectivity/WiFiManager.h"
 #include "Connectivity/NTPManager.h"
@@ -33,6 +34,7 @@
 #include "Sensors/SensorValidation.h"  // Validation fiabilité capteurs (spike / stuck)
 
 #include "Actuators/ValveManager.h"
+#include "Actuators/LightManager.h"
 
 #include "Gardener/GardenerManager.h"
 #include "Gardener/ConditionalWatering.h"
@@ -162,6 +164,11 @@ static void loopInit()
     InboxSensorRS485::init();
     Console::info("[InboxRS485] InboxSensorRS485 initialisé");
 
+    // NEO — inventaire du matériel réellement installé. Doit venir APRÈS les
+    // init() des modules producteurs et AVANT leurs consommateurs : il les
+    // interroge pour agréger leurs déclarations en une table unique.
+    Neo::build();
+
     // Validation fiabilité capteurs — doit venir APRÈS les trois modules
     // capteurs RS485 : init() les interroge pour construire sa table id → état.
     SensorValidation::init();
@@ -172,11 +179,11 @@ static void loopInit()
     OnDemandMeasure::init();
     Console::info("[OnDemand] OnDemandMeasure initialisé");
 
-    // Note : ValveManager n'est PAS initialisé ici. Les GPIO ont été forcés
-    // à LOW dès setup() par initAllRelayPinsSafe(). La construction
-    // des slots depuis RELAYS[], la création de la queue FreeRTOS et la
-    // publication de l'état initial sont différées et gérées paresseusement
-    // par ValveManager::handle() au premier passage après VALVE_START_DELAY_MS.
+    // Note : ni ValveManager ni LightManager ne sont initialisés ici. Les GPIO
+    // ont été forcés à LOW dès setup() par initAllRelayPinsSafe(). La
+    // construction des slots depuis NEO, la création de la queue FreeRTOS et
+    // la publication de l'état initial sont différées et gérées paresseusement
+    // par leur handle() au premier passage après VALVE_START_DELAY_MS.
 
     SafeReboot::init();
 
@@ -328,6 +335,11 @@ static void loopInit()
 
     TaskManager::addTask(
         []() { ValveManager::handle(); },
+        100
+    );
+
+    TaskManager::addTask(
+        []() { LightManager::handle(); },
         100
     );
 

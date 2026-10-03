@@ -3,7 +3,9 @@
 // via RS485 Modbus RTU sur Serial1 (UART1 isolé, direction auto hardware).
 //
 // Les capteurs sur le bus sont interrogés en rotation, un par appel de
-// handle(). Chaque capteur fournit humidité sol (%) et température sol (°C).
+// handle(). Chaque capteur fournit l'humidité sol (%) et une seconde
+// grandeur : température sol (°C) pour les sondes filaires, charge pile
+// (%) pour les sondes sans fil.
 //
 // Architecture lecture / publication :
 //   La lecture tourne vite — chaque sonde est lue à RS485_TEMP_READ_PERIOD_MS,
@@ -20,6 +22,7 @@
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class SoilSensorRS485 {
 public:
@@ -56,25 +59,26 @@ public:
     // Retourne true si l'écho de confirmation est correct.
     static bool setAddress(uint8_t currentAddr, uint8_t newAddr);
 
-    // ─── Mesure à la demande ─────────────────────────────────────────────
-    // Ce module déclare les DataId qu'il produit ; il ne les reçoit d'aucune
-    // table extérieure. La liste est dérivée de SENSORS[], seule source de
-    // vérité de l'appartenance id ↔ adresse Modbus. OnDemandMeasure
-    // l'interroge au démarrage pour construire sa vue id → propriétaire,
-    // comme ValveManager se construit depuis RELAYS[].
+    // ─── Déclaration NEO ─────────────────────────────────────────────────
+    // Ce module décrit lui-même les données qu'il produit ; il ne les reçoit
+    // d'aucune table extérieure. Tout est dérivé de SENSORS[], seule source
+    // de vérité de l'appartenance id ↔ adresse Modbus ↔ grandeur mesurée.
+    // Neo::build() interroge ce couple de méthodes une fois au démarrage.
     //
-    // Conséquence : brancher les sondes 5 et 6 se limite à deux lignes dans
-    // SENSORS[] et SENSOR_COUNT à 6. Le routage et la liste publiée sur MQTT
-    // suivent au prochain démarrage, sans autre modification.
+    // Conséquence : brancher une sonde supplémentaire se limite à une ligne
+    // dans SENSORS[]. L'effectif, le routage de la mesure à la demande et la
+    // liste publiée sur MQTT suivent au prochain démarrage.
 
-    // Nombre de DataId produits (2 par capteur : humidité + température).
-    static uint8_t measurableCount();
+    // Nombre d'entrées déclarées : 2 par capteur (humidité + température
+    // ou humidité + niveau de pile).
+    static uint8_t neoCount();
 
-    // DataId numéro `index`, avec index < measurableCount().
-    static DataId measurableAt(uint8_t index);
+    // Entrée numéro `index`, avec index < neoCount().
+    static NeoEntry neoAt(uint8_t index);
 
+    // ─── Mesure à la demande ─────────────────────────────────────────────
     // Interroge immédiatement le capteur portant cet id et publie la paire
-    // humidité + température sur DataBus — même chemin que handle(), donc
+    // humidité + seconde grandeur sur DataBus — même chemin que handle(), donc
     // même validation, même horodatage, même journalisation CSV.
     // La rotation _currentSensor n'est pas touchée : le cycle périodique
     // suit son cours indépendamment.
@@ -83,28 +87,45 @@ public:
     // (mode maintenance, délai de démarrage) ou si le capteur n'a pas répondu.
     static bool measureNow(DataId id);
 
-    // Retourne l'adresse RS485 Modbus associée à un DataId produit par ce
-    // module, ou 0 si l'id est inconnu.
-    static uint8_t rs485AddressOf(DataId id);
-
 private:
     static constexpr const char* TAG = "RS485";
 
+    // Le genre de la seconde grandeur n'a pas d'encodage propre : il se lit
+    // dans second.grandeur, qui dit déjà température ou niveau de pile.
     struct SensorDescriptor {
-        uint8_t address;
-        DataId  moistureId;
-        DataId  temperatureId;
+        uint8_t    address;
+        NeoMeasure first;    // registre 0x0000 — humidité sol
+        NeoMeasure second;   // registre 0x0001 — température sol ou niveau de pile
     };
 
-    static constexpr uint8_t SENSOR_COUNT = 3;
+    static constexpr SensorDescriptor SENSORS[] = {
+        { 0x01, { DataId::SoilMoisture1,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature1, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x02, { DataId::SoilMoisture2,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature2, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x03, { DataId::SoilMoisture3,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature3, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x04, { DataId::SoilMoisture4,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature4, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x05, { DataId::SoilMoisture5,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature5, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x06, { DataId::SoilMoisture6,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature6, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x07, { DataId::SoilMoisture7,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature7, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x08, { DataId::SoilMoisture8,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilTemperature8, Grandeur::Temperature, Concerne::Sol  } },
+        { 0x09, { DataId::SoilMoisture9,  Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilBattery9,     Grandeur::NiveauPile,  Concerne::Pile } },
+        { 0x0A, { DataId::SoilMoisture10, Grandeur::Humidite, Concerne::Sol },
+                { DataId::SoilBattery10,    Grandeur::NiveauPile,  Concerne::Pile } },
+    };
+
+    // Effectif dérivé du tableau : ajouter une ligne ci-dessus suffit, aucun
+    // nombre à tenir à jour en parallèle.
+    static constexpr uint8_t SENSOR_COUNT = sizeof(SENSORS) / sizeof(SENSORS[0]);
     static_assert(SENSOR_COUNT > 0,
                   "SENSOR_COUNT divise RS485_TEMP_READ_PERIOD_MS dans main.cpp");
-
-    static constexpr SensorDescriptor SENSORS[SENSOR_COUNT] = {
-        { 0x01, DataId::SoilMoisture1, DataId::SoilTemperature1 },
-        { 0x02, DataId::SoilMoisture2, DataId::SoilTemperature2 },
-        { 0x03, DataId::SoilMoisture3, DataId::SoilTemperature3 },
-    };
 
     static bool    _initialized;
     static bool    _maintenanceMode;
@@ -121,15 +142,15 @@ private:
     // l'acquisition périodique et à la mesure à la demande — un seul endroit
     // décide de ce qui est rejeté.
     static bool readOne(const SensorDescriptor& sensor,
-                        float& moisture, float& temperature);
+                        float& moisture, float& secondValue);
 
-    // Publie la paire humidité + température sur DataBus. Chemin de publication
-    // commun aux deux origines : même validation META, même horodatage
-    // VirtualClock, même écriture CSV, même publication MQTT.
+    // Publie la paire humidité + seconde grandeur sur DataBus. Chemin de
+    // publication commun aux deux origines : même validation META, même
+    // horodatage VirtualClock, même écriture CSV, même publication MQTT.
     static void publishValues(const SensorDescriptor& sensor,
-                              float moisture, float temperature);
+                              float moisture, float secondValue);
 
-    static bool readSensor(uint8_t address, float& moisture, float& temperature);
+    static bool readSensor(uint8_t address, float& moisture, float& secondValue);
     static void drainRxBuffer();
     static uint16_t crc16(const uint8_t* data, size_t len);
 };

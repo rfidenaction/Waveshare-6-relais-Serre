@@ -52,9 +52,26 @@ static constexpr const char* MQTT_BROKER_URI   = "mqtts://3db6155980d4483e8b8c30
 static constexpr const char* MQTT_USERNAME     = "Graindesable";
 static constexpr const char* MQTT_PASSWORD     = "Chaperonrouge64";
 static constexpr const char* MQTT_CLIENT_ID    = "serre-waveshare";
-static constexpr const char* MQTT_LWT_TOPIC    = "serre/status/waveshare";
 static constexpr const char* MQTT_SCHEMA_TOPIC = "serre/schema";
+
+// Inventaire du matériel réellement installé (table NEO), sur son propre topic
+// retenu. Séparé du schéma parce que les deux ne changent pas au même rythme :
+// renommer un libellé republie META seul, changer de matériel republie NEO
+// seul. Les deux tables se joignent côté interface par DataId.
+static constexpr const char* MQTT_NEO_TOPIC    = "serre/neo";
 static constexpr int         MQTT_KEEPALIVE_S  = 90;
+
+// Presence de la carte : l'interface publie "ping", la carte repond "pong"
+// immediatement.
+static constexpr const char* MQTT_PING_TOPIC_FROM_USER = "serre/ping/FromUser";
+static constexpr const char* MQTT_PING_TOPIC_TO_USER   = "serre/ping/ToUser";
+
+// Preferences d'affichage de l'interface (3e capteur des cartes Famille, noms
+// libres des boitiers Capteurs). Elles vivaient dans le localStorage de chaque
+// telephone ; la carte les heberge desormais pour que tous voient la meme
+// chose. Elle ne s'en sert pour aucune decision : elle stocke et rediffuse.
+static constexpr const char* MQTT_UIPREFS_TOPIC_FROM_USER = "serre/uiprefs/FromUser";
+static constexpr const char* MQTT_UIPREFS_TOPIC_TO_USER   = "serre/uiprefs/ToUser";
 
 // =============================================================================
 // Signal MqttKo — Waveshare → LilyGo (UDP)

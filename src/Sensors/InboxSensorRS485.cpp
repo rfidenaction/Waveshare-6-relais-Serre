@@ -271,25 +271,31 @@ bool InboxSensorRS485::readHardware(float& temperature, float& humidity)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
+// Déclaration NEO — les deux grandeurs du capteur boîtier
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint8_t InboxSensorRS485::measurableCount()
+uint8_t InboxSensorRS485::neoCount()
 {
-    return 2;
+    return sizeof(MEASURES) / sizeof(MEASURES[0]);
 }
 
-DataId InboxSensorRS485::measurableAt(uint8_t index)
+NeoEntry InboxSensorRS485::neoAt(uint8_t index)
 {
-    return (index == 1) ? HUMIDITY_ID : TEMPERATURE_ID;
+    if (index >= neoCount()) index = 0;   // garde : index hors bornes
+
+    NeoEntry entry     = {};
+    entry.id           = MEASURES[index].id;
+    entry.grandeur     = MEASURES[index].grandeur;
+    entry.concerne     = MEASURES[index].concerne;
+    entry.rs485Address = SENSOR_ADDRESS;
+    entry.measure      = &InboxSensorRS485::measureNow;
+
+    return entry;
 }
 
-uint8_t InboxSensorRS485::rs485AddressOf(DataId id)
-{
-    if (id == TEMPERATURE_ID || id == HUMIDITY_ID)
-        return SENSOR_ADDRESS;
-    return 0;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande
+// ─────────────────────────────────────────────────────────────────────────────
 
 bool InboxSensorRS485::measureNow(DataId id)
 {

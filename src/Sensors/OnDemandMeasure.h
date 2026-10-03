@@ -8,21 +8,19 @@
 // reste faite par le module capteur via DataBus, donc par le chemin normal
 // (validation META, horodatage VirtualClock, journal CSV, MQTT, page web).
 //
-// Construction de la vue id → propriétaire :
-//   Même principe que ValveManager, qui scanne RELAYS[] au démarrage et se
-//   projette une vue runtime slots[]. Ici il n'existe pas de table centrale
-//   d'affectation des capteurs : l'appartenance id ↔ adresse Modbus vit dans
-//   le descripteur SENSORS[] privé de chaque module producteur. Ce sont donc
-//   les modules qui déclarent leurs DataId (measurableCount/measurableAt), et
-//   OnDemandMeasure agrège ces déclarations une fois au démarrage.
+// Qui sait mesurer quoi :
+//   NEO (Config/Neo.h) le dit. Chaque module producteur y déclare, pour
+//   chacune des données qu'il produit, le pointeur de mesure à appeler. Ce
+//   module n'a donc aucune vue à construire ni à tenir : il cherche l'entrée
+//   NEO de l'id demandé et appelle son champ measure. Un id absent de NEO,
+//   ou dont l'entrée ne porte pas de pointeur de mesure, n'est pas mesurable.
 //
-//   Conséquence : aucune correspondance id → propriétaire n'est écrite à la
-//   main nulle part. Brancher deux sondes de sol supplémentaires se limite à
-//   deux lignes dans SoilSensorRS485::SENSORS[] ; le routage et la liste
-//   publiée dans le schéma MQTT suivent au prochain démarrage.
+//   Conséquence : brancher deux sondes de sol supplémentaires se limite à deux
+//   lignes dans SoilSensorRS485::SENSORS[] ; le routage suit au prochain
+//   démarrage, sans que ce fichier bouge.
 //
 // Découplage des threads — la raison d'être du slot de demande :
-//   Les trois modules capteurs partagent Serial1 et leurs lectures Modbus sont
+//   Les modules capteurs partagent Serial1 et leurs lectures Modbus sont
 //   bloquantes. La seule exclusion mutuelle du système est le fait que
 //   TaskManager exécute ses callbacks séquentiellement. Une mesure lancée
 //   depuis le thread esp_mqtt écrirait sur Serial1 en même temps que la boucle
@@ -46,8 +44,7 @@ public:
     // Le ToUser du même canal servira aux historiques.
     static constexpr const char* ONDEMAND_TOPIC_FROM_USER = "serre/ondemand/FromUser";
 
-    // Interroge les modules producteurs et construit la vue id → propriétaire.
-    // À appeler après les init() des quatre modules capteurs.
+    // Arme le slot de demande. À appeler après Neo::build().
     static void init();
 
     // Exécute la demande en attente. Tâche TaskManager.
@@ -60,33 +57,8 @@ public:
     // Payload JSON attendu : {"op":"measure","id":N}
     static void onRequest(const char* data, int len);
 
-    // ─── Énumération pour le schéma MQTT ─────────────────────────────────
-    // Consommée par MqttManager::buildSchemaJson pour publier measurableIds.
-    // L'interface n'encode ainsi aucune règle sur ce qui est mesurable.
-    static uint8_t measurableCount();
-    static DataId  measurableAt(uint8_t index);
-
 private:
     static constexpr const char* TAG = "OnDemand";
-
-    // Borne supérieure de la vue. Le nombre effectif est déterminé au
-    // démarrage par l'interrogation des modules producteurs (16 aujourd'hui,
-    // 20 avec les sondes de sol 5 et 6). Marge volontaire pour absorber
-    // l'ajout de producteurs sans y revenir.
-    static constexpr uint8_t MEASURABLE_MAX = 32;
-
-    // Signature commune à tous les modules producteurs.
-    // Retourne true si la mesure a été publiée.
-    using MeasureFn = bool (*)(DataId id);
-
-    // Vue runtime : un DataId et le module qui sait le mesurer.
-    struct MeasurableSlot {
-        DataId    id;
-        MeasureFn measure;
-    };
-
-    static MeasurableSlot slots[MEASURABLE_MAX];
-    static uint8_t        slotCount;
 
     // Slot de demande, unique.
     // Écrit par onRequest (thread esp_mqtt), consommé par handle()
@@ -100,14 +72,4 @@ private:
     // période de handle()).
     static volatile bool    requestPending;
     static volatile uint8_t requestedId;
-
-    // Agrège les déclarations des modules producteurs.
-    static void buildSlotsFromSensors();
-
-    // Recopie la liste d'un module dans slots[]. Accède directement aux
-    // membres statiques slots[] et slotCount.
-    static void collect(uint8_t count, DataId (*at)(uint8_t), MeasureFn measure);
-
-    // Recherche linéaire dans slots[]. Coût négligeable (au plus 32 éléments).
-    static bool findSlot(DataId id, MeasurableSlot*& outSlot);
 };

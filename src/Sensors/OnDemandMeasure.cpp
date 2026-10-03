@@ -4,16 +4,14 @@
 // Chaîne complète d'une demande :
 //   Interface → serre/ondemand/FromUser → MqttManager (thread esp_mqtt)
 //     → OnDemandMeasure::onRequest : valide, pose l'id dans le slot, rend la main
-//     → OnDemandMeasure::handle    : (thread TaskManager) dispatch vers le module
+//     → OnDemandMeasure::handle    : (thread TaskManager) appelle le pointeur
+//                                    de mesure porté par l'entrée NEO de l'id
 //     → SoilSensorRS485 | AirSensorRS485 | InboxSensorRS485 | SupplyVoltage :: measureNow
 //     → DataBus::publish           : chemin normal (CSV, MQTT, page web)
 //     → serre/data/{id}            : l'interface se met à jour d'elle-même
 
 #include "Sensors/OnDemandMeasure.h"
-#include "Sensors/SupplyVoltage.h"
-#include "Sensors/SoilSensorRS485.h"
-#include "Sensors/AirSensorRS485.h"
-#include "Sensors/InboxSensorRS485.h"
+#include "Config/Neo.h"
 #include "Utils/Console.h"
 
 #include <ArduinoJson.h>
@@ -21,86 +19,29 @@
 
 // ─── Variables statiques ─────────────────────────────────────────────────────
 
-OnDemandMeasure::MeasurableSlot OnDemandMeasure::slots[MEASURABLE_MAX] = {};
-uint8_t OnDemandMeasure::slotCount = 0;
-
 volatile bool    OnDemandMeasure::requestPending = false;
 volatile uint8_t OnDemandMeasure::requestedId    = 0;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// collect — recopie la liste déclarée par un module producteur
-// ─────────────────────────────────────────────────────────────────────────────
-
-void OnDemandMeasure::collect(uint8_t count, DataId (*at)(uint8_t), MeasureFn measure)
-{
-    for (uint8_t i = 0; i < count; i++) {
-        if (slotCount >= MEASURABLE_MAX) {
-            Console::warn(TAG, "Plus de données mesurables que MEASURABLE_MAX ("
-                              + String(MEASURABLE_MAX) + ") — surplus ignoré");
-            return;
-        }
-        slots[slotCount].id      = at(i);
-        slots[slotCount].measure = measure;
-        slotCount++;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// buildSlotsFromSensors — construction de la vue id → propriétaire
-//
-// Les modules déclarent, OnDemandMeasure agrège. Aucune correspondance n'est
-// écrite ici : ajouter un capteur dans le SENSORS[] de son module suffit.
-// ─────────────────────────────────────────────────────────────────────────────
-
-void OnDemandMeasure::buildSlotsFromSensors()
-{
-    slotCount = 0;
-
-    collect(SupplyVoltage::measurableCount(),
-            &SupplyVoltage::measurableAt,
-            &SupplyVoltage::measureNow);
-
-    collect(SoilSensorRS485::measurableCount(),
-            &SoilSensorRS485::measurableAt,
-            &SoilSensorRS485::measureNow);
-
-    collect(AirSensorRS485::measurableCount(),
-            &AirSensorRS485::measurableAt,
-            &AirSensorRS485::measureNow);
-
-    collect(InboxSensorRS485::measurableCount(),
-            &InboxSensorRS485::measurableAt,
-            &InboxSensorRS485::measureNow);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// findSlot — recherche linéaire dans la vue
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool OnDemandMeasure::findSlot(DataId id, MeasurableSlot*& outSlot)
-{
-    for (uint8_t i = 0; i < slotCount; i++) {
-        if (slots[i].id == id) {
-            outSlot = &slots[i];
-            return true;
-        }
-    }
-    return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // init
+//
+// Rien à construire : NEO porte déjà, pour chaque donnée installée, le
+// pointeur du module qui sait la mesurer. Le décompte affiché n'est là que
+// pour la trace de démarrage.
 // ─────────────────────────────────────────────────────────────────────────────
 
 void OnDemandMeasure::init()
 {
-    buildSlotsFromSensors();
-
     requestPending = false;
     requestedId    = 0;
 
-    Console::info(TAG, String(slotCount) + " donnée(s) mesurable(s) à la demande "
-                       "— déclarées par les modules producteurs");
+    uint8_t measurable = 0;
+    for (uint8_t i = 0; i < Neo::count(); i++) {
+        if (Neo::at(i).measure != nullptr) measurable++;
+    }
+
+    Console::info(TAG, String(measurable) + " donnée(s) mesurable(s) à la demande "
+                       "— déclarées dans NEO par les modules producteurs");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,8 +78,8 @@ void OnDemandMeasure::onRequest(const char* data, int len)
         return;
     }
 
-    MeasurableSlot* slot = nullptr;
-    if (!findSlot((DataId)idVal, slot)) {
+    const NeoEntry* entry = Neo::find((DataId)idVal);
+    if (entry == nullptr || entry->measure == nullptr) {
         Console::warn(TAG, "Demande rejetée — id=" + String(idVal)
                           + " n'est mesurable par aucun module");
         return;
@@ -171,10 +112,10 @@ void OnDemandMeasure::handle()
     DataId id = (DataId)requestedId;
     requestPending = false;
 
-    MeasurableSlot* slot = nullptr;
-    if (!findSlot(id, slot)) return;    // déjà validé à la réception
+    const NeoEntry* entry = Neo::find(id);
+    if (entry == nullptr || entry->measure == nullptr) return;   // déjà validé à la réception
 
-    if (slot->measure(id)) {
+    if (entry->measure(id)) {
         Console::info(TAG, "Mesure à la demande publiée — id="
                           + String((uint8_t)id)
                           + " (" + String(getMeta(id).label) + ")");
@@ -183,19 +124,4 @@ void OnDemandMeasure::handle()
                           + String((uint8_t)id)
                           + " (" + String(getMeta(id).label) + ")");
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Énumération pour le schéma MQTT
-// ─────────────────────────────────────────────────────────────────────────────
-
-uint8_t OnDemandMeasure::measurableCount()
-{
-    return slotCount;
-}
-
-DataId OnDemandMeasure::measurableAt(uint8_t index)
-{
-    if (index >= slotCount) index = 0;   // garde : index hors bornes
-    return slots[index].id;
 }

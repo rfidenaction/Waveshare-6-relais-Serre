@@ -5,6 +5,7 @@
 #include "Core/DataBus.h"
 #include "Connectivity/NTPManager.h"
 #include "Actuators/ValveManager.h"
+#include "Actuators/LightManager.h"
 
 char StatusReport::_message[StatusReport::MESSAGE_SIZE] = { '\0' };
 bool StatusReport::_latched   = false;
@@ -184,6 +185,8 @@ void StatusReport::handle()
                 note("NTP", "Aucune synchro NTP depuis le démarrage");
             } else if (!ValveManager::isReady()) {
                 note("ValveManager", "Système vannes non opérationnel");
+            } else if (!LightManager::isReady()) {
+                note("LightManager", "Système lumières non opérationnel");
             }
         }
 

@@ -2,9 +2,7 @@
 // Validation de fiabilité des capteurs — voir SensorValidation.h
 
 #include "Sensors/SensorValidation.h"
-#include "Sensors/SoilSensorRS485.h"
-#include "Sensors/AirSensorRS485.h"
-#include "Sensors/InboxSensorRS485.h"
+#include "Config/Neo.h"
 #include "Gardener/ConditionalWatering.h"
 #include "Core/DataBus.h"
 #include "Core/VirtualClock.h"
@@ -18,34 +16,52 @@
 SensorValidation::SensorSlot SensorValidation::slots[SLOT_MAX] = {};
 uint8_t SensorValidation::slotCount = 0;
 
-// ─── collect() ───────────────────────────────────────────────────────────────
-// Recopie les DataId déclarés par un module capteur, en ne retenant que ceux
-// de type Sensor et de nature metrique dans META.
+// ─── buildSlotsFromNeo() ─────────────────────────────────────────────────────
+// Parcourt NEO et donne une entrée à toute mesure métrique, quelle que soit sa
+// grandeur : le suivi de présence les concerne toutes. Seules la température
+// et l'hygrométrie sont en plus jugées, et ce sont les deux seuls noms de
+// grandeur que ce module prononce. La grandeur et l'adresse RS485 sont lues
+// dans l'entrée NEO, plus déduites du libellé ni demandées au module.
 
-void SensorValidation::collect(uint8_t count, DataId (*at)(uint8_t),
-                               uint8_t (*addrOf)(DataId))
+void SensorValidation::buildSlotsFromNeo()
 {
-    for (uint8_t i = 0; i < count; i++) {
+    for (uint8_t i = 0; i < Neo::count(); i++) {
         if (slotCount >= SLOT_MAX) {
             Console::warn(TAG, "Plus de capteurs que SLOT_MAX ("
                               + String(SLOT_MAX) + ") — surplus ignoré");
             return;
         }
 
-        DataId id = at(i);
-        const DataMeta& meta = getMeta(id);
+        const NeoEntry& entry = Neo::at(i);
+        const DataMeta& meta  = getMeta(entry.id);
 
         if (meta.type != DataType::Sensor || meta.nature != DataNature::metrique)
             continue;
 
+        // Être jugé et avoir un seuil de saut sont une seule et même décision :
+        // une grandeur est jugée parce que ce module sait la juger, et le seuil
+        // est celui qui la décrit. Toute autre mesure garde judged à false et
+        // n'hérite du seuil d'aucune autre — elle est suivie en présence, sans
+        // qu'il soit besoin de savoir de quelle grandeur il s'agit.
+        bool  judged         = false;
+        float spikeThreshold = 0.0f;
+
+        if (entry.grandeur == Grandeur::Temperature) {
+            judged         = true;
+            spikeThreshold = SPIKE_THRESHOLD_TEMP;
+        } else if (entry.grandeur == Grandeur::Humidite) {
+            judged         = true;
+            spikeThreshold = SPIKE_THRESHOLD_HUM;
+        }
+
         SensorSlot& s   = slots[slotCount];
-        s.id            = id;
-        s.rs485Address  = addrOf(id);
+        s.id            = entry.id;
+        s.rs485Address  = entry.rs485Address;
+        s.grandeur      = entry.grandeur;
+        s.judged        = judged;
         s.windowCount   = 0;
         s.windowIndex   = 0;
-        s.spikeThreshold = (strcmp(meta.unit, "%") == 0)
-                           ? SPIKE_THRESHOLD_HUM
-                           : SPIKE_THRESHOLD_TEMP;
+        s.spikeThreshold = spikeThreshold;
         s.lastValue     = 0.0f;
         s.lastChangeTs  = 0;
         s.initialized   = false;
@@ -76,17 +92,7 @@ void SensorValidation::init()
 {
     slotCount = 0;
 
-    collect(SoilSensorRS485::measurableCount(),
-            &SoilSensorRS485::measurableAt,
-            &SoilSensorRS485::rs485AddressOf);
-
-    collect(AirSensorRS485::measurableCount(),
-            &AirSensorRS485::measurableAt,
-            &AirSensorRS485::rs485AddressOf);
-
-    collect(InboxSensorRS485::measurableCount(),
-            &InboxSensorRS485::measurableAt,
-            &InboxSensorRS485::rs485AddressOf);
+    buildSlotsFromNeo();
 
     Console::info(TAG, String(slotCount)
                   + " capteur(s) métrique(s) sous validation de fiabilité");
@@ -98,6 +104,7 @@ void SensorValidation::init()
 // Point d'entrée appelé par les modules capteurs après chaque lecture réussie.
 //
 // Séquence :
+//   0. Mesure non jugée → présence seule, on s'arrête là
 //   1. Fenêtre glissante → test spike
 //   2. Valeur mémorisée + horodatage → test stuck
 //   3. Si fiable → ConditionalWatering::offerMeasure()
@@ -107,6 +114,16 @@ bool SensorValidation::feed(DataId sensorId, float value)
 {
     SensorSlot* s = nullptr;
     if (!findSlot(sensorId, s)) return false;
+
+    // Mesure suivie mais non jugée : recevoir une valeur dit que la sonde
+    // répond, et rien de plus. Ni test de vraisemblance — les seuils de saut
+    // et le délai de valeur figée ne décrivent pas cette grandeur — ni offre
+    // à l'arrosage conditionnel.
+    if (!s->judged) {
+        bool wasAbsent = s->absentAlert;
+        s->absentAlert = false;
+        return (s->absentAlert != wasAbsent);
+    }
 
     bool wasSpike  = s->spikeAlert;
     bool wasStuck  = s->stuckAlert;
@@ -170,6 +187,18 @@ bool SensorValidation::feed(DataId sensorId, float value)
            (s->absentAlert != wasAbsent);
 }
 
+// ─── isJudged() ──────────────────────────────────────────────────────────────
+// Dit si les mesures de cet id sont soumises au jugement de vraisemblance, donc
+// si elles peuvent atteindre ConditionalWatering::offerMeasure().
+
+bool SensorValidation::isJudged(DataId sensorId)
+{
+    SensorSlot* s = nullptr;
+    if (!findSlot(sensorId, s)) return false;
+
+    return s->judged;
+}
+
 // ─── feedNoResponse() ────────────────────────────────────────────────────────
 // Signale qu'un capteur n'a pas répondu (timeout Modbus). Positionne le
 // drapeau absentAlert. Retourne true si c'est un changement d'état.
@@ -188,39 +217,48 @@ bool SensorValidation::feedNoResponse(DataId sensorId)
 
 // ─── publishSynthetic() ──────────────────────────────────────────────────────
 // Construit un message compact donnant l'état de tous les capteurs, groupé par
-// grandeur physique (°C / %), identifié par adresse RS485.
-// Format : °C OK:1-2 Figé:3 Dysf:4 Abs:13 | % OK:1-2-3 Figé: Dysf: Abs:
+// grandeur NEO et identifié par adresse RS485. L'en-tête de chaque groupe est
+// le symbole de la grandeur (grandeurSymbol, Config/Neo.h).
+// Format : °C OK:1-2 Figé:3 Dysf:4 Abs:13 | % OK:1-2-3 Figé: Dysf: Abs: | Pile OK:9 Figé: Dysf: Abs:10
 // Caractères CSV-safe : pas de virgule ni guillemet.
+//
+// La boucle parcourt les valeurs de Grandeur et n'émet un groupe que si au
+// moins un capteur le porte. Aucune liste de grandeurs n'est tenue ici : une
+// grandeur nouvelle apparaît dans le message du seul fait d'être déclarée
+// dans NEO, et un capteur n'entre dans un groupe que sur égalité exacte.
+//
+// Le message est assemblé dans une String puis recopié en une fois dans le
+// BusItem, comme le font StatusReport, SmsManager et BridgeManager. C'est le
+// strncpy final qui coupe si la ligne dépasse, une bonne fois, plutôt qu'une
+// arithmétique d'offset à surveiller à chaque écriture.
 
 void SensorValidation::publishSynthetic()
 {
-    char buf[200];
-    size_t pos = 0;
+    static const char* const stateLabels[] = { " OK:", " Fig\xC3\xA9:", " Dysf:", " Abs:" };
 
-    for (uint8_t grp = 0; grp < 2; grp++) {
-        bool wantHygro = (grp == 1);
+    String msg;
+    msg.reserve(sizeof(BusItem::valueText));
 
-        if (grp == 0) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos, "\xC2\xB0""C");
-        } else {
-            pos += snprintf(buf + pos, sizeof(buf) - pos, " | %%");
+    for (uint8_t g = 0; g <= (uint8_t)Grandeur::Debit; g++) {
+        const Grandeur grandeur = (Grandeur)g;
+
+        bool present = false;
+        for (uint8_t i = 0; i < slotCount; i++) {
+            if (slots[i].grandeur == grandeur) { present = true; break; }
         }
+        if (!present) continue;
 
-        const char* stateLabels[] = { " OK:", " Fig\xC3\xA9:", " Dysf:", " Abs:" };
+        if (msg.length() > 0) msg += " | ";
+        msg += grandeurSymbol(grandeur);
 
         for (uint8_t st = 0; st < 4; st++) {
-            if (pos >= sizeof(buf) - 1) break;
-            pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", stateLabels[st]);
+            msg += stateLabels[st];
 
             bool first = true;
-            for (uint8_t i = 0; i < slotCount && pos < sizeof(buf) - 1; i++) {
+            for (uint8_t i = 0; i < slotCount; i++) {
                 const SensorSlot& s = slots[i];
-                const DataMeta& meta = getMeta(s.id);
 
-                bool isTemp  = (strcmp(meta.unit, "\xC2\xB0""C") == 0);
-                bool isHygro = (strcmp(meta.unit, "%") == 0);
-                if (!isTemp && !isHygro) continue;
-                if (wantHygro != isHygro) continue;
+                if (s.grandeur != grandeur) continue;
 
                 uint8_t slotState;
                 if (s.absentAlert)     slotState = 3;
@@ -230,22 +268,20 @@ void SensorValidation::publishSynthetic()
 
                 if (slotState != st) continue;
 
-                if (!first && pos < sizeof(buf) - 1) buf[pos++] = '-';
+                if (!first) msg += '-';
                 first = false;
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "%u", s.rs485Address);
+                msg += String((unsigned)s.rs485Address);
             }
         }
     }
 
-    if (pos >= sizeof(buf)) pos = sizeof(buf) - 1;
-    buf[pos] = '\0';
-
-    Console::info(TAG, buf);
+    Console::info(TAG, msg);
 
     BusItem item = {};
     item.type      = DataType::System;
     item.id        = DataId::SensorHealth;
     item.valueKind = 1;
-    memcpy(item.valueText, buf, pos + 1);
+    strncpy(item.valueText, msg.c_str(), sizeof(item.valueText) - 1);
+    item.valueText[sizeof(item.valueText) - 1] = '\0';
     DataBus::publish(item);
 }

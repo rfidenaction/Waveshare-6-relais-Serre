@@ -3,10 +3,9 @@
 //
 // Construction dynamique de slots[] :
 //   Au premier passage de handle() après VALVE_START_DELAY_MS, le manager
-//   scanne RELAYS[] (IO-Config.h) et ramasse les canaux dont l'entity est
-//   une vanne (Valve1..Valve6). Il ne voit pas les autres affectations
-//   (futures lumières, ventilations...), qui seront gérées par d'autres
-//   managers métier utilisant le même tableau RELAYS[].
+//   scanne NEO et ramasse les entrées dont l'entité est une vanne
+//   (Valve1..Valve6). Il ne voit pas les canaux confiés à un autre manager
+//   métier — LightManager pour les lumières — qui scrute la même table.
 //
 // Pilotage matériel :
 //   Toute action physique passe par digitalWrite sur RELAYS[].gpio.
@@ -17,14 +16,15 @@
 //   - Commandes MQTT dans le thread esp_mqtt, HTTP dans AsyncWebServer.
 //   - Chaque dispatcher parse et valide via DataBus::parseCommand, puis
 //     publie via DataBus::publish. DataBus::routeCommand consulte
-//     RELAYS[] et invoque le handler qui y est stocké — pour ce module,
+//     NEO et invoque le handler qui y est stocké — pour ce module,
 //     enqueueByEntity() — qui fait xQueueSend.
 //   - handle() consomme via xQueueReceive dans le thread TaskManager.
 //   - Aucune variable d'état n'est accédée concurremment.
 
 #include "Actuators/ValveManager.h"
 #include "Core/DataBus.h"
-#include "Config/IO-Config.h"
+#include "Config/IO-Config.h"   // RELAYS[].gpio — couche physique de la carte
+#include "Config/Neo.h"
 #include "Utils/Console.h"
 
 static const char* TAG = "ValveManager";
@@ -32,7 +32,7 @@ static const char* TAG = "ValveManager";
 // -----------------------------------------------------------------------------
 // État statique
 // -----------------------------------------------------------------------------
-ValveManager::ValveSlot ValveManager::slots[VALVE_COUNT] = {};
+ValveManager::ValveSlot ValveManager::slots[VALVE_MAX] = {};
 uint8_t       ValveManager::slotCount        = 0;
 bool          ValveManager::valveSystemReady = false;
 QueueHandle_t ValveManager::cmdQueue         = nullptr;
@@ -40,8 +40,8 @@ QueueHandle_t ValveManager::cmdQueue         = nullptr;
 // -----------------------------------------------------------------------------
 // Un DataId est-il une vanne gérée par ce manager ?
 // Le ValveManager revendique explicitement Valve1..Valve6 ; les autres entités
-// présentes dans RELAYS[] (lumière, ventilation…) seront prises en charge par
-// d'autres managers métier.
+// présentes dans NEO (lumière, ventilation…) sont prises en charge par les
+// managers métier correspondants.
 // -----------------------------------------------------------------------------
 static bool isValveEntity(DataId id)
 {
@@ -59,22 +59,24 @@ static bool isValveEntity(DataId id)
 }
 
 // -----------------------------------------------------------------------------
-// Construction de slots[] par scan de RELAYS[]
+// Construction de slots[] par scan de NEO
 // Accède directement aux membres statiques slots[] et slotCount.
-// Le couple (entity, command) est porté par chaque ligne de RELAYS[] : il n'y
-// a plus de mapping dupliqué ici. Voir IO-Config.h pour l'invariant.
+// NEO porte déjà l'entité, son canal relais et sa commande liée : rien n'est
+// écrit en double ici, seul l'état runtime est initialisé.
 // -----------------------------------------------------------------------------
-void ValveManager::buildSlotsFromRelays()
+void ValveManager::buildSlotsFromNeo()
 {
     slotCount = 0;
-    for (size_t i = 0; i < RELAYS_COUNT; i++) {
-        if (!isValveEntity(RELAYS[i].entity)) continue;
-        if (slotCount >= VALVE_COUNT) {
-            Console::warn(TAG, "RELAYS[] contient plus de vannes que VALVE_COUNT — surplus ignoré");
+    for (uint8_t i = 0; i < Neo::count(); i++) {
+        const NeoEntry& entry = Neo::at(i);
+
+        if (!isValveEntity(entry.id)) continue;
+        if (slotCount >= VALVE_MAX) {
+            Console::warn(TAG, "NEO contient plus de vannes que VALVE_MAX — surplus ignoré");
             return;
         }
-        slots[slotCount].id       = RELAYS[i].entity;
-        slots[slotCount].relayCh  = RELAYS[i].ch;
+        slots[slotCount].id       = entry.id;
+        slots[slotCount].relayCh  = entry.relayCh;
         slots[slotCount].state    = VALVE_CLOSED;
         slots[slotCount].deadline = 0;
         slotCount++;
@@ -107,9 +109,12 @@ void ValveManager::handle()
 
     // ─── Démarrage paresseux au premier passage après le délai ────────────
     if (!valveSystemReady) {
-        buildSlotsFromRelays();
+        buildSlotsFromNeo();
 
-        cmdQueue = xQueueCreate(VALVE_COUNT, sizeof(ValveCommand));
+        // Profondeur ajustée au nombre de vannes réellement affectées : une
+        // commande en attente par vanne suffit, et zéro vanne n'est pas une
+        // taille de queue valide.
+        cmdQueue = xQueueCreate(slotCount > 0 ? slotCount : 1, sizeof(ValveCommand));
         if (cmdQueue == nullptr) {
             Console::error(TAG, "Échec création queue FreeRTOS — commandes ignorées");
             // On ne lève pas valveSystemReady : on retentera au prochain tour.

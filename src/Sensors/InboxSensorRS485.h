@@ -4,7 +4,7 @@
 // SoilSensorRS485, AirSensorRS485 et SupplyVoltage — direction auto hardware).
 //
 // Un seul capteur, pas de rotation : chaque appel de handle() interroge
-// l'adresse 15 et stocke AirTemperature1 + AirHumidity1.
+// l'adresse 15 et stocke AirTemperature15 + AirHumidity15.
 //
 // Architecture lecture / publication :
 //   La lecture matérielle tourne à RS485_TEMP_READ_PERIOD_MS — cadence plancher
@@ -19,11 +19,12 @@
 //       (publication faite par ConditionalWatering, pas par ce module)
 //
 // Ce module est séparé d'AirSensorRS485 pour avoir son propre timing dans
-// TimingConfig, indépendant des capteurs air « généraux » (adresses 13, 14).
+// TimingConfig, indépendant des capteurs air « généraux » (adresse 14).
 #pragma once
 
 #include <Arduino.h>
 #include "Config/MetaDataModel.h"
+#include "Config/Neo.h"
 
 class InboxSensorRS485 {
 public:
@@ -36,17 +37,14 @@ public:
     // Inactif si SoilSensorRS485::isMaintenanceMode() est true (bus partagé).
     static void handle();
 
+    // ─── Déclaration NEO ─────────────────────────────────────────────────
+    // Même contrat que AirSensorRS485 et SoilSensorRS485 : ce module décrit
+    // les données qu'il produit, Neo::build() agrège au démarrage.
+
+    static uint8_t  neoCount();
+    static NeoEntry neoAt(uint8_t index);
+
     // ─── Mesure à la demande ─────────────────────────────────────────────
-    // Même contrat que AirSensorRS485 et SoilSensorRS485 : ce module déclare
-    // les DataId qu'il produit, OnDemandMeasure agrège au démarrage.
-
-    static uint8_t measurableCount();
-    static DataId  measurableAt(uint8_t index);
-
-    // Retourne l'adresse RS485 Modbus associée à un DataId produit par ce
-    // module, ou 0 si l'id est inconnu.
-    static uint8_t rs485AddressOf(DataId id);
-
     // Interroge immédiatement le capteur et publie la paire sur DataBus.
     // Appelée depuis le thread TaskManager uniquement (bus RS485 partagé).
     static bool measureNow(DataId id);
@@ -55,8 +53,17 @@ private:
     static constexpr const char* TAG = "InboxRS485";
 
     static constexpr uint8_t SENSOR_ADDRESS   = 15;
-    static constexpr DataId  TEMPERATURE_ID   = DataId::AirTemperature1;
-    static constexpr DataId  HUMIDITY_ID      = DataId::AirHumidity1;
+
+    // Un seul capteur, donc pas de tableau de descripteurs : les deux
+    // grandeurs sont décrites ici, et les deux constantes d'id en découlent
+    // au lieu d'être écrites une seconde fois.
+    static constexpr NeoMeasure MEASURES[] = {
+        { DataId::AirTemperature15, Grandeur::Temperature, Concerne::Boitier },
+        { DataId::AirHumidity15,    Grandeur::Humidite,    Concerne::Boitier },
+    };
+
+    static constexpr DataId  TEMPERATURE_ID   = MEASURES[0].id;
+    static constexpr DataId  HUMIDITY_ID      = MEASURES[1].id;
 
     static bool _initialized;
 
@@ -64,7 +71,7 @@ private:
     // publication ni d'effet de bord. Retourne true si le capteur a répondu.
     static bool readHardware(float& temperature, float& humidity);
 
-    // Publication des deux valeurs sur DataBus (AirTemperature1 + AirHumidity1).
+    // Publication des deux valeurs sur DataBus (AirTemperature15 + AirHumidity15).
     static void publishValues(float temperature, float humidity);
 
     static void drainRxBuffer();

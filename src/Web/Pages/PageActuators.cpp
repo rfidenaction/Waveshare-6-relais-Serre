@@ -1,25 +1,26 @@
 // Web/Pages/PageActuators.cpp
-// Page de pilotage des actionneurs (vannes).
+// Page de pilotage des actionneurs installés (NEO).
 //
 // Principes :
-//  - Liste construite dynamiquement depuis META (type == Actuator, nature == etat).
-//    Aucune vanne en dur : si on ajoute un actionneur dans DATA_ID_LIST,
-//    la page le reflète automatiquement.
+//  - Liste construite depuis META, filtrée par Neo::find : un actionneur
+//    présent dans META mais absent de ce matériel n'est pas affiché.
+//  - La nature META de la commande liée distingue vanne (metrique, durée)
+//    et lumière (etat, 0=OFF / 1=ON).
 //  - État actuel lu via WebServer::hasLastData (vue RAM alimentée
-//    par DataBus::publish côté ValveManager).
+//    par DataBus::publish côté manager propriétaire).
 //  - Commande envoyée en POST text/plain vers /command, payload = CSV 7 champs
 //    identique au format MQTT serre/cmd (timestamp,VClock_available,
 //    VClock_reliable,type,id,valueType,value) — les 3 premiers champs vides,
 //    type = 5
-//    (CommandManual), id = DataId de la commande (CommandValveN récupéré
-//    depuis RELAYS[] à la génération de la page), valueType = 0, value = durée
-//    en secondes.
+//    (CommandManual), id = DataId de la commande récupéré depuis NEO à la
+//    génération de la page, valueType = 0, value = durée en secondes pour une
+//    vanne, 0 ou 1 pour une lumière.
 //  - Style aligné sur PagePrincipale (fond bleu, cartes transparentes).
 #include "Web/Pages/PageActuators.h"
 
 #include "Web/WebServer.h"
 #include "Config/MetaDataModel.h"
-#include "Config/IO-Config.h"
+#include "Config/Neo.h"
 #include "Utils/Console.h"
 
 #include <time.h>
@@ -82,17 +83,16 @@ static String stateLabel(const DataMeta& m, int intVal)
 }
 
 // ─────────────────────────────────────────────
-// Helper : récupère le DataId de la commande associée à une entité vanne.
-// RELAYS[] (IO-Config.h) = source de vérité unique du câblage fonctionnel.
-// Invariant : chaque relais a toujours une commande, donc chaque Valve1..6
-// présente dans META a forcément une ligne correspondante.
+// Helper : récupère le DataId de la commande associée à une entité actionneur.
+// NEO porte la correspondance entité ↔ commande dans son champ idLie.
+// Invariant : chaque relais a toujours une commande, donc tout actionneur
+// installé sur ce matériel a forcément son id lié renseigné.
 // ─────────────────────────────────────────────
-static DataId commandIdForValveEntity(DataId entity)
+static DataId commandIdForActuatorEntity(DataId entity)
 {
-    for (size_t i = 0; i < RELAYS_COUNT; i++) {
-        if (RELAYS[i].entity == entity) return RELAYS[i].command;
-    }
-    return (DataId)0;
+    const NeoEntry* entry = Neo::find(entity);
+    if (entry == nullptr || entry->relayCh == 0) return (DataId)0;
+    return entry->idLie;
 }
 
 // ─────────────────────────────────────────────
@@ -101,7 +101,7 @@ static DataId commandIdForValveEntity(DataId entity)
 static String buildValveCard(const DataMeta& m)
 {
     uint8_t idByte  = (uint8_t)m.id;
-    uint8_t cmdByte = (uint8_t)commandIdForValveEntity(m.id);
+    uint8_t cmdByte = (uint8_t)commandIdForActuatorEntity(m.id);
 
     // État actuel
     String stateText     = "—";
@@ -154,20 +154,91 @@ static String buildValveCard(const DataMeta& m)
 }
 
 // ─────────────────────────────────────────────
+// Helper : carte HTML d'une lumière (ON/OFF)
+//
+// Pas de choix de durée : la commande pose l'état, le relais y reste.
+// ─────────────────────────────────────────────
+static String buildLightCard(const DataMeta& m)
+{
+    uint8_t idByte  = (uint8_t)m.id;
+    uint8_t cmdByte = (uint8_t)commandIdForActuatorEntity(m.id);
+
+    String stateText  = "—";
+    String stateClass = "";
+    String tsHtml     = "";
+    int    intVal     = 0;
+
+    LastDataForWeb d;
+    if (WebServer::hasLastData(m.id, d)) {
+        if (std::holds_alternative<float>(d.value)) {
+            intVal = (int)(std::get<float>(d.value) + 0.5f);
+        }
+        stateText = stateLabel(m, intVal);
+        if (intVal == 1) stateClass = " opened";
+        tsHtml = timeHtmlActuators(d);
+    }
+
+    String html;
+    html.reserve(768);
+
+    html += "<div class=\"valve-card\" id=\"card-";
+    html += idByte; html += "\">";
+
+    html += "<div class=\"valve-header\">";
+    html += "<div class=\"valve-label\">"; html += m.label; html += "</div>";
+    html += "<div class=\"valve-state" + stateClass + "\" id=\"state-";
+    html += idByte; html += "\">"; html += stateText; html += "</div>";
+    html += "</div>";
+
+    html += "<div class=\"valve-timestamp\">"; html += tsHtml; html += "</div>";
+
+    html += "<div class=\"light-choices\">";
+    html += "<button class=\"action-btn light-off\" data-id=\""; html += idByte;
+    html += "\" data-cmd-id=\""; html += cmdByte;
+    html += "\" data-etat=\"0\" onclick=\"sendLightCommand(this)\">Éteindre</button>";
+    html += "<button class=\"action-btn\" data-id=\""; html += idByte;
+    html += "\" data-cmd-id=\""; html += cmdByte;
+    html += "\" data-etat=\"1\" onclick=\"sendLightCommand(this)\">Allumer</button>";
+    html += "</div>";
+
+    html += "</div>";
+    return html;
+}
+
+// ─────────────────────────────────────────────
 // Génération HTML de la page
 // ─────────────────────────────────────────────
 String PageActuators::getHtml()
 {
     Console::info(TAG, "Génération page actionneurs");
 
-    // Construction de toutes les cartes vannes depuis META
-    String cards;
-    cards.reserve(4096);
+    String valveCards;
+    String lightCards;
+    valveCards.reserve(4096);
+    lightCards.reserve(1536);
+
     for (size_t i = 0; i < META_COUNT; i++) {
         const DataMeta& m = META[i];
-        if (m.type == DataType::Actuator && m.nature == DataNature::etat) {
-            cards += buildValveCard(m);
+        if (m.type != DataType::Actuator || m.nature != DataNature::etat) continue;
+
+        const NeoEntry* neo = Neo::find(m.id);
+        if (neo == nullptr || neo->relayCh == 0) continue;
+
+        if (getMeta(neo->idLie).nature == DataNature::etat) {
+            lightCards += buildLightCard(m);
+        } else {
+            valveCards += buildValveCard(m);
         }
+    }
+
+    String cards;
+    if (valveCards.length() > 0) {
+        cards += "<h2>Arrosage</h2>";
+        cards += valveCards;
+    }
+    if (lightCards.length() > 0) {
+        cards += "<h2>Lumières</h2>";
+        cards += lightCards;
     }
 
     String html = R"HTML(
@@ -176,10 +247,11 @@ String PageActuators::getHtml()
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Arrosage - Serre de Marie-Pierre</title>
+<title>Actionneurs - Serre de Marie-Pierre</title>
 <style>
 body { font-family: Arial; background: #1976d2; color: white; text-align: center; margin: 0; padding: 20px; }
 h1 { background: #0d47a1; padding: 20px; border-radius: 10px; }
+h2 { margin: 28px auto 8px; max-width: 600px; text-align: left; font-size: 1.15em; }
 .card { background: rgba(255,255,255,0.2); margin: 20px auto; max-width: 600px; padding: 20px; border-radius: 15px; }
 .subtext { font-size: 1.2em; margin-top: 15px; }
 small { font-size: 0.8em; }
@@ -274,6 +346,15 @@ small { font-size: 0.8em; }
 .action-btn:active { background: #388e3c; }
 .action-btn:disabled { background: #9e9e9e; cursor: not-allowed; }
 
+.light-choices {
+  display: flex;
+  gap: 8px;
+}
+
+.light-choices .action-btn { width: auto; flex: 1; }
+.action-btn.light-off { background: #c62828; }
+.action-btn.light-off:hover { background: #b71c1c; }
+
 .back-link {
   display: inline-block;
   margin-top: 30px;
@@ -358,6 +439,44 @@ function sendCommand(btn) {
   });
 }
 
+// Même CSV que sendCommand, la valeur portant l'état demandé au lieu d'une
+// durée : 0 = éteindre, 1 = allumer.
+function sendLightCommand(btn) {
+  var id    = btn.dataset.id;
+  var cmdId = btn.dataset.cmdId;
+  var etat  = btn.dataset.etat;
+  var card  = document.getElementById('card-' + id);
+  if (!card) return;
+
+  var status = document.getElementById('status-message');
+  status.textContent = 'Envoi de la commande...';
+  status.classList.add('visible');
+
+  var body = ',,,5,' + cmdId + ',0,' + etat;
+
+  fetch('/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: body
+  })
+  .then(function(response) {
+    if (response.ok || response.status === 204) {
+      status.textContent = '✅ Commande envoyée (cmdId=' + cmdId + ', etat=' + etat + ')';
+      card.classList.remove('flash');
+      void card.offsetWidth;
+      card.classList.add('flash');
+      setTimeout(function() { location.reload(); }, 1500);
+    } else {
+      return response.text().then(function(text) {
+        status.textContent = '❌ Erreur : ' + (text || ('HTTP ' + response.status));
+      });
+    }
+  })
+  .catch(function(err) {
+    status.textContent = '❌ Erreur réseau : ' + err;
+  });
+}
+
 // Rafraîchissement des âges relatifs
 setInterval(function() {
   document.querySelectorAll('.age').forEach(function(e) {
@@ -382,7 +501,7 @@ setInterval(function() { location.reload(); }, 30000);
 </head>
 <body>
 
-<h1>💧 Arrosage</h1>
+<h1>💧 Actionneurs</h1>
 
 <div id="status-message"></div>
 

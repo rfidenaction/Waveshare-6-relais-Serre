@@ -12,6 +12,8 @@
 #include "Sensors/SensorValidation.h"
 #include "Utils/Console.h"
 
+#include <math.h>
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes Modbus — capteur ZTS-3000-TR-WS-N01
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,7 +21,7 @@
 static constexpr uint32_t RS485_BAUD          = 4800;       // Défaut usine
 static constexpr uint8_t  MODBUS_FN_READ      = 0x03;       // Read Holding Registers
 static constexpr uint16_t REG_START           = 0x0000;     // Premier registre (humidité)
-static constexpr uint16_t REG_COUNT           = 2;          // Humidité + température
+static constexpr uint16_t REG_COUNT           = 2;          // Humidité + 2e registre (température ou pile)
 static constexpr size_t   RESPONSE_LENGTH     = 9;          // 1+1+1+4+2 octets
 static constexpr unsigned long RESPONSE_TIMEOUT_MS = 200;   // Timeout réponse
 
@@ -75,19 +77,19 @@ void SoilSensorRS485::handle()
     _currentSensor = (_currentSensor + 1) % SENSOR_COUNT;
 
     float moisture    = 0.0f;
-    float temperature = 0.0f;
+    float secondValue = 0.0f;
 
-    if (!readOne(SENSORS[index], moisture, temperature)) {
-        bool c1 = SensorValidation::feedNoResponse(SENSORS[index].moistureId);
-        bool c2 = SensorValidation::feedNoResponse(SENSORS[index].temperatureId);
+    if (!readOne(SENSORS[index], moisture, secondValue)) {
+        bool c1 = SensorValidation::feedNoResponse(SENSORS[index].first.id);
+        bool c2 = SensorValidation::feedNoResponse(SENSORS[index].second.id);
         if (c1 || c2) SensorValidation::publishSynthetic();
         return;
     }
 
     // L'arrosage conditionnel travaille à la cadence de lecture, sans attendre
     // la publication horaire. Sans effet si aucune règle ne cite ces id.
-    bool c1 = SensorValidation::feed(SENSORS[index].moistureId,    moisture);
-    bool c2 = SensorValidation::feed(SENSORS[index].temperatureId, temperature);
+    bool c1 = SensorValidation::feed(SENSORS[index].first.id,  moisture);
+    bool c2 = SensorValidation::feed(SENSORS[index].second.id, secondValue);
     if (c1 || c2) SensorValidation::publishSynthetic();
 
     bool shouldPublish = false;
@@ -105,7 +107,7 @@ void SoilSensorRS485::handle()
     }
 
     if (shouldPublish) {
-        publishValues(SENSORS[index], moisture, temperature);
+        publishValues(SENSORS[index], moisture, secondValue);
     }
 }
 
@@ -118,32 +120,39 @@ void SoilSensorRS485::handle()
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SoilSensorRS485::readOne(const SensorDescriptor& sensor,
-                              float& moisture, float& temperature)
+                              float& moisture, float& secondValue)
 {
     moisture    = 0.0f;
-    temperature = 0.0f;
+    secondValue = 0.0f;
 
-    if (!readSensor(sensor.address, moisture, temperature)) {
+    if (!readSensor(sensor.address, moisture, secondValue)) {
         Console::warn(TAG, "Pas de réponse du capteur sol (adresse "
                            + String(sensor.address) + ")");
         return false;
     }
 
-    if (moisture == 0.0f && temperature == 0.0f) {
+    if (moisture == 0.0f && secondValue == 0.0f) {
         Console::warn(TAG, "Capteur @" + String(sensor.address)
                           + " : valeurs 0/0 suspectes — lecture ignorée");
         return false;
     }
 
-    Console::info(TAG, "Capteur @" + String(sensor.address)
-                      + " — Humidité : " + String(moisture, 1) + " %"
-                      + "  |  Température : " + String(temperature, 1) + " °C");
+    if (sensor.second.grandeur == Grandeur::NiveauPile) {
+        secondValue = (float)lroundf(secondValue);
+        Console::info(TAG, "Capteur @" + String(sensor.address)
+                          + " — Humidité : " + String(moisture, 1) + " %"
+                          + "  |  Charge pile : " + String(secondValue, 0) + " %");
+    } else {
+        Console::info(TAG, "Capteur @" + String(sensor.address)
+                          + " — Humidité : " + String(moisture, 1) + " %"
+                          + "  |  Température : " + String(secondValue, 1) + " °C");
+    }
 
     return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// publishValues — publication de la paire humidité/température sur DataBus
+// publishValues — publication de la paire humidité + seconde grandeur sur DataBus
 //
 // Chemin unique de publication du module. Les deux origines sont donc
 // indiscernables en aval : même validation META, même horodatage VirtualClock,
@@ -151,57 +160,67 @@ bool SoilSensorRS485::readOne(const SensorDescriptor& sensor,
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SoilSensorRS485::publishValues(const SensorDescriptor& sensor,
-                                    float moisture, float temperature)
+                                    float moisture, float secondValue)
 {
     BusItem item = {};
 
-    item.type       = getMeta(sensor.moistureId).type;
-    item.id         = sensor.moistureId;
+    item.type       = getMeta(sensor.first.id).type;
+    item.id         = sensor.first.id;
     item.valueKind  = 0;
     item.valueFloat = moisture;
     DataBus::publish(item);
 
-    item.type       = getMeta(sensor.temperatureId).type;
-    item.id         = sensor.temperatureId;
+    item.type       = getMeta(sensor.second.id).type;
+    item.id         = sensor.second.id;
     item.valueKind  = 0;
-    item.valueFloat = temperature;
+    item.valueFloat = secondValue;
     DataBus::publish(item);
 
-    Console::info(TAG, "Publication — Capteur @" + String(sensor.address)
-                      + " — Humidité : " + String(moisture, 1) + " %"
-                      + "  |  Température : " + String(temperature, 1) + " °C");
+    if (sensor.second.grandeur == Grandeur::NiveauPile) {
+        Console::info(TAG, "Publication — Capteur @" + String(sensor.address)
+                          + " — Humidité : " + String(moisture, 1) + " %"
+                          + "  |  Charge pile : " + String(secondValue, 0) + " %");
+    } else {
+        Console::info(TAG, "Publication — Capteur @" + String(sensor.address)
+                          + " — Humidité : " + String(moisture, 1) + " %"
+                          + "  |  Température : " + String(secondValue, 1) + " °C");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mesure à la demande — déclaration des DataId produits et exécution ponctuelle
+// Déclaration NEO — projection de SENSORS[] en liste plate
 //
-// measurableCount / measurableAt projettent SENSORS[] sous forme de liste
-// plate de DataId. Rien n'est écrit à la main : ajouter un capteur dans
-// SENSORS[] suffit à l'exposer ici, donc au routage de OnDemandMeasure et à la
-// liste publiée dans le schéma MQTT.
+// Deux entrées par capteur, dans l'ordre des registres lus. Rien n'est écrit
+// à la main : ajouter une ligne dans SENSORS[] suffit à faire apparaître les
+// deux grandeurs dans la table NEO au prochain démarrage, donc dans le
+// routage de la mesure à la demande et dans ce que voit l'interface.
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint8_t SoilSensorRS485::measurableCount()
+uint8_t SoilSensorRS485::neoCount()
 {
     return SENSOR_COUNT * 2;
 }
 
-DataId SoilSensorRS485::measurableAt(uint8_t index)
+NeoEntry SoilSensorRS485::neoAt(uint8_t index)
 {
     if (index >= SENSOR_COUNT * 2) index = 0;   // garde : index hors bornes
 
-    const SensorDescriptor& sensor = SENSORS[index / 2];
-    return (index % 2 == 0) ? sensor.moistureId : sensor.temperatureId;
+    const SensorDescriptor& sensor  = SENSORS[index / 2];
+    const NeoMeasure&       measure = (index % 2 == 0) ? sensor.first : sensor.second;
+
+    NeoEntry entry     = {};
+    entry.id           = measure.id;
+    entry.grandeur     = measure.grandeur;
+    entry.concerne     = measure.concerne;
+    entry.rs485Address = sensor.address;
+    entry.measure      = &SoilSensorRS485::measureNow;
+
+    return entry;
 }
 
-uint8_t SoilSensorRS485::rs485AddressOf(DataId id)
-{
-    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        if (SENSORS[i].moistureId == id || SENSORS[i].temperatureId == id)
-            return SENSORS[i].address;
-    }
-    return 0;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Mesure à la demande
+// ─────────────────────────────────────────────────────────────────────────────
 
 bool SoilSensorRS485::measureNow(DataId id)
 {
@@ -219,13 +238,13 @@ bool SoilSensorRS485::measureNow(DataId id)
     }
 
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        if (SENSORS[i].moistureId == id || SENSORS[i].temperatureId == id) {
+        if (SENSORS[i].first.id == id || SENSORS[i].second.id == id) {
             float moisture    = 0.0f;
-            float temperature = 0.0f;
+            float secondValue = 0.0f;
 
-            if (!readOne(SENSORS[i], moisture, temperature)) return false;
+            if (!readOne(SENSORS[i], moisture, secondValue)) return false;
 
-            publishValues(SENSORS[i], moisture, temperature);
+            publishValues(SENSORS[i], moisture, secondValue);
             return true;
         }
     }
@@ -240,10 +259,10 @@ bool SoilSensorRS485::measureNow(DataId id)
 //   [addr] [0x03] [regH] [regL] [cntH] [cntL] [crcL] [crcH]
 //
 // Trame RX attendue (9 octets) :
-//   [addr] [0x03] [byteCount=4] [moistH] [moistL] [tempH] [tempL] [crcL] [crcH]
+//   [addr] [0x03] [byteCount=4] [moistH] [moistL] [reg2H] [reg2L] [crcL] [crcH]
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool SoilSensorRS485::readSensor(uint8_t address, float& moisture, float& temperature)
+bool SoilSensorRS485::readSensor(uint8_t address, float& moisture, float& secondValue)
 {
     // ── Construction de la requête ──────────────────────────────────────────
 
@@ -322,10 +341,11 @@ bool SoilSensorRS485::readSensor(uint8_t address, float& moisture, float& temper
     uint16_t rawMoisture = ((uint16_t)response[3] << 8) | response[4];
     moisture = rawMoisture / 10.0f;
 
-    // Registre 0x0001 — température sol (valeur × 10, complément à deux si < 0 °C)
+    // Registre 0x0001 — 2e grandeur (valeur × 10). Température sol (complément
+    // à deux si < 0 °C) pour les sondes filaires ; charge pile pour les sans fil.
     // Le cast int16_t gère automatiquement les valeurs négatives.
-    int16_t rawTemp = (int16_t)(((uint16_t)response[5] << 8) | response[6]);
-    temperature = rawTemp / 10.0f;
+    int16_t rawSecond = (int16_t)(((uint16_t)response[5] << 8) | response[6]);
+    secondValue = rawSecond / 10.0f;
 
     return true;
 }
@@ -362,10 +382,10 @@ bool SoilSensorRS485::isMaintenanceMode()
 
 uint8_t SoilSensorRS485::findCurrentAddress()
 {
-    float moisture, temperature;
+    float moisture, secondValue;
 
     for (uint8_t addr = 1; addr <= 15; addr++) {
-        if (readSensor(addr, moisture, temperature)) {
+        if (readSensor(addr, moisture, secondValue)) {
             Console::info(TAG, "Capteur trouvé à l'adresse " + String(addr));
             return addr;
         }
