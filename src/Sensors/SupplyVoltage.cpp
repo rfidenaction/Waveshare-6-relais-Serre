@@ -4,7 +4,7 @@
 //
 // La carte est à l'adresse 16, configurée à 4800 bauds, mode 0 (0–10V).
 // Le canal 1 (registre 0x0000) porte la tension d'alimentation divisée
-// par 4 via un pont résistif. La valeur brute est en millivolts.
+// par 5,22 via un pont résistif. La valeur brute est en millivolts.
 //
 // Le canal 2 (registre 0x0001) porte une tension indicatrice de la
 // présence du secteur. Les deux canaux sont lus en une seule transaction.
@@ -43,7 +43,7 @@ static constexpr uint16_t REG_COUNT             = 2;          // canal 1 + canal
 static constexpr size_t   RESPONSE_LENGTH       = 9;          // addr+fn+byteCount+4data+2crc
 static constexpr unsigned long RESPONSE_TIMEOUT_MS = 200;
 
-static constexpr float RESISTOR_DIVIDER_RATIO   = 4.06f;
+static constexpr float RESISTOR_DIVIDER_RATIO   = 5.22f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // État interne — dernières valeurs lues et suivi de publication

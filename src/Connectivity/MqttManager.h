@@ -70,11 +70,7 @@ public:
 
     // RETAINED_REFRESH_MS : période de republication des quatre éléments à
     //   durée de vie longue (schéma, table NEO, programmation horaire, règles
-    //   conditionnelles). Le plan HiveMQ Cloud Serverless expire les messages
-    //   retenus au bout de 3 jours ; sur une installation stable, où plus rien
-    //   n'est publié spontanément, un téléphone neuf ne trouverait donc plus
-    //   ni schéma, ni table NEO, ni programmations. Valeur très en deçà des
-    //   72 h afin de tolérer deux échéances manquées consécutives.
+    //   conditionnelles).
     static constexpr uint32_t RETAINED_REFRESH_MS = 24UL * 3600UL * 1000UL;  // 24 h
 
     // RETAINED_REFRESH_SPACING_MS : intervalle entre les quatre émissions de
@@ -85,8 +81,7 @@ public:
     //   GardenerManager et ConditionalWatering, donc de tours voisins). Étalées,
     //   un tour n'en émet jamais plus d'une ; il peut toujours y ajouter l'item
     //   de DataBus::mqttQueue du drain courant, soit deux prises du verrou au
-    //   pire. La valeur n'a aucune contrainte haute : le rafraîchissement
-    //   dispose de 72 h avant l'expiration côté broker.
+    //   pire.
     static constexpr uint32_t RETAINED_REFRESH_SPACING_MS = 60UL * 1000UL;   // 1 min
 
     static void init();
